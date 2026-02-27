@@ -19,10 +19,10 @@ to be continued
 
 ## Screenshots:
 
-![PhamiJam - Local Files](/phamijam/assets/images/phamijam%20pr/localfiles.png)
+![PhamiJam - Local Files](/PhamiJam-Desktop/phamijam/assets/images/phamijam%20pr/localfiles.png)
 <sup>PhamiJam - Local Files</sup>
 
-![PhamiJame - Playlist](/phamijam/assets/images/phamijam%20pr/playlist.png)
+![PhamiJame - Playlist](/PhamiJam-Desktop/phamijam/assets/images/phamijam%20pr/playlist.png)
 <sup>PhamiJam - Inside a playlist with songs</sup>
 
 # TODO
