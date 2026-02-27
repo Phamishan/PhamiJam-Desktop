@@ -1,0 +1,4 @@
+*.env
+
+old-flutter/
+phamijam/lib/firebase_options.dart
