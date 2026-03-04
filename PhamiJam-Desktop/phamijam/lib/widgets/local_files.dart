@@ -4,8 +4,10 @@ import 'dart:typed_data';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/playback_model.dart';
+import 'package:phamijam/components/app_flushbar.dart';
 import 'package:provider/provider.dart';
 
 class LocalFilesPage extends StatefulWidget {
@@ -34,8 +36,28 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
   List<String> songPaths = [];
   List<Uint8List?> coverImages = [];
   List<int> songDurations = [];
-  int _currentSongIndex = -1;
+  String _songSearchQuery = '';
+  late final TextEditingController _songSearchController;
   late final PlaybackModel _playback;
+
+  List<int> get _filteredSongIndices {
+    final query = _songSearchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      return List<int>.generate(songName.length, (index) => index);
+    }
+
+    final filtered = <int>[];
+    for (var index = 0; index < songName.length; index++) {
+      final song = songName[index].toLowerCase();
+      final artist = index < artistName.length
+          ? artistName[index].toLowerCase()
+          : '';
+      if (song.contains(query) || artist.contains(query)) {
+        filtered.add(index);
+      }
+    }
+    return filtered;
+  }
 
   String _formatDuration(int totalSeconds) {
     final hours = totalSeconds ~/ 3600;
@@ -250,7 +272,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
     await _scanFilesPressed(forceRescan: true);
   }
 
-  Future<void> _play([int? index]) async {
+  Future<void> _play({int? index, bool syncQueue = true}) async {
     final playback = _playback;
     final playIndex = index ?? 0;
 
@@ -278,58 +300,66 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
     );
     playback.setIsPlaying(true);
     playback.setIsMuted(false);
-    _currentSongIndex = playIndex;
-  }
 
-  void _syncCurrentIndexFromPlaybackPath() {
-    if (_currentSongIndex >= 0 || songPaths.isEmpty) return;
-
-    final currentPath = _playback.currentSongPath;
-    if (currentPath == null || currentPath.isEmpty) return;
-
-    final resolvedIndex = songPaths.indexOf(currentPath);
-    if (resolvedIndex >= 0) {
-      _currentSongIndex = resolvedIndex;
+    if (syncQueue) {
+      final queueItems = List<Map<String, dynamic>>.generate(songPaths.length, (
+        itemIndex,
+      ) {
+        return <String, dynamic>{
+          'songName': itemIndex < songName.length ? songName[itemIndex] : '',
+          'artistName': itemIndex < artistName.length
+              ? artistName[itemIndex]
+              : '',
+          'path': songPaths[itemIndex],
+          'coverImageBytes': itemIndex < coverImages.length
+              ? coverImages[itemIndex]
+              : null,
+          'durationSeconds': itemIndex < songDurations.length
+              ? songDurations[itemIndex]
+              : 0,
+        };
+      });
+      playback.setPlaylistQueue(queueItems, startIndex: playIndex);
+      playback.setQueueHandlers(
+        playAtSourceIndex: (sourceIndex) async {
+          await _play(index: sourceIndex, syncQueue: false);
+        },
+      );
+    } else {
+      playback.markCurrentSourceIndex(playIndex);
     }
   }
 
-  Future<void> _autoplayNextSong() async {
-    if (!mounted || songPaths.isEmpty) return;
+  void _addLocalSongToQueue(int index) {
+    if (index < 0 || index >= songPaths.length) {
+      return;
+    }
 
-    _syncCurrentIndexFromPlaybackPath();
-    if (_currentSongIndex < 0) return;
+    final queueItem = <String, dynamic>{
+      'songName': index < songName.length ? songName[index] : '',
+      'artistName': index < artistName.length ? artistName[index] : '',
+      'path': songPaths[index],
+      'coverImageBytes': index < coverImages.length ? coverImages[index] : null,
+      'durationSeconds': index < songDurations.length
+          ? songDurations[index]
+          : 0,
+    };
 
-    final nextIndex = _currentSongIndex + 1;
-    if (nextIndex >= songPaths.length) return;
-
-    await _play(nextIndex);
-  }
-
-  Future<void> _playPreviousSong() async {
-    if (!mounted || songPaths.isEmpty) return;
-
-    _syncCurrentIndexFromPlaybackPath();
-    if (_currentSongIndex <= 0) return;
-
-    await _play(_currentSongIndex - 1);
-  }
-
-  Future<void> _playNextSong() async {
-    await _autoplayNextSong();
+    _playback.addToQueue(queueItem);
+    if (!mounted) return;
+    AppFlushbar.info(context, '"${queueItem['songName']}" will play next.');
   }
 
   @override
   void initState() {
     super.initState();
+    _songSearchController = TextEditingController();
     _playback = context.read<PlaybackModel>();
-    _playback.setOnPreviousRequested(_playPreviousSong);
-    _playback.setOnNextRequested(_playNextSong);
   }
 
   @override
   void dispose() {
-    _playback.setOnPreviousRequested(null);
-    _playback.setOnNextRequested(null);
+    _songSearchController.dispose();
     super.dispose();
   }
 
@@ -357,7 +387,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
             const SizedBox(width: 16),
             ElevatedButton.icon(
               onPressed: _refreshSongs,
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_rounded),
               label: const Text('Refresh'),
             ),
           ],
@@ -367,7 +397,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
           children: [
             ElevatedButton.icon(
               onPressed: _chooseLocation,
-              icon: const Icon(Icons.folder_open),
+              icon: const Icon(Icons.folder_open_rounded),
               label: const Text('Choose Location'),
             ),
             const SizedBox(width: 16),
@@ -382,6 +412,45 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
           ],
         ),
         const SizedBox(height: 10),
+        TextField(
+          controller: _songSearchController,
+          onChanged: (value) {
+            setState(() {
+              _songSearchQuery = value;
+            });
+          },
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Search songs...',
+            hintStyle: const TextStyle(color: Colors.white60, fontSize: 14),
+            prefixIcon: const Icon(Icons.search_rounded, color: Colors.white70),
+            suffixIcon: _songSearchQuery.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Colors.white70,
+                    ),
+                    onPressed: () {
+                      _songSearchController.clear();
+                      setState(() {
+                        _songSearchQuery = '';
+                      });
+                    },
+                  ),
+            filled: true,
+            fillColor: Colors.black26,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 0,
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
         Expanded(
           child: songName.isEmpty
               ? const Center(
@@ -390,60 +459,86 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                     style: TextStyle(color: Colors.white70),
                   ),
                 )
+              : _filteredSongIndices.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No songs match your search.',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                )
               : ListView.builder(
-                  itemCount: songName.length,
+                  itemCount: _filteredSongIndices.length,
                   itemBuilder: (context, index) {
-                    final artist = artistName[index];
-                    final song = songName[index];
-                    final coverBytes = index < coverImages.length
-                        ? coverImages[index]
+                    final sourceIndex = _filteredSongIndices[index];
+                    final artist = artistName[sourceIndex];
+                    final song = songName[sourceIndex];
+                    final coverBytes = sourceIndex < coverImages.length
+                        ? coverImages[sourceIndex]
                         : null;
-                    final durationSeconds = index < songDurations.length
-                        ? songDurations[index]
+                    final durationSeconds = sourceIndex < songDurations.length
+                        ? songDurations[sourceIndex]
                         : 0;
                     final songDurationLabel = _formatDuration(durationSeconds);
 
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: playback.currentSongPath == songPaths[index]
-                              ? const Color(0xFFb5832e)
-                              : const Color(0xFFdba43a),
-                          borderRadius: BorderRadius.circular(8),
+                      child: ContextMenuRegion<String>(
+                        contextMenu: ContextMenu(
+                          entries: [
+                            MenuItem<String>(
+                              value: 'play_next',
+                              icon: const Icon(Icons.playlist_add_rounded),
+                              label: const Text('Add to Play Next'),
+                            ),
+                          ],
                         ),
-                        child: ListTile(
-                          leading: coverBytes != null && coverBytes.isNotEmpty
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.memory(
-                                    coverBytes,
-                                    width: 56,
-                                    height: 56,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, _, _) => const Icon(
-                                      Icons.music_note,
-                                      color: Colors.white,
+                        onItemSelected: (value) {
+                          if (value == 'play_next') {
+                            _addLocalSongToQueue(sourceIndex);
+                          }
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color:
+                                playback.currentSongPath ==
+                                    songPaths[sourceIndex]
+                                ? const Color(0xFFb5832e)
+                                : const Color(0xFFdba43a),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ListTile(
+                            leading: coverBytes != null && coverBytes.isNotEmpty
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Image.memory(
+                                      coverBytes,
+                                      width: 56,
+                                      height: 56,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, _, _) => const Icon(
+                                        Icons.music_note_rounded,
+                                        color: Colors.white,
+                                      ),
                                     ),
+                                  )
+                                : const Icon(
+                                    Icons.music_note_rounded,
+                                    color: Colors.white,
                                   ),
-                                )
-                              : const Icon(
-                                  Icons.music_note,
-                                  color: Colors.white,
-                                ),
-                          title: Text(
-                            song,
-                            style: const TextStyle(color: Colors.white),
+                            title: Text(
+                              song,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              artist,
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                            trailing: Text(
+                              songDurationLabel,
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                            onTap: () => _play(index: sourceIndex),
                           ),
-                          subtitle: Text(
-                            artist,
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                          trailing: Text(
-                            songDurationLabel,
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                          onTap: () => _play(index),
                         ),
                       ),
                     );

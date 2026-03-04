@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 class GoogleAuthService {
   GoogleAuthService._();
 
+  static const String _youtubeScope = 'https://www.googleapis.com/auth/youtube';
+
   static final GoogleSignIn googleSignIn = GoogleSignIn(
     params: GoogleSignInParams(
       clientId: dotenv.env['CLIENT_ID'],
@@ -15,7 +17,7 @@ class GoogleAuthService {
         'openid',
         'profile',
         'email',
-        'https://www.googleapis.com/auth/youtube.readonly',
+        'https://www.googleapis.com/auth/youtube',
       ],
     ),
   );
@@ -37,6 +39,13 @@ class GoogleAuthService {
     return expiresIn.isAfter(
       DateTime.now().toUtc().add(const Duration(minutes: 1)),
     );
+  }
+
+  static bool _hasRequiredScopes(List<String>? scopes) {
+    if (scopes == null || scopes.isEmpty) {
+      return false;
+    }
+    return scopes.contains(_youtubeScope);
   }
 
   static void _updateCredentials(GoogleSignInCredentials? credentials) {
@@ -124,6 +133,7 @@ class GoogleAuthService {
   }) async {
     if (!forceOnline &&
         !forceRefresh &&
+        _hasRequiredScopes(_credentials?.scopes) &&
         _isAccessTokenUsable(_accessToken, _credentials?.expiresIn)) {
       return _accessToken;
     }
@@ -133,6 +143,7 @@ class GoogleAuthService {
       if (restoredCredentials != null) {
         _updateCredentials(restoredCredentials);
         if (!forceRefresh &&
+            _hasRequiredScopes(restoredCredentials.scopes) &&
             _isAccessTokenUsable(
               restoredCredentials.accessToken,
               restoredCredentials.expiresIn,
@@ -144,9 +155,10 @@ class GoogleAuthService {
           restoredCredentials,
         );
         if (_isAccessTokenUsable(
-          refreshedCredentials?.accessToken,
-          refreshedCredentials?.expiresIn,
-        )) {
+              refreshedCredentials?.accessToken,
+              refreshedCredentials?.expiresIn,
+            ) &&
+            _hasRequiredScopes(refreshedCredentials?.scopes)) {
           _updateCredentials(refreshedCredentials);
           return _accessToken;
         }
@@ -157,9 +169,10 @@ class GoogleAuthService {
           _credentials!,
         );
         if (_isAccessTokenUsable(
-          refreshedCachedCredentials?.accessToken,
-          refreshedCachedCredentials?.expiresIn,
-        )) {
+              refreshedCachedCredentials?.accessToken,
+              refreshedCachedCredentials?.expiresIn,
+            ) &&
+            _hasRequiredScopes(refreshedCachedCredentials?.scopes)) {
           _updateCredentials(refreshedCachedCredentials);
           return _accessToken;
         }
@@ -168,6 +181,9 @@ class GoogleAuthService {
 
     final onlineCredentials = await googleSignIn.signInOnline();
     _updateCredentials(onlineCredentials);
+    if (!_hasRequiredScopes(onlineCredentials?.scopes)) {
+      return null;
+    }
     return _accessToken;
   }
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ enum PlaybackEngine { local, youtube }
 
 class PlaybackModel extends ChangeNotifier {
   static const double _volumeBoostFloor = 65.0;
+  static const int _queueAheadCount = 4;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<AppPlayerState>? _playerStateSubscription;
   StreamSubscription<Duration?>? _durationSubscription;
@@ -25,8 +27,8 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> Function(Duration position)? _youtubeSeek;
   Future<void> Function(double sliderValue)? _youtubeSetVolume;
   Future<void> _engineTransition = Future<void>.value();
-  Future<void> Function()? _onPreviousRequested;
-  Future<void> Function()? _onNextRequested;
+  Future<void> Function(int sourceIndex)? _onPlaySourceIndexRequested;
+  Future<void> Function(dynamic item)? _onPrefetchQueueItem;
 
   String artistName = 'Unknown Artist';
   String songName = 'Unknown Song';
@@ -37,9 +39,16 @@ class PlaybackModel extends ChangeNotifier {
   Duration? duration;
   bool isPlaying = false;
   bool isMuted = false;
+  bool isShuffled = false;
+  bool isLooped = false;
   double currentSliderValue = 20.0;
   bool isSeeking = false;
   Duration seekPreview = Duration.zero;
+  List<dynamic> queue = [];
+
+  List<dynamic> _playlistItems = [];
+  List<int> _playOrder = [];
+  int _currentOrderIndex = -1;
 
   Duration get displayedProgress => isSeeking ? seekPreview : progress;
   PlaybackEngine get engine => _engine;
@@ -102,7 +111,25 @@ class PlaybackModel extends ChangeNotifier {
     if (!_isNearTrackEnd()) return;
 
     _completionHandledForCurrentTrack = true;
-    await playNext();
+    if (isLooped) {
+      await _restartCurrentTrack();
+      return;
+    }
+    await playNext(wrapAround: true);
+  }
+
+  Future<void> _restartCurrentTrack() async {
+    setProgress(Duration.zero);
+    if (_engine == PlaybackEngine.youtube) {
+      await _youtubeSeek?.call(Duration.zero);
+      await _youtubePlay?.call();
+      _completionHandledForCurrentTrack = false;
+      return;
+    }
+
+    await player.seek(Duration.zero);
+    await player.play();
+    _completionHandledForCurrentTrack = false;
   }
 
   Future<void> switchToLocalEngine() async {
@@ -218,26 +245,202 @@ class PlaybackModel extends ChangeNotifier {
     _isBoundToPlayer = true;
   }
 
-  void setOnPreviousRequested(Future<void> Function()? callback) {
-    _onPreviousRequested = callback;
+  void setQueueHandlers({
+    required Future<void> Function(int sourceIndex) playAtSourceIndex,
+    Future<void> Function(dynamic item)? prefetchQueueItem,
+  }) {
+    _onPlaySourceIndexRequested = playAtSourceIndex;
+    _onPrefetchQueueItem = prefetchQueueItem;
   }
 
-  void setOnNextRequested(Future<void> Function()? callback) {
-    _onNextRequested = callback;
+  void clearPlaylistQueue() {
+    _playlistItems = [];
+    _playOrder = [];
+    _currentOrderIndex = -1;
+    queue = [];
+    notifyListeners();
+  }
+
+  void setPlaylistQueue(List<dynamic> items, {required int startIndex}) {
+    if (items.isEmpty || startIndex < 0 || startIndex >= items.length) {
+      _playlistItems = [];
+      _playOrder = [];
+      _currentOrderIndex = -1;
+      queue = [];
+      notifyListeners();
+      return;
+    }
+
+    _playlistItems = List<dynamic>.from(items);
+    _rebuildPlayOrder(startIndex: startIndex);
+    _currentOrderIndex = 0;
+    _refreshQueueWindow();
+    unawaited(_prefetchAhead());
+    notifyListeners();
+  }
+
+  void addToQueue(dynamic item) {
+    _playlistItems = List<dynamic>.from(_playlistItems)..add(item);
+    final sourceIndex = _playlistItems.length - 1;
+
+    if (_playOrder.isEmpty) {
+      _playOrder = <int>[sourceIndex];
+      _currentOrderIndex = 0;
+    } else {
+      final insertAt = (_currentOrderIndex + 1).clamp(0, _playOrder.length);
+      _playOrder = List<int>.from(_playOrder)..insert(insertAt, sourceIndex);
+      if (_currentOrderIndex < 0) {
+        _currentOrderIndex = 0;
+      }
+    }
+
+    _refreshQueueWindow();
+    unawaited(_prefetchAhead());
+    notifyListeners();
+  }
+
+  void markCurrentSourceIndex(int sourceIndex) {
+    if (_playlistItems.isEmpty || sourceIndex < 0) {
+      return;
+    }
+
+    final foundOrderIndex = _playOrder.indexOf(sourceIndex);
+    if (foundOrderIndex < 0) {
+      return;
+    }
+
+    _currentOrderIndex = foundOrderIndex;
+    _refreshQueueWindow();
+    unawaited(_prefetchAhead());
+    notifyListeners();
+  }
+
+  Future<void> playQueueIndex(int queueIndex) async {
+    if (queueIndex < 0 || queueIndex >= queue.length) return;
+    if (_currentOrderIndex < 0) return;
+
+    final targetRawOrderIndex = _currentOrderIndex + queueIndex;
+    final targetOrderIndex = _normalizeOrderIndex(targetRawOrderIndex);
+    if (targetOrderIndex == null) return;
+
+    _currentOrderIndex = targetOrderIndex;
+    _refreshQueueWindow();
+    notifyListeners();
+
+    await _playBySourceIndex(_playOrder[targetOrderIndex]);
+    unawaited(_prefetchAhead());
   }
 
   Future<void> playPrevious() async {
-    final callback = _onPreviousRequested;
-    if (callback != null) {
-      await callback();
+    if (_playOrder.isNotEmpty) {
+      final previousOrderIndex = _normalizeOrderIndex(_currentOrderIndex - 1);
+      if (previousOrderIndex == null) {
+        return;
+      }
+
+      _currentOrderIndex = previousOrderIndex;
+      _refreshQueueWindow();
+      notifyListeners();
+
+      await _playBySourceIndex(_playOrder[previousOrderIndex]);
+      unawaited(_prefetchAhead());
     }
   }
 
-  Future<void> playNext() async {
-    final callback = _onNextRequested;
-    if (callback != null) {
-      await callback();
+  Future<void> playNext({bool wrapAround = false}) async {
+    if (_playOrder.isNotEmpty) {
+      final nextOrderIndex = _normalizeOrderIndex(
+        _currentOrderIndex + 1,
+        wrapAround: wrapAround,
+      );
+      if (nextOrderIndex == null) {
+        return;
+      }
+
+      _currentOrderIndex = nextOrderIndex;
+      _refreshQueueWindow();
+      notifyListeners();
+
+      await _playBySourceIndex(_playOrder[nextOrderIndex]);
+      unawaited(_prefetchAhead());
     }
+  }
+
+  Future<void> _playBySourceIndex(int sourceIndex) async {
+    final playAtSourceIndex = _onPlaySourceIndexRequested;
+    if (playAtSourceIndex != null) {
+      final expectedItem =
+          sourceIndex >= 0 && sourceIndex < _playlistItems.length
+          ? _playlistItems[sourceIndex]
+          : null;
+      final expectedPath = _expectedCurrentSongPath(expectedItem);
+
+      await playAtSourceIndex(sourceIndex);
+
+      if (expectedPath == null || currentSongPath == expectedPath) {
+        return;
+      }
+    }
+
+    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) {
+      return;
+    }
+
+    final item = _playlistItems[sourceIndex];
+    if (item is! Map<String, dynamic>) {
+      return;
+    }
+
+    final song = (item['songName'] ?? item['title'] ?? '').toString();
+    final artist = (item['artistName'] ?? item['artist'] ?? '').toString();
+    if (song.isNotEmpty) setSongName(song);
+    if (artist.isNotEmpty) setArtist(artist);
+
+    final durationSeconds = item['durationSeconds'] as int?;
+    if (durationSeconds != null && durationSeconds > 0) {
+      setDuration(Duration(seconds: durationSeconds));
+    } else {
+      setDuration(Duration.zero);
+    }
+
+    final videoId = (item['videoId'] as String?) ?? '';
+    if (videoId.isNotEmpty) {
+      setCurrentSongPath('yt:$videoId');
+      await playYouTubeVideoById(videoId);
+      await applyVolume(currentSliderValue);
+      return;
+    }
+
+    final path = (item['path'] as String?) ?? '';
+    if (path.isNotEmpty) {
+      final localCover = item['coverImageBytes'] as Uint8List?;
+      await switchToLocalEngine();
+      await player.setFilePath(path);
+      await player.seek(Duration.zero);
+      await player.play();
+      setCurrentSongPath(path);
+      setCoverImageBytes(localCover);
+      setIsPlaying(true);
+      setIsMuted(currentSliderValue == 0);
+    }
+  }
+
+  String? _expectedCurrentSongPath(dynamic item) {
+    if (item is! Map<String, dynamic>) {
+      return null;
+    }
+
+    final videoId = (item['videoId'] as String?) ?? '';
+    if (videoId.isNotEmpty) {
+      return 'yt:$videoId';
+    }
+
+    final path = (item['path'] as String?) ?? '';
+    if (path.isNotEmpty) {
+      return path;
+    }
+
+    return null;
   }
 
   Future<void> seekTo(Duration value) async {
@@ -265,6 +468,130 @@ class PlaybackModel extends ChangeNotifier {
       await player.pause();
     } else {
       await player.play();
+    }
+  }
+
+  void toggleShuffle() {
+    isShuffled = !isShuffled;
+    if (_playlistItems.isNotEmpty) {
+      final fallbackSourceIndex =
+          _playOrder.isNotEmpty && _currentOrderIndex >= 0
+          ? _playOrder[_currentOrderIndex]
+          : 0;
+      final sourceIndex = _sourceIndexFromCurrentPath() ?? fallbackSourceIndex;
+      _rebuildPlayOrder(startIndex: sourceIndex);
+      _currentOrderIndex = 0;
+      _refreshQueueWindow();
+      unawaited(_prefetchAhead());
+    }
+    notifyListeners();
+  }
+
+  void toggleLoop() {
+    isLooped = !isLooped;
+    if (_playlistItems.isNotEmpty) {
+      _refreshQueueWindow();
+    }
+    notifyListeners();
+  }
+
+  int? _sourceIndexFromCurrentPath() {
+    final currentPath = currentSongPath;
+    if (currentPath == null || currentPath.isEmpty) {
+      return null;
+    }
+
+    for (var i = 0; i < _playlistItems.length; i++) {
+      final item = _playlistItems[i];
+      if (item is Map<String, dynamic>) {
+        final path = item['path'] as String?;
+        final videoId = item['videoId'] as String?;
+        if (path != null && path == currentPath) return i;
+        if (videoId != null && 'yt:$videoId' == currentPath) return i;
+      }
+    }
+
+    return null;
+  }
+
+  void _rebuildPlayOrder({required int startIndex}) {
+    final count = _playlistItems.length;
+    if (count == 0) {
+      _playOrder = [];
+      return;
+    }
+
+    final safeStart = startIndex.clamp(0, count - 1);
+    final allIndices = List<int>.generate(count, (index) => index);
+
+    if (!isShuffled) {
+      _playOrder = <int>[
+        ...allIndices.skip(safeStart),
+        ...allIndices.take(safeStart),
+      ];
+      return;
+    }
+
+    allIndices.remove(safeStart);
+    allIndices.shuffle(Random());
+    _playOrder = <int>[safeStart, ...allIndices];
+  }
+
+  int? _normalizeOrderIndex(int rawIndex, {bool wrapAround = false}) {
+    if (_playOrder.isEmpty) return null;
+
+    if (wrapAround) {
+      final length = _playOrder.length;
+      return ((rawIndex % length) + length) % length;
+    }
+
+    if (rawIndex < 0 || rawIndex >= _playOrder.length) {
+      return null;
+    }
+    return rawIndex;
+  }
+
+  void _refreshQueueWindow() {
+    if (_playOrder.isEmpty || _currentOrderIndex < 0) {
+      queue = [];
+      return;
+    }
+
+    final updatedQueue = <dynamic>[];
+    final endOffset = _queueAheadCount;
+    for (var offset = 0; offset <= endOffset; offset++) {
+      final orderIndex = _normalizeOrderIndex(_currentOrderIndex + offset);
+      if (orderIndex == null) break;
+      final sourceIndex = _playOrder[orderIndex];
+      updatedQueue.add(_playlistItems[sourceIndex]);
+    }
+    queue = updatedQueue;
+  }
+
+  Future<void> _prefetchAhead() async {
+    final prefetchQueueItem = _onPrefetchQueueItem;
+    if (queue.length <= 1) {
+      return;
+    }
+
+    final maxAhead = min(_queueAheadCount, queue.length - 1);
+    for (var offset = 1; offset <= maxAhead; offset++) {
+      final item = queue[offset];
+      if (prefetchQueueItem != null) {
+        await prefetchQueueItem(item);
+        continue;
+      }
+
+      if (item is! Map<String, dynamic>) {
+        continue;
+      }
+
+      final videoId = (item['videoId'] as String?) ?? '';
+      if (videoId.isEmpty) {
+        continue;
+      }
+
+      await prefetchYouTubeVideoById(videoId);
     }
   }
 

@@ -25,6 +25,8 @@ dependencies:
     media_kit_video: ^1.2.5
     media_kit_libs_windows_video: ^1.0.11
     ytmusicapi_dart: ^2.3.0
+    another_flushbar: ^1.12.32
+    flutter_context_menu: ^0.4.2
 
 dev_dependencies:
     flutter_test:

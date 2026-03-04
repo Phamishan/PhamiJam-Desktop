@@ -301,7 +301,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 onPressed: _isLoadingPlaylists || _isPreloading
                     ? null
                     : _loadPlaylistsForSelection,
-                icon: const Icon(Icons.playlist_add_check),
+                icon: const Icon(Icons.playlist_add_check_rounded),
                 label: Text(
                   _isLoadingPlaylists ? 'Loading...' : 'Load Playlists',
                 ),
@@ -398,14 +398,14 @@ class _SettingsPageState extends State<SettingsPage> {
                 onPressed: _isPreloading
                     ? null
                     : _preloadSongsFromSelectedPlaylists,
-                icon: const Icon(Icons.download),
+                icon: const Icon(Icons.download_rounded),
                 label: Text(_isPreloading ? 'Preloading...' : 'Start Preload'),
               ),
               const SizedBox(width: 12),
               if (_isDone)
                 const Row(
                   children: [
-                    Icon(Icons.check_circle, color: Colors.greenAccent),
+                    Icon(Icons.check_circle_rounded, color: Colors.greenAccent),
                     SizedBox(width: 6),
                     Text(
                       'Done',

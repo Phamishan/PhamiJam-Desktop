@@ -8,14 +8,22 @@ class PlaybackInterface extends StatefulWidget {
   final Duration? duration;
   final bool isPlaying;
   final bool isMuted;
+  final bool isShuffled;
+  final bool isLooped;
   final double currentSliderValue;
   final ValueChanged<Duration> onSeek;
   final VoidCallback onPlayPauseToggle;
   final VoidCallback onPrevious;
   final VoidCallback onForward;
   final ValueChanged<double> onVolumeChange;
+  final VoidCallback onLoop;
+  final VoidCallback onUnloop;
+  final VoidCallback onShuffle;
+  final VoidCallback onUnshuffle;
   final String artist;
   final String songName;
+  final List<dynamic> queue;
+  final VoidCallback onQueuePressed;
 
   const PlaybackInterface({
     super.key,
@@ -26,11 +34,19 @@ class PlaybackInterface extends StatefulWidget {
     required this.currentSliderValue,
     required this.onSeek,
     required this.onPlayPauseToggle,
+    required this.isShuffled,
+    required this.isLooped,
     required this.onPrevious,
     required this.onForward,
     required this.onVolumeChange,
+    required this.onLoop,
+    required this.onUnloop,
+    required this.onShuffle,
+    required this.onUnshuffle,
     required this.artist,
     required this.songName,
+    required this.queue,
+    required this.onQueuePressed,
   });
 
   @override
@@ -97,6 +113,22 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
     _volumeController.text = value.round().toString();
     widget.onVolumeChange(value);
     if (value > 0) oldVolume = value;
+  }
+
+  void toggleLooped() {
+    if (widget.isLooped) {
+      widget.onUnloop();
+    } else {
+      widget.onLoop();
+    }
+  }
+
+  void toggleShuffled() {
+    if (widget.isShuffled) {
+      widget.onUnshuffle();
+    } else {
+      widget.onShuffle();
+    }
   }
 
   @override
@@ -197,6 +229,12 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     IconButton(
+                      onPressed: toggleShuffled,
+                      icon: !widget.isShuffled
+                          ? Icon(Icons.shuffle_rounded, color: Colors.black)
+                          : Icon(Icons.shuffle_on_rounded, color: Colors.black),
+                    ),
+                    IconButton(
                       onPressed: widget.onPrevious,
                       icon: Icon(
                         Icons.skip_previous_rounded,
@@ -207,14 +245,26 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                       onPressed: widget.onPlayPauseToggle,
                       icon: widget.isPlaying
                           ? Icon(
-                              Icons.pause_circle_outline_rounded,
+                              Icons.pause_circle_rounded,
                               color: Colors.black,
                             )
-                          : Icon(Icons.play_arrow_rounded, color: Colors.black),
+                          : Icon(
+                              Icons.play_circle_rounded,
+                              color: Colors.black,
+                            ),
                     ),
                     IconButton(
                       onPressed: widget.onForward,
                       icon: Icon(Icons.skip_next_rounded, color: Colors.black),
+                    ),
+                    IconButton(
+                      onPressed: toggleLooped,
+                      icon: !widget.isLooped
+                          ? Icon(Icons.repeat_one_rounded, color: Colors.black)
+                          : Icon(
+                              Icons.repeat_one_on_rounded,
+                              color: Colors.black,
+                            ),
                     ),
                   ],
                 ),
@@ -226,6 +276,13 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        IconButton(
+                          onPressed: widget.onQueuePressed,
+                          icon: const Icon(
+                            Icons.queue_music_rounded,
+                            color: Colors.black,
+                          ),
+                        ),
                         IconButton(
                           onPressed: handleToggleVolume,
                           icon: !widget.isMuted

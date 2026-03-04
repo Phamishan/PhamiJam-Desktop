@@ -1,8 +1,11 @@
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/playback_model.dart';
+import 'package:phamijam/components/app_flushbar.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -25,10 +28,26 @@ class _PlaylistInspectCacheEntry {
 }
 
 class PlaylistInspectPage extends StatefulWidget {
-  const PlaylistInspectPage({super.key, this.extra, this.onBack});
-
   final Map<String, dynamic>? extra;
   final VoidCallback? onBack;
+  final VoidCallback? onPlayPauseToggle;
+  final VoidCallback? onShuffleToggle;
+  final VoidCallback? onLoopToggle;
+  final bool isPlaying;
+  final bool isShuffled;
+  final bool isLooped;
+
+  const PlaylistInspectPage({
+    super.key,
+    this.extra,
+    this.onBack,
+    this.onPlayPauseToggle,
+    this.onShuffleToggle,
+    this.onLoopToggle,
+    this.isPlaying = false,
+    this.isShuffled = false,
+    this.isLooped = false,
+  });
 
   @override
   State<PlaylistInspectPage> createState() => _PlaylistInspectPageState();
@@ -45,8 +64,37 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   int _playlistDurationSeconds = 0;
   String? _resolvedPlaylistTitle;
   String? _currentlyLoadingVideoId;
-  int _currentPlaylistIndex = -1;
+  String _songSearchQuery = '';
+  late final TextEditingController _songSearchController;
   late final PlaybackModel _playback;
+
+  List<Map<String, dynamic>> get _filteredSongs {
+    final query = _songSearchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      return _songs;
+    }
+
+    return _songs.where((song) {
+      final title = (song['title'] as String?) ?? '';
+      final artist = (song['artist'] as String?) ?? '';
+      return title.toLowerCase().contains(query) ||
+          artist.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  int _sourceSongIndex(Map<String, dynamic> song) {
+    final videoId = (song['videoId'] as String?) ?? '';
+    if (videoId.isNotEmpty) {
+      final byVideoId = _songs.indexWhere(
+        (item) => (item['videoId'] as String?) == videoId,
+      );
+      if (byVideoId >= 0) {
+        return byVideoId;
+      }
+    }
+
+    return _songs.indexOf(song);
+  }
 
   String get _playlistTitle =>
       (widget.extra?['playlistTitle'] as String?) ?? 'Playlist';
@@ -168,6 +216,75 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     );
   }
 
+  Widget _buildControlButtons() {
+    final playback = context.watch<PlaybackModel>();
+    final isPlaying = widget.onPlayPauseToggle != null
+        ? widget.isPlaying
+        : playback.isPlaying;
+    final isShuffled = widget.onShuffleToggle != null
+        ? widget.isShuffled
+        : playback.isShuffled;
+    final isLooped = widget.onLoopToggle != null
+        ? widget.isLooped
+        : playback.isLooped;
+
+    return Row(
+      children: [
+        IconButton(
+          onPressed: () async {
+            if (isPlaying) {
+              final onPlayPauseToggle = widget.onPlayPauseToggle;
+              if (onPlayPauseToggle != null) {
+                onPlayPauseToggle();
+                return;
+              }
+              await _playback.togglePlayPause();
+              return;
+            }
+
+            if (_songs.isEmpty) {
+              return;
+            }
+
+            final targetIndex = isShuffled
+                ? Random().nextInt(_songs.length)
+                : 0;
+            await _playYouTubeSongAtIndex(targetIndex, _songs[targetIndex]);
+          },
+          icon: isPlaying
+              ? Icon(Icons.pause_circle_rounded, color: Colors.black)
+              : Icon(Icons.play_circle_rounded, color: Colors.black),
+        ),
+        IconButton(
+          onPressed: () {
+            final onShuffleToggle = widget.onShuffleToggle;
+            if (onShuffleToggle != null) {
+              onShuffleToggle();
+              return;
+            }
+            _playback.toggleShuffle();
+          },
+          icon: isShuffled
+              ? Icon(Icons.shuffle_on_rounded, color: Colors.black)
+              : Icon(Icons.shuffle_rounded, color: Colors.black),
+        ),
+        IconButton(
+          onPressed: () {
+            final onLoopToggle = widget.onLoopToggle;
+            if (onLoopToggle != null) {
+              onLoopToggle();
+              return;
+            }
+            _playback.toggleLoop();
+          },
+          icon: isLooped
+              ? Icon(Icons.repeat_one_on_rounded, color: Colors.black)
+              : Icon(Icons.repeat_one_rounded, color: Colors.black),
+        ),
+      ],
+    );
+  }
+
   Future<void> _loadSongs({bool forceRefresh = false}) async {
     final playlistId = _playlistId;
     if (playlistId == null || playlistId.isEmpty) {
@@ -275,17 +392,16 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
 
   Future<void> _playYouTubeSongAtIndex(
     int? index,
-    Map<String, dynamic> song,
-  ) async {
+    Map<String, dynamic> song, {
+    bool syncQueue = true,
+  }) async {
     if (_currentlyLoadingVideoId != null) return;
 
     final playback = _playback;
     final videoId = (song['videoId'] as String?) ?? '';
     if (videoId.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This song has no playable video id.')),
-      );
+      AppFlushbar.error(context, 'This song has no playable video id.');
       return;
     }
 
@@ -315,14 +431,19 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       await playback.applyVolume(playback.currentSliderValue);
 
       if (index != null && index >= 0 && index < _songs.length) {
-        _currentPlaylistIndex = index;
+        if (syncQueue) {
+          playback.setPlaylistQueue(_songs, startIndex: index);
+          _registerQueueHandlersForSongs(
+            List<Map<String, dynamic>>.from(_songs),
+          );
+        } else {
+          playback.markCurrentSourceIndex(index);
+        }
       }
     } catch (error) {
       debugPrint('YouTube audio playback failed for $videoId: $error');
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to play audio: $error')));
+      AppFlushbar.error(context, 'Failed to play audio: $error');
     } finally {
       if (mounted) {
         setState(() {
@@ -332,65 +453,70 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     }
   }
 
-  void _syncCurrentIndexFromPlaybackPath() {
-    if (_currentPlaylistIndex >= 0 || _songs.isEmpty) return;
-
-    final currentPath = _playback.currentSongPath;
-    if (currentPath == null || !currentPath.startsWith('yt:')) {
+  void _addYouTubeSongToQueue(Map<String, dynamic> song) {
+    final videoId = (song['videoId'] as String?) ?? '';
+    if (videoId.isEmpty) {
+      if (!mounted) return;
+      AppFlushbar.error(context, 'This song cannot be queued.');
       return;
     }
 
-    final currentVideoId = currentPath.substring(3);
-    final resolvedIndex = _songs.indexWhere(
-      (song) => (song['videoId'] as String?) == currentVideoId,
+    _playback.addToQueue(Map<String, dynamic>.from(song));
+    if (!mounted) return;
+    final title = (song['title'] as String?) ?? 'Song';
+    AppFlushbar.info(context, '"$title" will play next.');
+  }
+
+  void _registerQueueHandlersForSongs(List<Map<String, dynamic>> songs) {
+    _playback.setQueueHandlers(
+      playAtSourceIndex: (sourceIndex) async {
+        if (sourceIndex < 0 || sourceIndex >= songs.length) return;
+
+        final song = songs[sourceIndex];
+        final videoId = (song['videoId'] as String?) ?? '';
+        if (videoId.isEmpty) return;
+
+        final title = (song['title'] as String?) ?? 'Unknown song';
+        final artist = (song['artist'] as String?) ?? 'Unknown artist';
+        final thumbnailUrl = (song['thumbnailUrl'] as String?) ?? '';
+        final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
+        final coverBytes = await _downloadImageBytes(thumbnailUrl);
+
+        _playback.setSongName(title);
+        _playback.setArtist(artist);
+        _playback.setCurrentSongPath('yt:$videoId');
+        _playback.setCoverImageBytes(coverBytes);
+
+        if (durationSeconds > 0) {
+          _playback.setDuration(Duration(seconds: durationSeconds));
+        } else {
+          _playback.setDuration(Duration.zero);
+        }
+
+        await _playback.playYouTubeVideoById(videoId);
+        await _playback.applyVolume(_playback.currentSliderValue);
+        _playback.markCurrentSourceIndex(sourceIndex);
+      },
+      prefetchQueueItem: (item) async {
+        if (item is! Map<String, dynamic>) return;
+        final videoId = (item['videoId'] as String?) ?? '';
+        if (videoId.isEmpty) return;
+        await _playback.prefetchYouTubeVideoById(videoId);
+      },
     );
-    if (resolvedIndex >= 0) {
-      _currentPlaylistIndex = resolvedIndex;
-    }
-  }
-
-  Future<void> _autoplayNextSong() async {
-    if (!mounted || _currentlyLoadingVideoId != null) return;
-    if (_songs.isEmpty) return;
-
-    _syncCurrentIndexFromPlaybackPath();
-
-    if (_currentPlaylistIndex < 0) return;
-
-    final nextIndex = _currentPlaylistIndex + 1;
-    if (nextIndex >= _songs.length) return;
-
-    final nextSong = _songs[nextIndex];
-    await _playYouTubeSongAtIndex(nextIndex, nextSong);
-  }
-
-  Future<void> _playPreviousSong() async {
-    if (!mounted || _currentlyLoadingVideoId != null || _songs.isEmpty) return;
-    _syncCurrentIndexFromPlaybackPath();
-    if (_currentPlaylistIndex <= 0) return;
-
-    final previousIndex = _currentPlaylistIndex - 1;
-    final previousSong = _songs[previousIndex];
-    await _playYouTubeSongAtIndex(previousIndex, previousSong);
-  }
-
-  Future<void> _playNextSong() async {
-    await _autoplayNextSong();
   }
 
   @override
   void initState() {
     super.initState();
+    _songSearchController = TextEditingController();
     _playback = context.read<PlaybackModel>();
-    _playback.setOnPreviousRequested(_playPreviousSong);
-    _playback.setOnNextRequested(_playNextSong);
     _loadSongs();
   }
 
   @override
   void dispose() {
-    _playback.setOnPreviousRequested(null);
-    _playback.setOnNextRequested(null);
+    _songSearchController.dispose();
     super.dispose();
   }
 
@@ -400,6 +526,11 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     final oldPlaylistId = oldWidget.extra?['playlistId'] as String?;
     final newPlaylistId = _playlistId;
     if (oldPlaylistId != newPlaylistId) {
+      _playback.clearPlaylistQueue();
+      _songSearchController.clear();
+      setState(() {
+        _songSearchQuery = '';
+      });
       _loadSongs();
     }
   }
@@ -442,7 +573,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
               const SizedBox(width: 12),
               ElevatedButton.icon(
                 onPressed: () => _loadSongs(forceRefresh: true),
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Refresh'),
               ),
             ],
@@ -469,7 +600,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
           children: [
             IconButton(
               onPressed: _handleBack,
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
             ),
             Expanded(
               child: Text(
@@ -485,82 +616,163 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             const SizedBox(width: 12),
             ElevatedButton.icon(
               onPressed: () => _loadSongs(forceRefresh: true),
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_rounded),
               label: const Text('Refresh'),
             ),
           ],
         ),
         const SizedBox(height: 8),
         _buildMetadataRow(),
+        const SizedBox(height: 8),
+        _buildControlButtons(),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _songSearchController,
+          onChanged: (value) {
+            setState(() {
+              _songSearchQuery = value;
+            });
+          },
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            hintText: 'Search songs...',
+            hintStyle: const TextStyle(color: Colors.white60, fontSize: 14),
+            prefixIcon: const Icon(Icons.search_rounded, color: Colors.white70),
+            suffixIcon: _songSearchQuery.isEmpty
+                ? null
+                : IconButton(
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Colors.white70,
+                    ),
+                    onPressed: () {
+                      _songSearchController.clear();
+                      setState(() {
+                        _songSearchQuery = '';
+                      });
+                    },
+                  ),
+            filled: true,
+            fillColor: Colors.black26,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 0,
+            ),
+          ),
+        ),
+
         const SizedBox(height: 12),
         Expanded(
-          child: ListView.separated(
-            itemCount: _songs.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final song = _songs[index];
-              final title = (song['title'] as String?) ?? 'Unknown song';
-              final artist = (song['artist'] as String?) ?? 'Unknown artist';
-              final thumbnailUrl = (song['thumbnailUrl'] as String?) ?? '';
-              final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
-              final songDurationLabel = _formatDuration(durationSeconds);
-              final videoId = (song['videoId'] as String?) ?? '';
-              final isLoadingThisSong =
-                  videoId.isNotEmpty && _currentlyLoadingVideoId == videoId;
-              final playback = context.watch<PlaybackModel>();
-              final isCurrentSong = playback.currentSongPath == 'yt:$videoId';
+          child: _filteredSongs.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No songs match your search.',
+                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: _filteredSongs.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final song = _filteredSongs[index];
+                    final sourceIndex = _sourceSongIndex(song);
+                    if (sourceIndex < 0) {
+                      return const SizedBox.shrink();
+                    }
+                    final title = (song['title'] as String?) ?? 'Unknown song';
+                    final artist =
+                        (song['artist'] as String?) ?? 'Unknown artist';
+                    final thumbnailUrl =
+                        (song['thumbnailUrl'] as String?) ?? '';
+                    final durationSeconds =
+                        (song['durationSeconds'] as int?) ?? 0;
+                    final songDurationLabel = _formatDuration(durationSeconds);
+                    final videoId = (song['videoId'] as String?) ?? '';
+                    final isLoadingThisSong =
+                        videoId.isNotEmpty &&
+                        _currentlyLoadingVideoId == videoId;
+                    final playback = context.watch<PlaybackModel>();
+                    final isCurrentSong =
+                        playback.currentSongPath == 'yt:$videoId';
 
-              return Container(
-                decoration: BoxDecoration(
-                  color: isCurrentSong
-                      ? const Color(0xFFb5832e)
-                      : const Color(0xFFdba43a),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: ListTile(
-                  leading: thumbnailUrl.isNotEmpty
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.network(
-                            thumbnailUrl,
-                            width: 56,
-                            height: 56,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Icon(
-                                  Icons.music_note,
+                    return ContextMenuRegion<String>(
+                      contextMenu: ContextMenu(
+                        entries: [
+                          MenuItem<String>(
+                            value: 'play_next',
+                            icon: const Icon(Icons.playlist_add_rounded),
+                            label: const Text('Add to Play Next'),
+                          ),
+                        ],
+                      ),
+                      onItemSelected: (value) {
+                        if (value == 'play_next') {
+                          _addYouTubeSongToQueue(song);
+                        }
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: isCurrentSong
+                              ? const Color(0xFFb5832e)
+                              : const Color(0xFFdba43a),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListTile(
+                          leading: thumbnailUrl.isNotEmpty
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Image.network(
+                                    thumbnailUrl,
+                                    width: 56,
+                                    height: 56,
+                                    fit: BoxFit.cover,
+                                    errorBuilder:
+                                        (context, error, stackTrace) =>
+                                            const Icon(
+                                              Icons.music_note_rounded,
+                                              color: Colors.white,
+                                            ),
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.music_note_rounded,
                                   color: Colors.white,
                                 ),
+                          title: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white),
                           ),
-                        )
-                      : const Icon(Icons.music_note, color: Colors.white),
-                  title: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  subtitle: Text(
-                    artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                  trailing: isLoadingThisSong
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text(
-                          songDurationLabel,
-                          style: const TextStyle(color: Colors.white70),
+                          subtitle: Text(
+                            artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                          trailing: isLoadingThisSong
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(
+                                  songDurationLabel,
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                          onTap: () =>
+                              _playYouTubeSongAtIndex(sourceIndex, song),
                         ),
-                  onTap: () => _playYouTubeSongAtIndex(index, song),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );

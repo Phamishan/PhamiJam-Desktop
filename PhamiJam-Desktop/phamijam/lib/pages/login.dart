@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in_all_platforms/google_sign_in_all_platforms.dart';
 import 'package:phamijam/services/google_auth_service.dart';
+import 'package:phamijam/components/app_flushbar.dart';
 
 class Login extends StatefulWidget {
   const Login({super.key});
@@ -94,14 +95,11 @@ class _LoginState extends State<Login> {
         setState(() {
           _isLoading = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              error.code == 'invalid-credential'
-                  ? 'Google sign-in token expired. Please try again.'
-                  : 'Failed to sign in: ${error.message ?? error.code}',
-            ),
-          ),
+        AppFlushbar.error(
+          context,
+          error.code == 'invalid-credential'
+              ? 'Google sign-in token expired. Please try again.'
+              : 'Failed to sign in: ${error.message ?? error.code}',
         );
       }
     } catch (error) {
@@ -110,9 +108,7 @@ class _LoginState extends State<Login> {
         setState(() {
           _isLoading = false;
         });
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to sign in: $error')));
+        AppFlushbar.error(context, 'Failed to sign in: $error');
       }
     }
   }

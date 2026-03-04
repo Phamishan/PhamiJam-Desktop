@@ -17,6 +17,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.3.66"
+  another_flushbar:
+    dependency: "direct main"
+    description:
+      name: another_flushbar
+      sha256: "2b99671c010a7d5770acf5cb24c9f508b919c3a7948b6af9646e773e7da7b757"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.12.32"
   archive:
     dependency: transitive
     description:
@@ -270,6 +278,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_context_menu:
+    dependency: "direct main"
+    description:
+      name: flutter_context_menu
+      sha256: "7040c03fb9cb2a113282d836edadf32b6cdff67cccdf3d158e7411ecc15d7712"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.2"
   flutter_dotenv:
     dependency: "direct main"
     description:

@@ -1,18 +1,23 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/playback_interface.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/sidebar.dart';
 import 'package:phamijam/services/google_auth_service.dart';
+import 'package:phamijam/widgets/converter.dart';
 import 'package:phamijam/widgets/playlist_inspect.dart';
 import 'package:phamijam/widgets/playlists.dart';
 import 'package:phamijam/widgets/liked.dart';
+import 'package:phamijam/widgets/profile.dart';
 import 'package:phamijam/widgets/settings.dart';
 import 'package:phamijam/widgets/local_files.dart';
+import 'package:phamijam/components/app_flushbar.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt;
 
@@ -43,6 +48,16 @@ class _HomeState extends State<Home> {
   Map<String, dynamic>? _selectedTabExtra;
   final Map<String, _YouTubeResolvedStreams> _resolvedStreamsCache =
       <String, _YouTubeResolvedStreams>{};
+  final Map<String, Future<List<String>>> _resolvingStreamsByVideoId =
+      <String, Future<List<String>>>{};
+  final List<Map<String, dynamic>> _recentPlayedSongs =
+      <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> _recentPlayedPlaylists =
+      <Map<String, dynamic>>[];
+  final List<Map<String, String>> _trendingInDenmark = <Map<String, String>>[];
+  bool _isLoadingTrendingInDenmark = false;
+  String? _trendingInDenmarkError;
+  String? _lastTrackedSongPath;
   static const Duration _resolvedStreamsTtl = Duration(minutes: 20);
   static const Map<String, String> _youtubeHttpHeaders = {
     'User-Agent':
@@ -57,7 +72,193 @@ class _HomeState extends State<Home> {
     _sidebarVideoController = VideoController(player.mediaKitPlayer);
     _searchController = TextEditingController();
     _bindYouTubeEngineToPlayback();
+    _playback.addListener(_onPlaybackChanged);
     _checkCurrentUser();
+    unawaited(_loadTrendingInDenmark());
+  }
+
+  Future<void> _loadTrendingInDenmark() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingTrendingInDenmark = true;
+      _trendingInDenmarkError = null;
+    });
+
+    try {
+      final items = <Map<String, String>>[];
+      final searchResult = await _youtubeExplode.search.search(
+        'Denmark music trending now',
+      );
+
+      for (final video in searchResult) {
+        final videoId = video.id.value;
+        if (videoId.isEmpty) {
+          continue;
+        }
+        items.add(<String, String>{
+          'videoId': videoId,
+          'title': video.title,
+          'artist': video.author,
+          'thumbnailUrl': video.thumbnails.highResUrl,
+        });
+        if (items.length >= 10) {
+          break;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _trendingInDenmark
+          ..clear()
+          ..addAll(items);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _trendingInDenmarkError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingTrendingInDenmark = false;
+        });
+      }
+    }
+  }
+
+  void _pushRecentItem(
+    List<Map<String, dynamic>> target,
+    Map<String, dynamic> item,
+    String dedupeKey,
+  ) {
+    final value = (item[dedupeKey] ?? '').toString();
+    if (value.isEmpty) return;
+
+    target.removeWhere(
+      (entry) => ((entry[dedupeKey] ?? '').toString()) == value,
+    );
+    target.insert(0, item);
+    if (target.length > 20) {
+      target.removeRange(20, target.length);
+    }
+  }
+
+  void _trackRecentPlaylist(Map<String, dynamic>? extra) {
+    if (extra == null) return;
+    final playlistId = (extra['playlistId'] as String?) ?? '';
+    final playlistTitle = (extra['playlistTitle'] as String?) ?? '';
+    final thumbnailUrl = (extra['thumbnailUrl'] as String?) ?? '';
+    if (playlistId.isEmpty || playlistTitle.isEmpty) return;
+
+    setState(() {
+      _pushRecentItem(_recentPlayedPlaylists, <String, dynamic>{
+        'playlistId': playlistId,
+        'playlistTitle': playlistTitle,
+        'thumbnailUrl': thumbnailUrl,
+      }, 'playlistId');
+    });
+  }
+
+  Future<Uint8List?> _downloadImageBytes(String imageUrl) async {
+    if (imageUrl.isEmpty) return null;
+    try {
+      final response = await http.get(Uri.parse(imageUrl));
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _playYouTubeSelection({
+    required String videoId,
+    required String title,
+    required String artist,
+    String thumbnailUrl = '',
+  }) async {
+    if (videoId.isEmpty) return;
+
+    final cover = await _downloadImageBytes(thumbnailUrl);
+    _playback.setSongName(title.isEmpty ? 'Unknown song' : title);
+    _playback.setArtist(artist.isEmpty ? 'Unknown artist' : artist);
+    _playback.setCurrentSongPath('yt:$videoId');
+    _playback.setCoverImageBytes(cover);
+    await _playback.playYouTubeVideoById(videoId);
+    await _playback.applyVolume(_playback.currentSliderValue);
+  }
+
+  Future<void> _playLocalSelection({
+    required String songPath,
+    required String title,
+    required String artist,
+    Uint8List? coverImageBytes,
+  }) async {
+    if (songPath.isEmpty) return;
+
+    await _playback.switchToLocalEngine();
+    _playback.setDuration(Duration.zero);
+    await player.setFilePath(songPath);
+    await player.seek(Duration.zero);
+    await player.play();
+
+    _playback.setArtist(artist);
+    _playback.setSongName(title);
+    _playback.setCurrentSongPath(songPath);
+    _playback.setCoverImageBytes(coverImageBytes);
+    _playback.setIsPlaying(true);
+    _playback.setIsMuted(_playback.currentSliderValue == 0);
+  }
+
+  Future<void> _playRecentSong(Map<String, dynamic> item) async {
+    final songPath = (item['songPath'] ?? '').toString();
+    final title = (item['songTitle'] ?? 'Unknown song').toString();
+    final artist = (item['songArtist'] ?? 'Unknown artist').toString();
+    if (songPath.isEmpty) return;
+
+    if (songPath.startsWith('yt:')) {
+      final videoId = songPath.substring(3);
+      final thumbnailUrl = (item['thumbnailUrl'] ?? '').toString();
+      await _playYouTubeSelection(
+        videoId: videoId,
+        title: title,
+        artist: artist,
+        thumbnailUrl: thumbnailUrl,
+      );
+      return;
+    }
+
+    await _playLocalSelection(
+      songPath: songPath,
+      title: title,
+      artist: artist,
+      coverImageBytes: item['coverImageBytes'] as Uint8List?,
+    );
+  }
+
+  void _onPlaybackChanged() {
+    final currentPath = _playback.currentSongPath;
+    if (currentPath == null || currentPath.isEmpty) {
+      return;
+    }
+
+    if (_lastTrackedSongPath == currentPath) {
+      return;
+    }
+
+    _lastTrackedSongPath = currentPath;
+    final derivedThumbnailUrl = currentPath.startsWith('yt:')
+        ? 'https://i.ytimg.com/vi/${currentPath.substring(3)}/hqdefault.jpg'
+        : '';
+    if (!mounted) return;
+    setState(() {
+      _pushRecentItem(_recentPlayedSongs, <String, dynamic>{
+        'songPath': currentPath,
+        'songTitle': _playback.songName,
+        'songArtist': _playback.artistName,
+        'thumbnailUrl': derivedThumbnailUrl,
+        'coverImageBytes': _playback.coverImageBytes,
+      }, 'songPath');
+    });
   }
 
   Future<List<String>> _resolvePlayableYouTubeStreamUrls(String videoId) async {
@@ -69,68 +270,83 @@ class _HomeState extends State<Home> {
       return cached.urls;
     }
 
-    final manifest = await _youtubeExplode.videos.streamsClient.getManifest(
-      videoId,
-    );
-
-    final candidates = <String>[];
-
-    final mp4AudioOnly = manifest.audioOnly.where(
-      (stream) => stream.container.name.toLowerCase() == 'mp4',
-    );
-    final otherAudioOnly = manifest.audioOnly.where(
-      (stream) => stream.container.name.toLowerCase() != 'mp4',
-    );
-    final mp4Muxed = manifest.muxed.where(
-      (stream) => stream.container.name.toLowerCase() == 'mp4',
-    );
-    final otherMuxed = manifest.muxed.where(
-      (stream) => stream.container.name.toLowerCase() != 'mp4',
-    );
-
-    if (mp4Muxed.isNotEmpty) {
-      candidates.add(mp4Muxed.withHighestBitrate().url.toString());
-    }
-    if (mp4AudioOnly.isNotEmpty) {
-      candidates.add(mp4AudioOnly.withHighestBitrate().url.toString());
-    }
-    if (otherMuxed.isNotEmpty) {
-      candidates.add(otherMuxed.withHighestBitrate().url.toString());
-    }
-    if (otherAudioOnly.isNotEmpty) {
-      candidates.add(otherAudioOnly.withHighestBitrate().url.toString());
+    final inFlight = _resolvingStreamsByVideoId[videoId];
+    if (inFlight != null) {
+      return inFlight;
     }
 
-    for (final stream in mp4Muxed) {
-      candidates.add(stream.url.toString());
-    }
-    for (final stream in mp4AudioOnly) {
-      candidates.add(stream.url.toString());
-    }
-    for (final stream in otherMuxed) {
-      candidates.add(stream.url.toString());
-    }
-    for (final stream in otherAudioOnly) {
-      candidates.add(stream.url.toString());
-    }
+    final resolveFuture = (() async {
+      final manifest = await _youtubeExplode.videos.streamsClient.getManifest(
+        videoId,
+      );
 
-    final deduped = <String>[];
-    for (final candidate in candidates) {
-      if (!deduped.contains(candidate)) {
-        deduped.add(candidate);
+      final candidates = <String>[];
+
+      final mp4AudioOnly = manifest.audioOnly.where(
+        (stream) => stream.container.name.toLowerCase() == 'mp4',
+      );
+      final otherAudioOnly = manifest.audioOnly.where(
+        (stream) => stream.container.name.toLowerCase() != 'mp4',
+      );
+      final mp4Muxed = manifest.muxed.where(
+        (stream) => stream.container.name.toLowerCase() == 'mp4',
+      );
+      final otherMuxed = manifest.muxed.where(
+        (stream) => stream.container.name.toLowerCase() != 'mp4',
+      );
+
+      if (mp4Muxed.isNotEmpty) {
+        candidates.add(mp4Muxed.withHighestBitrate().url.toString());
       }
+      if (mp4AudioOnly.isNotEmpty) {
+        candidates.add(mp4AudioOnly.withHighestBitrate().url.toString());
+      }
+      if (otherMuxed.isNotEmpty) {
+        candidates.add(otherMuxed.withHighestBitrate().url.toString());
+      }
+      if (otherAudioOnly.isNotEmpty) {
+        candidates.add(otherAudioOnly.withHighestBitrate().url.toString());
+      }
+
+      for (final stream in mp4Muxed) {
+        candidates.add(stream.url.toString());
+      }
+      for (final stream in mp4AudioOnly) {
+        candidates.add(stream.url.toString());
+      }
+      for (final stream in otherMuxed) {
+        candidates.add(stream.url.toString());
+      }
+      for (final stream in otherAudioOnly) {
+        candidates.add(stream.url.toString());
+      }
+
+      final deduped = <String>[];
+      for (final candidate in candidates) {
+        if (!deduped.contains(candidate)) {
+          deduped.add(candidate);
+        }
+      }
+
+      if (deduped.isEmpty) {
+        throw Exception('No playable streams found for this video.');
+      }
+
+      _resolvedStreamsCache[videoId] = _YouTubeResolvedStreams(
+        urls: deduped,
+        expiresAt: DateTime.now().add(_resolvedStreamsTtl),
+      );
+
+      return deduped;
+    })();
+
+    _resolvingStreamsByVideoId[videoId] = resolveFuture;
+
+    try {
+      return await resolveFuture;
+    } finally {
+      _resolvingStreamsByVideoId.remove(videoId);
     }
-
-    if (deduped.isEmpty) {
-      throw Exception('No playable streams found for this video.');
-    }
-
-    _resolvedStreamsCache[videoId] = _YouTubeResolvedStreams(
-      urls: deduped,
-      expiresAt: now.add(_resolvedStreamsTtl),
-    );
-
-    return deduped;
   }
 
   Future<void> _prefetchYouTubeStreamUrls(String videoId) async {
@@ -204,11 +420,305 @@ class _HomeState extends State<Home> {
     String tab, {
     Map<String, dynamic>? extra,
   }) async {
+    if (tab == 'playlist_inspect') {
+      _trackRecentPlaylist(extra);
+    }
+
     if (!mounted) return;
     setState(() {
       _selectedTab = tab;
       _selectedTabExtra = extra;
     });
+  }
+
+  Widget _buildHomeSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecentlyPlayedPlaylistsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildHomeSectionTitle('Recently Played Playlists'),
+        if (_recentPlayedPlaylists.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 6),
+            child: Text(
+              'No playlists played yet.',
+              style: TextStyle(color: Colors.white70),
+            ),
+          )
+        else
+          SizedBox(
+            height: 100,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _recentPlayedPlaylists.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final item = _recentPlayedPlaylists[index];
+                final title = item['playlistTitle'] ?? 'Playlist';
+                final playlistId = item['playlistId'] ?? '';
+                final thumbnailUrl = item['thumbnailUrl']?.toString() ?? '';
+                return InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: playlistId.isEmpty
+                      ? null
+                      : () => _onSidebarTabSelected(
+                          'playlist_inspect',
+                          extra: {
+                            'playlistId': playlistId,
+                            'playlistTitle': title,
+                          },
+                        ),
+                  child: Container(
+                    width: 220,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFdba43a),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        thumbnailUrl.isNotEmpty
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: Image.network(
+                                  thumbnailUrl,
+                                  width: 48,
+                                  height: 48,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.queue_music_rounded,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.queue_music_rounded,
+                                color: Colors.white,
+                              ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildRecentlyPlayedSongsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildHomeSectionTitle('Recently Played Songs'),
+        if (_recentPlayedSongs.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 6),
+            child: Text(
+              'No songs played yet.',
+              style: TextStyle(color: Colors.white70),
+            ),
+          )
+        else
+          ..._recentPlayedSongs.take(5).map((item) {
+            final title = item['songTitle'] ?? 'Unknown song';
+            final artist = item['songArtist'] ?? 'Unknown artist';
+            final songPath = (item['songPath'] ?? '').toString();
+            final thumbnailUrl = (item['thumbnailUrl'] ?? '').toString();
+            final coverBytes = item['coverImageBytes'] as Uint8List?;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFdba43a),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: ListTile(
+                leading: songPath.startsWith('yt:') && thumbnailUrl.isNotEmpty
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.network(
+                          thumbnailUrl,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.music_note_rounded,
+                            color: Colors.white,
+                          ),
+                        ),
+                      )
+                    : (coverBytes != null && coverBytes.isNotEmpty)
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.memory(
+                          coverBytes,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.music_note_rounded,
+                            color: Colors.white,
+                          ),
+                        ),
+                      )
+                    : const Icon(Icons.music_note_rounded, color: Colors.white),
+                title: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                onTap: () => _playRecentSong(item),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _buildTrendingInDenmarkSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _buildHomeSectionTitle('Trending in Denmark')),
+            IconButton(
+              onPressed: _isLoadingTrendingInDenmark
+                  ? null
+                  : () => _loadTrendingInDenmark(),
+              icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+              tooltip: 'Refresh trending',
+            ),
+          ],
+        ),
+        if (_isLoadingTrendingInDenmark)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_trendingInDenmarkError != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(
+              'Failed to load trending songs: $_trendingInDenmarkError',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          )
+        else if (_trendingInDenmark.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: Text(
+              'No trending songs found right now.',
+              style: TextStyle(color: Colors.white70),
+            ),
+          )
+        else
+          ..._trendingInDenmark.take(5).map((item) {
+            final title = item['title'] ?? 'Unknown song';
+            final artist = item['artist'] ?? 'Unknown artist';
+            final thumbnail = item['thumbnailUrl'] ?? '';
+            final videoId = item['videoId'] ?? '';
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFdba43a),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: ListTile(
+                leading: thumbnail.isEmpty
+                    ? const Icon(Icons.trending_up_rounded, color: Colors.white)
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.network(
+                          thumbnail,
+                          width: 56,
+                          height: 56,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.trending_up_rounded,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                title: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                onTap: videoId.isEmpty
+                    ? null
+                    : () => _playYouTubeSelection(
+                        videoId: videoId,
+                        title: title,
+                        artist: artist,
+                        thumbnailUrl: thumbnail,
+                      ),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _buildHomeDashboard() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Welcome back${userDisplayName == null ? '' : ', $userDisplayName'}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 18),
+          _buildRecentlyPlayedPlaylistsSection(),
+          const SizedBox(height: 18),
+          _buildRecentlyPlayedSongsSection(),
+          const SizedBox(height: 18),
+          _buildTrendingInDenmarkSection(),
+        ],
+      ),
+    );
   }
 
   Widget _buildMainContent() {
@@ -220,12 +730,20 @@ class _HomeState extends State<Home> {
       return const LikedPage();
     }
 
+    if (_selectedTab == 'local_files') {
+      return const LocalFilesPage();
+    }
+
+    if (_selectedTab == 'converter') {
+      return const ConverterPage();
+    }
+
     if (_selectedTab == 'settings') {
       return const SettingsPage();
     }
 
-    if (_selectedTab == 'local_files') {
-      return const LocalFilesPage();
+    if (_selectedTab == 'profile') {
+      return const ProfilePage();
     }
 
     if (_selectedTab == 'playlist_inspect') {
@@ -235,17 +753,12 @@ class _HomeState extends State<Home> {
       );
     }
 
-    return Center(
-      child: Text(
-        'Logged in as: ${userDisplayName ?? 'Guest'}',
-        style: const TextStyle(color: Colors.white, fontSize: 24),
-        textAlign: TextAlign.center,
-      ),
-    );
+    return _buildHomeDashboard();
   }
 
   @override
   void dispose() {
+    _playback.removeListener(_onPlaybackChanged);
     _youtubeExplode.close();
     _searchController.dispose();
     super.dispose();
@@ -260,20 +773,169 @@ class _HomeState extends State<Home> {
     }
   }
 
-  Future<void> _clearLoggedInCache() async {
+  Future<void> _logout() async {
     try {
+      await _playback.switchToLocalEngine();
+      await player.stop();
+      _playback.setIsPlaying(false);
+      _playback.setProgress(Duration.zero);
+      _playback.setDuration(Duration.zero);
+      _playback.setCurrentSongPath(null);
+      _playback.clearPlaylistQueue();
+
       await GoogleAuthService.signOut();
       await _auth.signOut();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Logged-in cache cleared.')));
+      AppFlushbar.success(context, 'Logged out successfully.');
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to clear cache: $error')));
+      AppFlushbar.error(context, 'Failed to log out: $error');
     }
+  }
+
+  String _queueTitle(dynamic item) {
+    if (item is Map) {
+      final v = item['songName'] ?? item['title'] ?? item['name'];
+      if (v != null) return v.toString();
+    }
+    return item.toString();
+  }
+
+  String? _queueSubtitle(dynamic item) {
+    if (item is Map) {
+      final v = item['artistName'] ?? item['artist'] ?? item['author'];
+      if (v != null && v.toString().trim().isNotEmpty) return v.toString();
+    }
+    return null;
+  }
+
+  Future<void> _onQueueItemTap(int index) async {
+    // Replace with your real PlaybackModel method if different.
+    // Example expected method names: playQueueIndex / playAtIndex / playFromQueue
+    try {
+      final dynamic model = _playback;
+      await model.playQueueIndex(index);
+    } catch (_) {}
+  }
+
+  void _openQueueSheet(BuildContext context, List<dynamic> queue) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1f1f1f),
+      builder: (context) {
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: queue.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Queue is empty',
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  )
+                : ListView(
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Text(
+                          'Now Playing',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Builder(
+                        builder: (context) {
+                          final item = queue.first;
+                          final subtitle = _queueSubtitle(item);
+                          return ListTile(
+                            leading: const Icon(
+                              Icons.graphic_eq_rounded,
+                              color: Colors.white70,
+                            ),
+                            title: Text(
+                              _queueTitle(item),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: subtitle == null
+                                ? null
+                                : Text(
+                                    subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                          );
+                        },
+                      ),
+                      const Divider(color: Colors.white12, height: 1),
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                        child: Text(
+                          'Up Next',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (queue.length <= 1)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                          child: Text(
+                            'No songs up next.',
+                            style: TextStyle(color: Colors.white70),
+                          ),
+                        )
+                      else
+                        ...List.generate(queue.length - 1, (offset) {
+                          final index = offset + 1;
+                          final item = queue[index];
+                          final subtitle = _queueSubtitle(item);
+                          return Column(
+                            children: [
+                              ListTile(
+                                leading: Text(
+                                  '$index',
+                                  style: const TextStyle(color: Colors.white54),
+                                ),
+                                title: Text(
+                                  _queueTitle(item),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                                subtitle: subtitle == null
+                                    ? null
+                                    : Text(
+                                        subtitle,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                onTap: () async {
+                                  Navigator.of(context).pop();
+                                  await _onQueueItemTap(index);
+                                },
+                              ),
+                              const Divider(color: Colors.white12, height: 1),
+                            ],
+                          );
+                        }),
+                    ],
+                  ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -291,10 +953,18 @@ class _HomeState extends State<Home> {
             currentSliderValue: playback.currentSliderValue,
             onSeek: (duration) => playback.seekTo(duration),
             onPlayPauseToggle: playback.togglePlayPause,
+            isShuffled: playback.isShuffled,
+            isLooped: playback.isLooped,
             onPrevious: playback.playPrevious,
             onForward: playback.playNext,
             onVolumeChange: (value) => playback.applyVolume(value),
             duration: playback.duration,
+            onShuffle: playback.toggleShuffle,
+            onUnshuffle: playback.toggleShuffle,
+            onLoop: playback.toggleLoop,
+            onUnloop: playback.toggleLoop,
+            queue: playback.queue,
+            onQueuePressed: () => _openQueueSheet(context, playback.queue),
           );
         },
       ),
@@ -326,7 +996,7 @@ class _HomeState extends State<Home> {
                                 _selectedTab = 'home';
                               });
                             },
-                            icon: Icon(Icons.home, color: Colors.white),
+                            icon: Icon(Icons.home_rounded, color: Colors.white),
                           ),
                           SizedBox(width: 10),
                           SizedBox(
@@ -361,7 +1031,10 @@ class _HomeState extends State<Home> {
                                   ),
                                 ),
                                 suffixIcon: IconButton(
-                                  icon: Icon(Icons.search, color: Colors.white),
+                                  icon: Icon(
+                                    Icons.search_rounded,
+                                    color: Colors.white,
+                                  ),
                                   onPressed: () => debugPrint(
                                     'Search: ${_searchController.text}',
                                   ),
@@ -376,11 +1049,16 @@ class _HomeState extends State<Home> {
                                 _selectedTab = 'settings';
                               });
                             },
-                            icon: Icon(Icons.settings, color: Colors.white),
+                            icon: Icon(
+                              Icons.settings_rounded,
+                              color: Colors.white,
+                            ),
                           ),
                           SizedBox(width: 10),
                           IconButton(
-                            onPressed: () => _auth.signOut(),
+                            onPressed: () => setState(() {
+                              _selectedTab = 'profile';
+                            }),
                             icon: CircleAvatar(
                               backgroundImage: NetworkImage(
                                 _auth.currentUser?.photoURL ?? '',
@@ -389,8 +1067,11 @@ class _HomeState extends State<Home> {
                             ),
                           ),
                           IconButton(
-                            onPressed: _clearLoggedInCache,
-                            icon: Icon(Icons.logout, color: Colors.white),
+                            onPressed: _logout,
+                            icon: Icon(
+                              Icons.logout_rounded,
+                              color: Colors.white,
+                            ),
                           ),
                           SizedBox(width: 10),
                         ],

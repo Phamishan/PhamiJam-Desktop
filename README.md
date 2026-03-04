@@ -4,8 +4,9 @@
 
 ```
 👤 - Google Integration
-💸 - Free
+🆓 - Free
 ⛔ - No Ads
+🎗️ - Supports YouTube & local files
 🔊 - BEST VOLUME CONTROL IN THE WORLD*
 
 to be continued
@@ -29,19 +30,22 @@ to be continued
 
 ## core
 
-- [ ] autoplay
-- [ ] shuffle
-- [ ] loop
-- [ ] queue
+- [x] autoplay
+- [x] shuffle
+- [x] loop
+- [x] queue
+- [x] play next (local & yt)
 - [ ] general search function
 - [ ] home screen ui/design
+- [ ] artist page
+- [ ] album page
 
 ##### playlist stuff
 
-- [ ] create new playlist through phamijam
-- [ ] delete playlist through phamijam
-- [ ] edit playlist through phamijam
-- [ ] search through playlists and songs
+- [x] create new playlist through phamijam
+- [x] delete playlist through phamijam
+- [x] edit playlist through phamijam
+- [x] search through playlists and songs
 - [ ] change order?
 
 ---

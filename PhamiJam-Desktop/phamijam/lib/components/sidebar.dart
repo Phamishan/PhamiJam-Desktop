@@ -31,27 +31,34 @@ class Sidebar extends StatelessWidget {
             shrinkWrap: true,
             children: [
               ListTile(
-                leading: Icon(Icons.library_music, color: Colors.white),
+                leading: Icon(Icons.library_music_rounded, color: Colors.white),
                 title: Text('Playlists', style: TextStyle(color: Colors.white)),
                 onTap: () {
                   onTabSelected('playlists');
                 },
               ),
               ListTile(
-                leading: Icon(Icons.favorite, color: Colors.white),
+                leading: Icon(Icons.favorite_rounded, color: Colors.white),
                 title: Text('Liked', style: TextStyle(color: Colors.white)),
                 onTap: () {
                   onTabSelected('liked');
                 },
               ),
               ListTile(
-                leading: Icon(Icons.folder, color: Colors.white),
+                leading: Icon(Icons.folder_rounded, color: Colors.white),
                 title: Text(
                   'Local files',
                   style: TextStyle(color: Colors.white),
                 ),
                 onTap: () {
                   onTabSelected('local_files');
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.music_note_rounded, color: Colors.white),
+                title: Text('Converter', style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  onTabSelected('converter');
                 },
               ),
               Divider(
