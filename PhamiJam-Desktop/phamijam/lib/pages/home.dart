@@ -554,49 +554,55 @@ class _HomeState extends State<Home> {
                 color: const Color(0xFFdba43a),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: ListTile(
-                leading: songPath.startsWith('yt:') && thumbnailUrl.isNotEmpty
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.network(
-                          thumbnailUrl,
-                          width: 56,
-                          height: 56,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.music_note_rounded,
-                            color: Colors.white,
+              child: Material(
+                type: MaterialType.transparency,
+                child: ListTile(
+                  leading: songPath.startsWith('yt:') && thumbnailUrl.isNotEmpty
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.network(
+                            thumbnailUrl,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.music_note_rounded,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
-                      )
-                    : (coverBytes != null && coverBytes.isNotEmpty)
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.memory(
-                          coverBytes,
-                          width: 56,
-                          height: 56,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.music_note_rounded,
-                            color: Colors.white,
+                        )
+                      : (coverBytes != null && coverBytes.isNotEmpty)
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.memory(
+                            coverBytes,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.music_note_rounded,
+                              color: Colors.white,
+                            ),
                           ),
+                        )
+                      : const Icon(
+                          Icons.music_note_rounded,
+                          color: Colors.white,
                         ),
-                      )
-                    : const Icon(Icons.music_note_rounded, color: Colors.white),
-                title: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white),
+                  title: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  onTap: () => _playRecentSong(item),
                 ),
-                subtitle: Text(
-                  artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                onTap: () => _playRecentSong(item),
               ),
             );
           }),
@@ -653,42 +659,48 @@ class _HomeState extends State<Home> {
                 color: const Color(0xFFdba43a),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: ListTile(
-                leading: thumbnail.isEmpty
-                    ? const Icon(Icons.trending_up_rounded, color: Colors.white)
-                    : ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.network(
-                          thumbnail,
-                          width: 56,
-                          height: 56,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.trending_up_rounded,
-                            color: Colors.white,
+              child: Material(
+                type: MaterialType.transparency,
+                child: ListTile(
+                  leading: thumbnail.isEmpty
+                      ? const Icon(
+                          Icons.trending_up_rounded,
+                          color: Colors.white,
+                        )
+                      : ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.network(
+                            thumbnail,
+                            width: 56,
+                            height: 56,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.trending_up_rounded,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
-                      ),
-                title: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white),
+                  title: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  onTap: videoId.isEmpty
+                      ? null
+                      : () => _playYouTubeSelection(
+                          videoId: videoId,
+                          title: title,
+                          artist: artist,
+                          thumbnailUrl: thumbnail,
+                        ),
                 ),
-                subtitle: Text(
-                  artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                onTap: videoId.isEmpty
-                    ? null
-                    : () => _playYouTubeSelection(
-                        videoId: videoId,
-                        title: title,
-                        artist: artist,
-                        thumbnailUrl: thumbnail,
-                      ),
               ),
             );
           }),
@@ -850,27 +862,30 @@ class _HomeState extends State<Home> {
                         builder: (context) {
                           final item = queue.first;
                           final subtitle = _queueSubtitle(item);
-                          return ListTile(
-                            leading: const Icon(
-                              Icons.graphic_eq_rounded,
-                              color: Colors.white70,
-                            ),
-                            title: Text(
-                              _queueTitle(item),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            subtitle: subtitle == null
-                                ? null
-                                : Text(
-                                    subtitle,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Colors.white70,
+                          return Material(
+                            type: MaterialType.transparency,
+                            child: ListTile(
+                              leading: const Icon(
+                                Icons.graphic_eq_rounded,
+                                color: Colors.white70,
+                              ),
+                              title: Text(
+                                _queueTitle(item),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              subtitle: subtitle == null
+                                  ? null
+                                  : Text(
+                                      subtitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                      ),
                                     ),
-                                  ),
+                            ),
                           );
                         },
                       ),
@@ -900,31 +915,36 @@ class _HomeState extends State<Home> {
                           final subtitle = _queueSubtitle(item);
                           return Column(
                             children: [
-                              ListTile(
-                                leading: Text(
-                                  '$index',
-                                  style: const TextStyle(color: Colors.white54),
-                                ),
-                                title: Text(
-                                  _queueTitle(item),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                                subtitle: subtitle == null
-                                    ? null
-                                    : Text(
-                                        subtitle,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: Colors.white70,
+                              Material(
+                                type: MaterialType.transparency,
+                                child: ListTile(
+                                  leading: Text(
+                                    '$index',
+                                    style: const TextStyle(
+                                      color: Colors.white54,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    _queueTitle(item),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white),
+                                  ),
+                                  subtitle: subtitle == null
+                                      ? null
+                                      : Text(
+                                          subtitle,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                          ),
                                         ),
-                                      ),
-                                onTap: () async {
-                                  Navigator.of(context).pop();
-                                  await _onQueueItemTap(index);
-                                },
+                                  onTap: () async {
+                                    Navigator.of(context).pop();
+                                    await _onQueueItemTap(index);
+                                  },
+                                ),
                               ),
                               const Divider(color: Colors.white12, height: 1),
                             ],

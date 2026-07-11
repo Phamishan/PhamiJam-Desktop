@@ -1,24 +1,30 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
-
+import 'package:dart_discord_presence/dart_discord_presence.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:phamijam/components/audio_player.dart';
 
 enum PlaybackEngine { local, youtube }
 
 class PlaybackModel extends ChangeNotifier {
-  static const double _volumeBoostFloor = 65.0;
   static const int _queueAheadCount = 4;
+  static const Duration _discordPresenceDebounce = Duration(milliseconds: 50);
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<AppPlayerState>? _playerStateSubscription;
   StreamSubscription<Duration?>? _durationSubscription;
   StreamSubscription<double>? _volumeSubscription;
   StreamSubscription<bool>? _completedSubscription;
+  Timer? _discordPresenceTimer;
   bool _isBoundToPlayer = false;
   bool _completionHandledForCurrentTrack = false;
   bool _wasPlaying = false;
   PlaybackEngine _engine = PlaybackEngine.local;
+  DiscordRPC? _discordRpc;
+  bool _discordRpcReady = false;
+  String? _lastDiscordPresenceSignature;
+  Future<void>? _discordReconnectFuture;
 
   Future<void> Function(String videoId)? _youtubeLoadVideoById;
   Future<void> Function(String videoId)? _youtubePrefetchVideoById;
@@ -54,22 +60,18 @@ class PlaybackModel extends ChangeNotifier {
   PlaybackEngine get engine => _engine;
 
   double get effectiveVolumePercent =>
-      _sliderToOutputVolumePercent(currentSliderValue);
+      currentSliderValue.clamp(0, 100).toDouble();
+
+  bool get _hasDiscordPresenceTarget {
+    return currentSongPath != null && currentSongPath!.trim().isNotEmpty;
+  }
 
   double _sliderToOutputVolumePercent(double sliderValue) {
-    final safeSlider = sliderValue.clamp(0, 100).toDouble();
-    if (safeSlider <= 0) return 0;
-    final boosted =
-        _volumeBoostFloor + ((100 - _volumeBoostFloor) * (safeSlider / 100));
-    return boosted.clamp(0, 100).toDouble();
+    return sliderValue.clamp(0, 100).toDouble();
   }
 
   double _outputToSliderVolumePercent(double outputVolumePercent) {
-    final safeOutput = outputVolumePercent.clamp(0, 100).toDouble();
-    if (safeOutput <= 0) return 0;
-    final slider =
-        ((safeOutput - _volumeBoostFloor) / (100 - _volumeBoostFloor)) * 100;
-    return slider.clamp(0, 100).toDouble();
+    return outputVolumePercent.clamp(0, 100).toDouble();
   }
 
   void bindYouTubeCallbacks({
@@ -113,9 +115,27 @@ class PlaybackModel extends ChangeNotifier {
     _completionHandledForCurrentTrack = true;
     if (isLooped) {
       await _restartCurrentTrack();
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 150), () {
+          return _syncDiscordPresence(force: true);
+        }),
+      );
       return;
     }
     await playNext(wrapAround: true);
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 150), () {
+        return _syncDiscordPresence(force: true);
+      }),
+    );
+  }
+
+  void _forceDiscordPresenceRefreshAfterTrackChange() {
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 150), () {
+        return _syncDiscordPresence(force: true);
+      }),
+    );
   }
 
   Future<void> _restartCurrentTrack() async {
@@ -243,6 +263,183 @@ class PlaybackModel extends ChangeNotifier {
 
     player.setVolume(effectiveVolumePercent / 100);
     _isBoundToPlayer = true;
+    unawaited(_initializeDiscordPresence());
+  }
+
+  Future<void> _initializeDiscordPresence({bool forceReconnect = false}) async {
+    if (!DiscordRPC.isAvailable) return;
+
+    final applicationId = dotenv.env['DISCORD_APPLICATION_ID']?.trim();
+    if (applicationId == null || applicationId.isEmpty) {
+      return;
+    }
+
+    if (!forceReconnect &&
+        _discordRpcReady &&
+        _discordRpc?.isConnected == true) {
+      return;
+    }
+
+    if (forceReconnect) {
+      _discordPresenceTimer?.cancel();
+      _discordRpcReady = false;
+      final previousRpc = _discordRpc;
+      _discordRpc = null;
+      if (previousRpc != null) {
+        try {
+          await previousRpc.dispose();
+        } catch (_) {}
+      }
+    }
+
+    final discordRpc = DiscordRPC();
+    try {
+      await discordRpc.initialize(applicationId);
+      _discordRpc = discordRpc;
+      _discordRpcReady = true;
+      final connectedUser = discordRpc.connectedUser;
+      if (connectedUser != null) {
+        debugPrint(
+          'Connected to Discord as ${connectedUser.globalName ?? connectedUser.username}',
+        );
+      } else {
+        debugPrint('Connected to Discord presence');
+      }
+      await _syncDiscordPresence(force: true);
+    } catch (error) {
+      debugPrint('Discord presence initialization failed: $error');
+      await discordRpc.dispose();
+    }
+  }
+
+  void _scheduleDiscordPresenceSync({bool allowReconnect = false}) {
+    final discordRpc = _discordRpc;
+    final isConnected = discordRpc?.isConnected == true;
+
+    if (!isConnected) {
+      if (allowReconnect && _hasDiscordPresenceTarget) {
+        debugPrint('Discord disconnected, retrying on track switch');
+        _discordReconnectFuture ??=
+            _initializeDiscordPresence(forceReconnect: true).whenComplete(() {
+              _discordReconnectFuture = null;
+            });
+      }
+      return;
+    }
+
+    _discordPresenceTimer?.cancel();
+    _discordPresenceTimer = Timer(_discordPresenceDebounce, () {
+      unawaited(_syncDiscordPresence());
+    });
+  }
+
+  String? _buildThumbnailUrl() {
+    final path = currentSongPath?.trim() ?? '';
+    if (path.startsWith('yt:')) {
+      final videoId = path.substring(3).trim();
+      if (videoId.isNotEmpty) {
+        return 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+      }
+    }
+    return null;
+  }
+
+  DiscordTimestamps? _buildProgressTimestamps() {
+    final totalDuration = duration;
+    final currentPosition = displayedProgress;
+    if (totalDuration == null || totalDuration <= Duration.zero) return null;
+    if (currentPosition < Duration.zero || currentPosition > totalDuration) {
+      return null;
+    }
+
+    final now = DateTime.now();
+    return DiscordTimestamps.range(
+      now.subtract(currentPosition),
+      now.add(totalDuration - currentPosition),
+    );
+  }
+
+  DiscordPresence _buildDiscordPresence() {
+    final title = songName.trim().isEmpty ? 'Unknown Song' : songName.trim();
+    final artist = artistName.trim().isEmpty
+        ? 'Unknown Artist'
+        : artistName.trim();
+    final thumbnailUrl = _buildThumbnailUrl();
+    final fallbackImageKey = dotenv.env['DISCORD_LARGE_IMAGE_KEY']?.trim();
+    final fallbackImageUrl = dotenv.env['DISCORD_LARGE_IMAGE_URL']?.trim();
+
+    DiscordAsset? largeAsset;
+    if (thumbnailUrl != null && thumbnailUrl.isNotEmpty) {
+      largeAsset = DiscordAsset.fromUrl(thumbnailUrl);
+    } else if (fallbackImageUrl != null && fallbackImageUrl.isNotEmpty) {
+      largeAsset = DiscordAsset.fromUrl(fallbackImageUrl);
+    } else if (fallbackImageKey != null && fallbackImageKey.isNotEmpty) {
+      largeAsset = DiscordAsset.fromKey(fallbackImageKey);
+    }
+
+    return DiscordPresence(
+      type: DiscordActivityType.listening,
+      details: title,
+      state: artist,
+      timestamps: _buildProgressTimestamps(),
+      largeAsset: largeAsset,
+      statusDisplayType: DiscordStatusDisplayType.details,
+    );
+  }
+
+  String _presenceSignature(DiscordPresence presence) {
+    final timestamps = presence.timestamps;
+    final largeAsset = presence.largeAsset;
+    return [
+      presence.type.value.toString(),
+      presence.details ?? '',
+      presence.state ?? '',
+      timestamps?.start?.toString() ?? '',
+      timestamps?.end?.toString() ?? '',
+      largeAsset?.url ?? largeAsset?.key ?? '',
+    ].join('|');
+  }
+
+  Future<void> _syncDiscordPresence({bool force = false}) async {
+    final reconnectFuture = _discordReconnectFuture;
+    if (reconnectFuture != null) {
+      await reconnectFuture;
+    }
+
+    final discordRpc = _discordRpc;
+    if (discordRpc == null ||
+        !_discordRpcReady ||
+        discordRpc.isConnected != true) {
+      return;
+    }
+
+    if (!_hasDiscordPresenceTarget) {
+      _lastDiscordPresenceSignature = null;
+      try {
+        await discordRpc.clearPresence();
+      } catch (_) {}
+      return;
+    }
+
+    final presence = _buildDiscordPresence();
+    final signature = _presenceSignature(presence);
+    if (!force && signature == _lastDiscordPresenceSignature) {
+      return;
+    }
+
+    try {
+      await discordRpc.setPresence(presence);
+      _lastDiscordPresenceSignature = signature;
+    } catch (error) {
+      debugPrint('Discord presence update failed: $error');
+      if (error.toString().contains('Not connected to Discord')) {
+        _discordRpcReady = false;
+        _discordReconnectFuture ??=
+            _initializeDiscordPresence(forceReconnect: true).whenComplete(() {
+              _discordReconnectFuture = null;
+            });
+      }
+    }
   }
 
   void setQueueHandlers({
@@ -328,6 +525,7 @@ class PlaybackModel extends ChangeNotifier {
     notifyListeners();
 
     await _playBySourceIndex(_playOrder[targetOrderIndex]);
+    _forceDiscordPresenceRefreshAfterTrackChange();
     unawaited(_prefetchAhead());
   }
 
@@ -343,6 +541,7 @@ class PlaybackModel extends ChangeNotifier {
       notifyListeners();
 
       await _playBySourceIndex(_playOrder[previousOrderIndex]);
+      _forceDiscordPresenceRefreshAfterTrackChange();
       unawaited(_prefetchAhead());
     }
   }
@@ -362,6 +561,7 @@ class PlaybackModel extends ChangeNotifier {
       notifyListeners();
 
       await _playBySourceIndex(_playOrder[nextOrderIndex]);
+      _forceDiscordPresenceRefreshAfterTrackChange();
       unawaited(_prefetchAhead());
     }
   }
@@ -447,9 +647,10 @@ class PlaybackModel extends ChangeNotifier {
     setProgress(value);
     if (_engine == PlaybackEngine.youtube) {
       await _youtubeSeek?.call(value);
-      return;
+    } else {
+      await player.seek(value);
     }
-    await player.seek(value);
+    _scheduleDiscordPresenceSync();
   }
 
   Future<void> togglePlayPause() async {
@@ -609,17 +810,20 @@ class PlaybackModel extends ChangeNotifier {
   void setArtist(String artist) {
     artistName = artist;
     notifyListeners();
+    _scheduleDiscordPresenceSync();
   }
 
   void setSongName(String name) {
     songName = name;
     notifyListeners();
+    _scheduleDiscordPresenceSync();
   }
 
   void setCurrentSongPath(String? path) {
     currentSongPath = path;
     _completionHandledForCurrentTrack = false;
     notifyListeners();
+    _scheduleDiscordPresenceSync(allowReconnect: true);
   }
 
   void setCoverImageBytes(Uint8List? bytes) {
@@ -649,16 +853,19 @@ class PlaybackModel extends ChangeNotifier {
     progress = value;
     seekPreview = value;
     notifyListeners();
+    _scheduleDiscordPresenceSync();
   }
 
   void setDuration(Duration? value) {
     duration = value;
     notifyListeners();
+    _scheduleDiscordPresenceSync();
   }
 
   void setIsPlaying(bool value) {
     isPlaying = value;
     notifyListeners();
+    _scheduleDiscordPresenceSync();
   }
 
   void setIsMuted(bool value) {
@@ -673,11 +880,14 @@ class PlaybackModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _discordPresenceTimer?.cancel();
     _positionSubscription?.cancel();
     _playerStateSubscription?.cancel();
     _durationSubscription?.cancel();
     _volumeSubscription?.cancel();
     _completedSubscription?.cancel();
+    unawaited(_discordRpc?.clearPresence());
+    unawaited(_discordRpc?.dispose());
     super.dispose();
   }
 }

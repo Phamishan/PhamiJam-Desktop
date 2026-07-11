@@ -1,6 +1,5 @@
 import 'dart:math';
 import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
@@ -721,53 +720,58 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                               : const Color(0xFFdba43a),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: ListTile(
-                          leading: thumbnailUrl.isNotEmpty
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.network(
-                                    thumbnailUrl,
-                                    width: 56,
-                                    height: 56,
-                                    fit: BoxFit.cover,
-                                    errorBuilder:
-                                        (context, error, stackTrace) =>
-                                            const Icon(
-                                              Icons.music_note_rounded,
-                                              color: Colors.white,
-                                            ),
+                        child: Material(
+                          type: MaterialType.transparency,
+                          child: ListTile(
+                            leading: thumbnailUrl.isNotEmpty
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Image.network(
+                                      thumbnailUrl,
+                                      width: 56,
+                                      height: 56,
+                                      fit: BoxFit.cover,
+                                      errorBuilder:
+                                          (context, error, stackTrace) =>
+                                              const Icon(
+                                                Icons.music_note_rounded,
+                                                color: Colors.white,
+                                              ),
+                                    ),
+                                  )
+                                : const Icon(
+                                    Icons.music_note_rounded,
+                                    color: Colors.white,
                                   ),
-                                )
-                              : const Icon(
-                                  Icons.music_note_rounded,
-                                  color: Colors.white,
-                                ),
-                          title: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          subtitle: Text(
-                            artist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                          trailing: isLoadingThisSong
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
+                            title: Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                            trailing: isLoadingThisSong
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Text(
+                                    songDurationLabel,
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                    ),
                                   ),
-                                )
-                              : Text(
-                                  songDurationLabel,
-                                  style: const TextStyle(color: Colors.white70),
-                                ),
-                          onTap: () =>
-                              _playYouTubeSongAtIndex(sourceIndex, song),
+                            onTap: () =>
+                                _playYouTubeSongAtIndex(sourceIndex, song),
+                          ),
                         ),
                       ),
                     );

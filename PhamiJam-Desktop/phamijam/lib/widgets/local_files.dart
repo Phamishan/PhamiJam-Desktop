@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:typed_data';
-
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -259,7 +258,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
   }
 
   Future<void> _chooseLocation() async {
-    final selectedPath = await FilePicker.platform.getDirectoryPath(
+    final selectedPath = await FilePicker.getDirectoryPath(
       dialogTitle: 'Choose music folder',
     );
 
@@ -506,38 +505,42 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                                 : const Color(0xFFdba43a),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: ListTile(
-                            leading: coverBytes != null && coverBytes.isNotEmpty
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: Image.memory(
-                                      coverBytes,
-                                      width: 56,
-                                      height: 56,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, _, _) => const Icon(
-                                        Icons.music_note_rounded,
-                                        color: Colors.white,
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: ListTile(
+                              leading:
+                                  coverBytes != null && coverBytes.isNotEmpty
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Image.memory(
+                                        coverBytes,
+                                        width: 56,
+                                        height: 56,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => const Icon(
+                                          Icons.music_note_rounded,
+                                          color: Colors.white,
+                                        ),
                                       ),
+                                    )
+                                  : const Icon(
+                                      Icons.music_note_rounded,
+                                      color: Colors.white,
                                     ),
-                                  )
-                                : const Icon(
-                                    Icons.music_note_rounded,
-                                    color: Colors.white,
-                                  ),
-                            title: Text(
-                              song,
-                              style: const TextStyle(color: Colors.white),
+                              title: Text(
+                                song,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              subtitle: Text(
+                                artist,
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                              trailing: Text(
+                                songDurationLabel,
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                              onTap: () => _play(index: sourceIndex),
                             ),
-                            subtitle: Text(
-                              artist,
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                            trailing: Text(
-                              songDurationLabel,
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                            onTap: () => _play(index: sourceIndex),
                           ),
                         ),
                       ),
