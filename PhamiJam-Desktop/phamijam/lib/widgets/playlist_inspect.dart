@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
+import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:provider/provider.dart';
@@ -35,6 +36,7 @@ class PlaylistInspectPage extends StatefulWidget {
   final bool isPlaying;
   final bool isShuffled;
   final bool isLooped;
+  final void Function(String artistId, String artistName)? onOpenArtist;
 
   const PlaylistInspectPage({
     super.key,
@@ -46,6 +48,7 @@ class PlaylistInspectPage extends StatefulWidget {
     this.isPlaying = false,
     this.isShuffled = false,
     this.isLooped = false,
+    this.onOpenArtist,
   });
 
   @override
@@ -149,6 +152,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         songs.add(<String, dynamic>{
           'title': title,
           'artist': artist,
+          'artistId': video.channelId.value,
           'videoId': videoId,
           'thumbnailUrl': video.thumbnails.highResUrl,
           'durationSeconds': durationSeconds,
@@ -193,6 +197,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   }
 
   Widget _buildMetadataRow() {
+    final colorScheme = Theme.of(context).colorScheme;
     final creatorLabel = _playlistCreator ?? 'Unknown creator';
     final songCountLabel = (_playlistSongCount ?? _songs.length).toString();
     final durationLabel = _formatDuration(_playlistDurationSeconds);
@@ -203,29 +208,42 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       children: [
         Text(
           creatorLabel,
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
           overflow: TextOverflow.ellipsis,
         ),
         Text(
           '$songCountLabel songs',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
         ),
-        Text(durationLabel, style: const TextStyle(color: Colors.white70)),
+        Text(
+          durationLabel,
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
       ],
     );
   }
 
   Widget _buildControlButtons() {
-    final playback = context.watch<PlaybackModel>();
+    final colorScheme = Theme.of(context).colorScheme;
+    final needsPlaybackState =
+        widget.onPlayPauseToggle == null ||
+        widget.onShuffleToggle == null ||
+        widget.onLoopToggle == null;
+    final playbackState = needsPlaybackState
+        ? context.select<PlaybackModel, (bool, bool, bool)>(
+            (playback) =>
+                (playback.isPlaying, playback.isShuffled, playback.isLooped),
+          )
+        : null;
     final isPlaying = widget.onPlayPauseToggle != null
         ? widget.isPlaying
-        : playback.isPlaying;
+        : playbackState!.$1;
     final isShuffled = widget.onShuffleToggle != null
         ? widget.isShuffled
-        : playback.isShuffled;
+        : playbackState!.$2;
     final isLooped = widget.onLoopToggle != null
         ? widget.isLooped
-        : playback.isLooped;
+        : playbackState!.$3;
 
     return Row(
       children: [
@@ -251,8 +269,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             await _playYouTubeSongAtIndex(targetIndex, _songs[targetIndex]);
           },
           icon: isPlaying
-              ? Icon(Icons.pause_circle_rounded, color: Colors.black)
-              : Icon(Icons.play_circle_rounded, color: Colors.black),
+              ? Icon(Icons.pause_circle_rounded, color: colorScheme.primary)
+              : Icon(Icons.play_circle_rounded, color: colorScheme.primary),
         ),
         IconButton(
           onPressed: () {
@@ -264,8 +282,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             _playback.toggleShuffle();
           },
           icon: isShuffled
-              ? Icon(Icons.shuffle_on_rounded, color: Colors.black)
-              : Icon(Icons.shuffle_rounded, color: Colors.black),
+              ? Icon(Icons.shuffle_on_rounded, color: colorScheme.primary)
+              : Icon(Icons.shuffle_rounded, color: colorScheme.primary),
         ),
         IconButton(
           onPressed: () {
@@ -277,8 +295,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             _playback.toggleLoop();
           },
           icon: isLooped
-              ? Icon(Icons.repeat_one_on_rounded, color: Colors.black)
-              : Icon(Icons.repeat_one_rounded, color: Colors.black),
+              ? Icon(Icons.repeat_one_on_rounded, color: colorScheme.primary)
+              : Icon(Icons.repeat_one_rounded, color: colorScheme.primary),
         ),
       ],
     );
@@ -417,6 +435,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
 
       playback.setSongName(title);
       playback.setArtist(artist);
+      playback.setArtistId(song['artistId'] as String?);
       playback.setCurrentSongPath('yt:$videoId');
       playback.setCoverImageBytes(coverBytes);
 
@@ -483,6 +502,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
 
         _playback.setSongName(title);
         _playback.setArtist(artist);
+        _playback.setArtistId(song['artistId'] as String?);
         _playback.setCurrentSongPath('yt:$videoId');
         _playback.setCoverImageBytes(coverBytes);
 
@@ -535,6 +555,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   }
 
   Widget _buildPlaylistInspectContent() {
+    final colorScheme = Theme.of(context).colorScheme;
     if (_isLoadingSongs) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -543,7 +564,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       return Center(
         child: Text(
           _errorMessage!,
-          style: const TextStyle(color: Colors.white70, fontSize: 16),
+          style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 16),
         ),
       );
     }
@@ -556,15 +577,15 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             children: [
               IconButton(
                 onPressed: _handleBack,
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                icon: Icon(Icons.arrow_back, color: colorScheme.onSurface),
               ),
               Expanded(
                 child: Text(
                   _displayPlaylistTitle,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: colorScheme.onSurface,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -574,17 +595,24 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                 onPressed: () => _loadSongs(forceRefresh: true),
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Refresh'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primaryContainer,
+                  foregroundColor: Colors.white,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 8),
           _buildMetadataRow(),
           const SizedBox(height: 16),
-          const Expanded(
+          Expanded(
             child: Center(
               child: Text(
                 'No songs found in this playlist.',
-                style: TextStyle(color: Colors.white70, fontSize: 16),
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 16,
+                ),
               ),
             ),
           ),
@@ -599,15 +627,18 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
           children: [
             IconButton(
               onPressed: _handleBack,
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+              icon: Icon(
+                Icons.arrow_back_rounded,
+                color: colorScheme.onSurface,
+              ),
             ),
             Expanded(
               child: Text(
                 _displayPlaylistTitle,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                  color: colorScheme.onSurface,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -617,6 +648,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
               onPressed: () => _loadSongs(forceRefresh: true),
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Refresh'),
+              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
             ),
           ],
         ),
@@ -632,17 +664,23 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
               _songSearchQuery = value;
             });
           },
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: colorScheme.onSurface),
           decoration: InputDecoration(
             hintText: 'Search songs...',
-            hintStyle: const TextStyle(color: Colors.white60, fontSize: 14),
-            prefixIcon: const Icon(Icons.search_rounded, color: Colors.white70),
+            hintStyle: TextStyle(
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+              fontSize: 14,
+            ),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              color: colorScheme.onSurfaceVariant,
+            ),
             suffixIcon: _songSearchQuery.isEmpty
                 ? null
                 : IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.close_rounded,
-                      color: Colors.white70,
+                      color: colorScheme.onSurfaceVariant,
                     ),
                     onPressed: () {
                       _songSearchController.clear();
@@ -652,7 +690,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                     },
                   ),
             filled: true,
-            fillColor: Colors.black26,
+            fillColor: colorScheme.onSurface.withValues(alpha: 0.26),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: BorderSide.none,
@@ -667,10 +705,13 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         const SizedBox(height: 12),
         Expanded(
           child: _filteredSongs.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     'No songs match your search.',
-                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 16,
+                    ),
                   ),
                 )
               : ListView.separated(
@@ -685,6 +726,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                     final title = (song['title'] as String?) ?? 'Unknown song';
                     final artist =
                         (song['artist'] as String?) ?? 'Unknown artist';
+                    final artistId = (song['artistId'] as String?) ?? '';
                     final thumbnailUrl =
                         (song['thumbnailUrl'] as String?) ?? '';
                     final durationSeconds =
@@ -694,86 +736,142 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                     final isLoadingThisSong =
                         videoId.isNotEmpty &&
                         _currentlyLoadingVideoId == videoId;
-                    final playback = context.watch<PlaybackModel>();
-                    final isCurrentSong =
-                        playback.currentSongPath == 'yt:$videoId';
 
-                    return ContextMenuRegion<String>(
-                      contextMenu: ContextMenu(
-                        entries: [
-                          MenuItem<String>(
-                            value: 'play_next',
-                            icon: const Icon(Icons.playlist_add_rounded),
-                            label: const Text('Add to Play Next'),
+                    return Builder(
+                      builder: (context) {
+                        final isCurrentSong = context
+                            .select<PlaybackModel, bool>(
+                              (playback) =>
+                                  playback.currentSongPath == 'yt:$videoId',
+                            );
+
+                        return ContextMenuRegion<String>(
+                          contextMenu: ContextMenu(
+                            borderRadius: BorderRadius.circular(12),
+                            entries: [
+                              MenuItem<String>(
+                                value: 'play_next',
+                                icon: const Icon(Icons.playlist_play_rounded),
+                                label: const Text('Add to play next'),
+                              ),
+                              MenuItem<String>(
+                                value: 'add_to_playlist',
+                                icon: const Icon(Icons.playlist_add_rounded),
+                                label: const Text('Add to playlist'),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                      onItemSelected: (value) {
-                        if (value == 'play_next') {
-                          _addYouTubeSongToQueue(song);
-                        }
+                          onItemSelected: (value) {
+                            if (value == 'play_next') {
+                              _addYouTubeSongToQueue(song);
+                            } else if (value == 'add_to_playlist') {
+                              if (videoId.isEmpty) {
+                                AppFlushbar.error(
+                                  context,
+                                  'This song cannot be added to a playlist.',
+                                );
+                                return;
+                              }
+                              showAddToPlaylistDialog(
+                                context,
+                                videoId: videoId,
+                                songTitle: title,
+                              );
+                            }
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: isCurrentSong
+                                  ? colorScheme.surfaceContainerHigh
+                                  : colorScheme.surface,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: ListTile(
+                                leading: thumbnailUrl.isNotEmpty
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.network(
+                                          thumbnailUrl,
+                                          width: 56,
+                                          height: 56,
+                                          cacheWidth: 112,
+                                          cacheHeight: 112,
+                                          fit: BoxFit.cover,
+                                          errorBuilder:
+                                              (context, error, stackTrace) =>
+                                                  Icon(
+                                                    Icons.music_note_rounded,
+                                                    color:
+                                                        colorScheme.onSurface,
+                                                  ),
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.music_note_rounded,
+                                        color: colorScheme.onSurface,
+                                      ),
+                                title: Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                                subtitle:
+                                    (artistId.isNotEmpty &&
+                                        widget.onOpenArtist != null)
+                                    ? MouseRegion(
+                                        cursor: SystemMouseCursors.click,
+                                        child: GestureDetector(
+                                          onTap: () => widget.onOpenArtist!(
+                                            artistId,
+                                            artist,
+                                          ),
+                                          child: Text(
+                                            artist,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                              decoration:
+                                                  TextDecoration.underline,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : Text(
+                                        artist,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                trailing: isLoadingThisSong
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Text(
+                                        songDurationLabel,
+                                        style: TextStyle(
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                onTap: () =>
+                                    _playYouTubeSongAtIndex(sourceIndex, song),
+                              ),
+                            ),
+                          ),
+                        );
                       },
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: isCurrentSong
-                              ? const Color(0xFFb5832e)
-                              : const Color(0xFFdba43a),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Material(
-                          type: MaterialType.transparency,
-                          child: ListTile(
-                            leading: thumbnailUrl.isNotEmpty
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: Image.network(
-                                      thumbnailUrl,
-                                      width: 56,
-                                      height: 56,
-                                      fit: BoxFit.cover,
-                                      errorBuilder:
-                                          (context, error, stackTrace) =>
-                                              const Icon(
-                                                Icons.music_note_rounded,
-                                                color: Colors.white,
-                                              ),
-                                    ),
-                                  )
-                                : const Icon(
-                                    Icons.music_note_rounded,
-                                    color: Colors.white,
-                                  ),
-                            title: Text(
-                              title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            subtitle: Text(
-                              artist,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                            trailing: isLoadingThisSong
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : Text(
-                                    songDurationLabel,
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                    ),
-                                  ),
-                            onTap: () =>
-                                _playYouTubeSongAtIndex(sourceIndex, song),
-                          ),
-                        ),
-                      ),
                     );
                   },
                 ),

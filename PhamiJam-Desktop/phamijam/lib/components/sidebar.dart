@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:provider/provider.dart';
@@ -10,10 +12,14 @@ class Sidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       decoration: BoxDecoration(
         border: Border(
-          right: BorderSide(color: Colors.white.withAlpha(100), width: 2),
+          right: BorderSide(
+            color: colorScheme.onSurface.withAlpha(100),
+            width: 2,
+          ),
         ),
         borderRadius: BorderRadius.only(
           topRight: Radius.circular(30),
@@ -35,11 +41,11 @@ class Sidebar extends StatelessWidget {
                 child: ListTile(
                   leading: Icon(
                     Icons.library_music_rounded,
-                    color: Colors.white,
+                    color: colorScheme.onSurface,
                   ),
                   title: Text(
                     'Playlists',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(color: colorScheme.onSurface),
                   ),
                   onTap: () {
                     onTabSelected('playlists');
@@ -49,8 +55,14 @@ class Sidebar extends StatelessWidget {
               Material(
                 type: MaterialType.transparency,
                 child: ListTile(
-                  leading: Icon(Icons.favorite_rounded, color: Colors.white),
-                  title: Text('Liked', style: TextStyle(color: Colors.white)),
+                  leading: Icon(
+                    Icons.favorite_rounded,
+                    color: colorScheme.onSurface,
+                  ),
+                  title: Text(
+                    'Liked',
+                    style: TextStyle(color: colorScheme.onSurface),
+                  ),
                   onTap: () {
                     onTabSelected('liked');
                   },
@@ -59,10 +71,13 @@ class Sidebar extends StatelessWidget {
               Material(
                 type: MaterialType.transparency,
                 child: ListTile(
-                  leading: Icon(Icons.folder_rounded, color: Colors.white),
+                  leading: Icon(
+                    Icons.folder_rounded,
+                    color: colorScheme.onSurface,
+                  ),
                   title: Text(
                     'Local files',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(color: colorScheme.onSurface),
                   ),
                   onTap: () {
                     onTabSelected('local_files');
@@ -72,10 +87,13 @@ class Sidebar extends StatelessWidget {
               Material(
                 type: MaterialType.transparency,
                 child: ListTile(
-                  leading: Icon(Icons.music_note_rounded, color: Colors.white),
+                  leading: Icon(
+                    Icons.music_note_rounded,
+                    color: colorScheme.onSurface,
+                  ),
                   title: Text(
                     'Converter',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(color: colorScheme.onSurface),
                   ),
                   onTap: () {
                     onTabSelected('converter');
@@ -83,7 +101,7 @@ class Sidebar extends StatelessWidget {
                 ),
               ),
               Divider(
-                color: Colors.white.withAlpha(100),
+                color: colorScheme.onSurface.withAlpha(100),
                 thickness: 5,
                 indent: 20,
                 endIndent: 20,
@@ -92,9 +110,12 @@ class Sidebar extends StatelessWidget {
             ],
           ),
           Spacer(),
-          Consumer<PlaybackModel>(
-            builder: (context, playback, child) {
-              final coverBytes = playback.coverImageBytes;
+          Selector<PlaybackModel, (Uint8List?, PlaybackEngine)>(
+            selector: (context, playback) =>
+                (playback.coverImageBytes, playback.engine),
+            builder: (context, data, child) {
+              final coverBytes = data.$1;
+              final engine = data.$2;
               return Container(
                 margin: EdgeInsets.only(bottom: 10),
                 decoration: BoxDecoration(
@@ -103,9 +124,7 @@ class Sidebar extends StatelessWidget {
                 width: 160,
                 height: 160,
                 clipBehavior: Clip.antiAlias,
-                child:
-                    playback.engine == PlaybackEngine.youtube &&
-                        videoCover != null
+                child: engine == PlaybackEngine.youtube && videoCover != null
                     ? FittedBox(
                         fit: BoxFit.cover,
                         child: SizedBox(

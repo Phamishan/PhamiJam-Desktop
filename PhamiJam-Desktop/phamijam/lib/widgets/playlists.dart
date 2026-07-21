@@ -553,6 +553,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     required String playlistId,
     required String playlistTitle,
   }) async {
+    final colorScheme = Theme.of(context).colorScheme;
     final shouldDelete = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -568,7 +569,10 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colorScheme.error,
+                foregroundColor: colorScheme.onError,
+              ),
               child: const Text('Delete'),
             ),
           ],
@@ -644,6 +648,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
               child: Text('Cancel'),
             ),
             ElevatedButton(
+              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
               onPressed: isCreating
                   ? null
                   : () async {
@@ -679,6 +684,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                         );
                         _cachedErrorMessage = null;
 
+                        if (!context.mounted) return;
                         Navigator.of(context).pop();
                         AppFlushbar.success(
                           this.context,
@@ -779,6 +785,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                         );
                         if (!mounted) return;
 
+                        if (!dialogContext.mounted) return;
                         Navigator.of(dialogContext).pop();
 
                         setState(() {
@@ -796,13 +803,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                         );
 
                         AppFlushbar.success(
-                          this.context,
+                          context,
                           'Playlist updated successfully.',
                         );
                         await _fetchUserPlaylists(forceRefresh: true);
                       } catch (e) {
                         if (!mounted) return;
-                        AppFlushbar.error(this.context, '$e');
+                        AppFlushbar.error(context, '$e');
                         setState(() {
                           isSaving = false;
                         });
@@ -823,6 +830,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   }
 
   Widget _buildPlaylistsContent() {
+    final colorScheme = Theme.of(context).colorScheme;
     if (_isLoadingPlaylists) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -831,7 +839,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       return Center(
         child: Text(
           _errorMessage!,
-          style: const TextStyle(color: Colors.white70, fontSize: 18),
+          style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 18),
         ),
       );
     }
@@ -843,8 +851,8 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
             Expanded(
               child: Text(
                 _playlistTitle,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: colorScheme.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
                 overflow: TextOverflow.ellipsis,
@@ -856,12 +864,14 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
               },
               icon: const Icon(Icons.add_rounded),
               label: const Text('Create'),
+              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
             ),
             const SizedBox(width: 16),
             ElevatedButton.icon(
               onPressed: () => _fetchUserPlaylists(forceRefresh: true),
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Refresh'),
+              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
             ),
           ],
         ),
@@ -873,17 +883,23 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
               _playlistSearchQuery = value;
             });
           },
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: colorScheme.onSurface),
           decoration: InputDecoration(
             hintText: 'Search playlists...',
-            hintStyle: const TextStyle(color: Colors.white60, fontSize: 14),
-            prefixIcon: const Icon(Icons.search_rounded, color: Colors.white70),
+            hintStyle: TextStyle(
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+              fontSize: 14,
+            ),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              color: colorScheme.onSurfaceVariant,
+            ),
             suffixIcon: _playlistSearchQuery.isEmpty
                 ? null
                 : IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.close_rounded,
-                      color: Colors.white70,
+                      color: colorScheme.onSurfaceVariant,
                     ),
                     onPressed: () {
                       _playlistSearchController.clear();
@@ -893,7 +909,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                     },
                   ),
             filled: true,
-            fillColor: Colors.black26,
+            fillColor: colorScheme.onSurface.withValues(alpha: 0.26),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: BorderSide.none,
@@ -907,10 +923,10 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
         const SizedBox(height: 10),
         Expanded(
           child: _filteredPlaylists.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     'No playlists found',
-                    style: TextStyle(color: Colors.white70),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 )
               : ListView.builder(
@@ -928,7 +944,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                         (playlist['count'] as String?) ??
                         '';
                     final subtitle = itemCount.isNotEmpty
-                        ? '$author • $itemCount songs'
+                        ? '$author - $itemCount songs'
                         : author;
                     final thumbnails =
                         (playlist['thumbnails'] as List?) ?? const [];
@@ -948,7 +964,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                       padding: const EdgeInsets.symmetric(vertical: 5),
                       child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0xFFdba43a),
+                          color: colorScheme.surface,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Material(
@@ -962,39 +978,44 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                       thumbnailUrl,
                                       width: 56,
                                       height: 56,
+                                      cacheWidth: 112,
+                                      cacheHeight: 112,
                                       fit: BoxFit.cover,
                                       errorBuilder:
-                                          (context, error, stackTrace) =>
-                                              const Icon(
-                                                Icons.playlist_play_rounded,
-                                                color: Colors.white,
-                                              ),
+                                          (context, error, stackTrace) => Icon(
+                                            Icons.playlist_play_rounded,
+                                            color: colorScheme.onSurface,
+                                          ),
                                     ),
                                   )
-                                : const Icon(
+                                : Icon(
                                     Icons.playlist_play_rounded,
-                                    color: Colors.white,
+                                    color: colorScheme.onSurface,
                                   ),
                             title: Text(
                               title,
-                              style: const TextStyle(color: Colors.white),
+                              style: TextStyle(color: colorScheme.onSurface),
                             ),
                             subtitle: Text(
                               subtitle,
-                              style: const TextStyle(color: Colors.white70),
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
                             ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Container(
                                   decoration: BoxDecoration(
-                                    color: Colors.black38,
+                                    color: colorScheme.onSurface.withValues(
+                                      alpha: 0.38,
+                                    ),
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: IconButton(
-                                    icon: const Icon(
+                                    icon: Icon(
                                       Icons.edit_rounded,
-                                      color: Colors.white,
+                                      color: colorScheme.onSurface,
                                     ),
                                     onPressed: () {
                                       final playlistId =
@@ -1019,13 +1040,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                 const SizedBox(width: 8),
                                 Container(
                                   decoration: BoxDecoration(
-                                    color: Colors.red,
+                                    color: colorScheme.error,
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: IconButton(
-                                    icon: const Icon(
+                                    icon: Icon(
                                       Icons.delete_rounded,
-                                      color: Colors.white,
+                                      color: colorScheme.onError,
                                     ),
                                     onPressed: () {
                                       final playlistId =

@@ -41,11 +41,9 @@ class _LoginState extends State<Login> {
     });
 
     try {
-      // Trigger the authentication flow
       final credentials = await GoogleAuthService.signIn();
 
       if (credentials == null) {
-        // User canceled the sign-in
         if (!mounted) return;
         setState(() {
           _isLoading = false;
@@ -125,9 +123,10 @@ class _LoginState extends State<Login> {
   @override
   Widget build(BuildContext context) {
     final isSignedIn = _userId != null;
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFdba43a),
+      backgroundColor: colorScheme.surface,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -142,7 +141,7 @@ class _LoginState extends State<Login> {
                       padding: EdgeInsets.all(24.0),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(25),
-                        color: const Color(0xFFb5832e),
+                        color: colorScheme.surfaceContainerHigh,
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.08),
@@ -167,23 +166,25 @@ class _LoginState extends State<Login> {
                             style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
-                              color: Colors.white,
+                              color: colorScheme.onSurface,
                             ),
                           ),
                           SizedBox(height: 12),
                           Text(
                             _userId != null
                                 ? "Logged in as $_userId"
-                                : "Please log in with your Google account to continue.",
+                                : "Sign in with your Google account to sync your YouTube playlists and start listening.",
                             style: TextStyle(
                               fontSize: 14,
-                              color: Colors.white70,
+                              color: colorScheme.onSurfaceVariant,
                             ),
                             textAlign: TextAlign.center,
                           ),
                           SizedBox(height: 24),
                           if (_isLoading)
-                            CircularProgressIndicator(color: Colors.white)
+                            CircularProgressIndicator(
+                              color: colorScheme.onSurface,
+                            )
                           else
                             Row(
                               mainAxisAlignment: MainAxisAlignment.center,

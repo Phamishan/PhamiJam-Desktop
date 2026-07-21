@@ -24,6 +24,7 @@ class PlaybackInterface extends StatefulWidget {
   final String songName;
   final List<dynamic> queue;
   final VoidCallback onQueuePressed;
+  final VoidCallback? onArtistTap;
 
   const PlaybackInterface({
     super.key,
@@ -47,6 +48,7 @@ class PlaybackInterface extends StatefulWidget {
     required this.songName,
     required this.queue,
     required this.onQueuePressed,
+    this.onArtistTap,
   });
 
   @override
@@ -133,6 +135,7 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return SizedBox(
       height: 100,
       width: MediaQuery.of(context).size.width,
@@ -146,8 +149,8 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
               total: widget.duration ?? Duration.zero,
               thumbGlowRadius: 25,
               thumbRadius: 10,
-              thumbColor: Color(0xFF121212),
-              baseBarColor: Color(0xFFece1d4),
+              thumbColor: colorScheme.primary,
+              baseBarColor: colorScheme.onSurfaceVariant,
               onSeek: widget.onSeek,
             ),
           ),
@@ -175,8 +178,8 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                               child: _shouldMarquee(widget.songName)
                                   ? Marquee(
                                       text: widget.songName,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: colorScheme.onSurface,
                                         fontSize: 16,
                                         fontWeight: FontWeight.w700,
                                       ),
@@ -200,23 +203,41 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                                       widget.songName,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: colorScheme.onSurface,
                                         fontSize: 16,
                                         fontWeight: FontWeight.w700,
                                       ),
                                     ),
                             ),
-                            Text(
-                              widget.artist,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
+                            widget.onArtistTap == null
+                                ? Text(
+                                    widget.artist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: colorScheme.onSurfaceVariant,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  )
+                                : MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: GestureDetector(
+                                      onTap: widget.onArtistTap,
+                                      child: Text(
+                                        widget.artist,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: colorScheme.onSurfaceVariant,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500,
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                           ],
                         ),
                       ),
@@ -231,14 +252,20 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                     IconButton(
                       onPressed: toggleShuffled,
                       icon: !widget.isShuffled
-                          ? Icon(Icons.shuffle_rounded, color: Colors.black)
-                          : Icon(Icons.shuffle_on_rounded, color: Colors.black),
+                          ? Icon(
+                              Icons.shuffle_rounded,
+                              color: colorScheme.primary,
+                            )
+                          : Icon(
+                              Icons.shuffle_on_rounded,
+                              color: colorScheme.primary,
+                            ),
                     ),
                     IconButton(
                       onPressed: widget.onPrevious,
                       icon: Icon(
                         Icons.skip_previous_rounded,
-                        color: Colors.black,
+                        color: colorScheme.primary,
                       ),
                     ),
                     IconButton(
@@ -246,24 +273,30 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                       icon: widget.isPlaying
                           ? Icon(
                               Icons.pause_circle_rounded,
-                              color: Colors.black,
+                              color: colorScheme.primary,
                             )
                           : Icon(
                               Icons.play_circle_rounded,
-                              color: Colors.black,
+                              color: colorScheme.primary,
                             ),
                     ),
                     IconButton(
                       onPressed: widget.onForward,
-                      icon: Icon(Icons.skip_next_rounded, color: Colors.black),
+                      icon: Icon(
+                        Icons.skip_next_rounded,
+                        color: colorScheme.primary,
+                      ),
                     ),
                     IconButton(
                       onPressed: toggleLooped,
                       icon: !widget.isLooped
-                          ? Icon(Icons.repeat_one_rounded, color: Colors.black)
+                          ? Icon(
+                              Icons.repeat_one_rounded,
+                              color: colorScheme.primary,
+                            )
                           : Icon(
                               Icons.repeat_one_on_rounded,
-                              color: Colors.black,
+                              color: colorScheme.primary,
                             ),
                     ),
                   ],
@@ -278,9 +311,9 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                       children: [
                         IconButton(
                           onPressed: widget.onQueuePressed,
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.queue_music_rounded,
-                            color: Colors.black,
+                            color: colorScheme.primary,
                           ),
                         ),
                         IconButton(
@@ -288,17 +321,17 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                           icon: !widget.isMuted
                               ? Icon(
                                   Icons.volume_up_rounded,
-                                  color: Colors.black,
+                                  color: colorScheme.primary,
                                 )
                               : Icon(
                                   Icons.volume_off_rounded,
-                                  color: Colors.black,
+                                  color: colorScheme.primary,
                                 ),
                         ),
                         SizedBox(
                           width: 200,
                           child: Slider(
-                            thumbColor: Color(0xFF121212),
+                            thumbColor: colorScheme.primary,
                             value: widget.currentSliderValue,
                             max: 100,
                             onChanged: handleSliderChange,
@@ -315,8 +348,8 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                               FilteringTextInputFormatter.digitsOnly,
                               LengthLimitingTextInputFormatter(3),
                             ],
-                            style: const TextStyle(
-                              color: Colors.black,
+                            style: TextStyle(
+                              color: colorScheme.primary,
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                             ),
@@ -331,8 +364,8 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: const BorderSide(
-                                  color: Colors.white70,
+                                borderSide: BorderSide(
+                                  color: colorScheme.onSurfaceVariant,
                                 ),
                               ),
                             ),
@@ -344,10 +377,10 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                           ),
                         ),
                         const SizedBox(width: 4),
-                        const Text(
+                        Text(
                           '%',
                           style: TextStyle(
-                            color: Colors.black,
+                            color: colorScheme.primary,
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),

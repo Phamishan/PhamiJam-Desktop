@@ -13,6 +13,7 @@ dependencies:
   google_sign_in_all_platforms: ^2.0.2
   firebase_core: ^4.4.0
   firebase_auth: ^6.1.4
+  cloud_firestore: ^6.0.0
   audio_video_progress_bar: ^2.0.3
   marquee: ^2.3.0
   http: ^1.4.0
@@ -32,6 +33,7 @@ dependencies:
   another_flushbar: ^1.12.32
   flutter_context_menu: ^0.4.2
   webview_windows: ^0.4.0
+  shared_preferences: ^2.3.3
 
 dev_dependencies:
   flutter_test:

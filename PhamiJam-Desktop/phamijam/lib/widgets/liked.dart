@@ -11,6 +11,7 @@ class _LikedPageState extends State<LikedPage> {
   final String _likedTitle = 'Liked Songs';
 
   Widget _buildLikedContent() {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       children: [
         Row(
@@ -18,8 +19,8 @@ class _LikedPageState extends State<LikedPage> {
             Expanded(
               child: Text(
                 _likedTitle,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: colorScheme.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
                 overflow: TextOverflow.ellipsis,
@@ -28,11 +29,14 @@ class _LikedPageState extends State<LikedPage> {
           ],
         ),
         const SizedBox(height: 10),
-        const Expanded(
+        Expanded(
           child: Center(
             child: Text(
               'Your liked songs will appear here.',
-              style: TextStyle(color: Colors.white70, fontSize: 18),
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 18,
+              ),
             ),
           ),
         ),

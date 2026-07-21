@@ -71,6 +71,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
   }
 
   Widget _buildMetadataRow() {
+    final colorScheme = Theme.of(context).colorScheme;
     final songCountLabel = songName.length.toString();
     final totalDurationSeconds = songDurations.fold<int>(
       0,
@@ -84,9 +85,12 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
       children: [
         Text(
           '$songCountLabel songs',
-          style: const TextStyle(color: Colors.white70),
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
         ),
-        Text(durationLabel, style: const TextStyle(color: Colors.white70)),
+        Text(
+          durationLabel,
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
       ],
     );
   }
@@ -292,6 +296,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
     await player.play();
 
     playback.setArtist(artistName.isNotEmpty ? artistName[playIndex] : '');
+    playback.setArtistId(null);
     playback.setSongName(songName.isNotEmpty ? songName[playIndex] : '');
     playback.setCurrentSongPath(songPath);
     playback.setCoverImageBytes(
@@ -363,7 +368,10 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
   }
 
   Widget _buildLocalFilesContent() {
-    final playback = context.watch<PlaybackModel>();
+    final colorScheme = Theme.of(context).colorScheme;
+    final currentSongPath = context.select<PlaybackModel, String?>(
+      (playback) => playback.currentSongPath,
+    );
 
     if (_isLoadingPlaylists) {
       return const Center(child: CircularProgressIndicator());
@@ -376,8 +384,8 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
             Expanded(
               child: Text(
                 _localFilesTitle,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: colorScheme.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
                 overflow: TextOverflow.ellipsis,
@@ -388,6 +396,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
               onPressed: _refreshSongs,
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Refresh'),
+              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
             ),
           ],
         ),
@@ -398,12 +407,13 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
               onPressed: _chooseLocation,
               icon: const Icon(Icons.folder_open_rounded),
               label: const Text('Choose Location'),
+              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: Text(
                 _selectedFolderPath ?? 'No folder selected',
-                style: const TextStyle(color: Colors.white70),
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -418,17 +428,23 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
               _songSearchQuery = value;
             });
           },
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: colorScheme.onSurface),
           decoration: InputDecoration(
             hintText: 'Search songs...',
-            hintStyle: const TextStyle(color: Colors.white60, fontSize: 14),
-            prefixIcon: const Icon(Icons.search_rounded, color: Colors.white70),
+            hintStyle: TextStyle(
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+              fontSize: 14,
+            ),
+            prefixIcon: Icon(
+              Icons.search_rounded,
+              color: colorScheme.onSurfaceVariant,
+            ),
             suffixIcon: _songSearchQuery.isEmpty
                 ? null
                 : IconButton(
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.close_rounded,
-                      color: Colors.white70,
+                      color: colorScheme.onSurfaceVariant,
                     ),
                     onPressed: () {
                       _songSearchController.clear();
@@ -438,7 +454,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                     },
                   ),
             filled: true,
-            fillColor: Colors.black26,
+            fillColor: colorScheme.onSurface.withValues(alpha: 0.26),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: BorderSide.none,
@@ -452,17 +468,17 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
         const SizedBox(height: 10),
         Expanded(
           child: songName.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     'No local .mp3 files found',
-                    style: TextStyle(color: Colors.white70),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 )
               : _filteredSongIndices.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     'No songs match your search.',
-                    style: TextStyle(color: Colors.white70),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 )
               : ListView.builder(
@@ -483,11 +499,12 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                       padding: const EdgeInsets.symmetric(vertical: 5),
                       child: ContextMenuRegion<String>(
                         contextMenu: ContextMenu(
+                          borderRadius: BorderRadius.circular(12),
                           entries: [
                             MenuItem<String>(
                               value: 'play_next',
-                              icon: const Icon(Icons.playlist_add_rounded),
-                              label: const Text('Add to Play Next'),
+                              icon: const Icon(Icons.playlist_play_rounded),
+                              label: const Text('Add to play next'),
                             ),
                           ],
                         ),
@@ -498,11 +515,9 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                         },
                         child: Container(
                           decoration: BoxDecoration(
-                            color:
-                                playback.currentSongPath ==
-                                    songPaths[sourceIndex]
-                                ? const Color(0xFFb5832e)
-                                : const Color(0xFFdba43a),
+                            color: currentSongPath == songPaths[sourceIndex]
+                                ? colorScheme.surfaceContainerHigh
+                                : colorScheme.surface,
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Material(
@@ -516,28 +531,34 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                                         coverBytes,
                                         width: 56,
                                         height: 56,
+                                        cacheWidth: 112,
+                                        cacheHeight: 112,
                                         fit: BoxFit.cover,
-                                        errorBuilder: (_, _, _) => const Icon(
+                                        errorBuilder: (_, _, _) => Icon(
                                           Icons.music_note_rounded,
-                                          color: Colors.white,
+                                          color: colorScheme.onSurface,
                                         ),
                                       ),
                                     )
-                                  : const Icon(
+                                  : Icon(
                                       Icons.music_note_rounded,
-                                      color: Colors.white,
+                                      color: colorScheme.onSurface,
                                     ),
                               title: Text(
                                 song,
-                                style: const TextStyle(color: Colors.white),
+                                style: TextStyle(color: colorScheme.onSurface),
                               ),
                               subtitle: Text(
                                 artist,
-                                style: const TextStyle(color: Colors.white70),
+                                style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
                               ),
                               trailing: Text(
                                 songDurationLabel,
-                                style: const TextStyle(color: Colors.white70),
+                                style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
                               ),
                               onTap: () => _play(index: sourceIndex),
                             ),

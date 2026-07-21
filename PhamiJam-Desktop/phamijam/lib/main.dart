@@ -7,6 +7,8 @@ import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/firebase_options.dart';
 import 'package:phamijam/pages/login.dart';
 import 'package:phamijam/pages/home.dart';
+import 'package:phamijam/providers/theme_provider.dart';
+import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 
 void main() async {
@@ -15,8 +17,11 @@ void main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await dotenv.load(fileName: '.env');
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => PlaybackModel()..bindToPlayer(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => PlaybackModel()..bindToPlayer()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+      ],
       child: const MyApp(),
     ),
   );
@@ -26,13 +31,13 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
+    final themeMode = context.watch<ThemeProvider>().flutterThemeMode;
     return MaterialApp(
       title: 'PhamiJam',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Color(0xFFDBA43A)),
-        fontFamily: "Lexend",
-      ),
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: themeMode,
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {

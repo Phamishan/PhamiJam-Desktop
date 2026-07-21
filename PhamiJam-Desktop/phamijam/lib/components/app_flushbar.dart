@@ -9,10 +9,12 @@ class AppFlushbar {
     String message, {
     required IconData icon,
     required Color backgroundColor,
+    required Color foregroundColor,
   }) {
     Flushbar<void>(
       message: message,
-      icon: Icon(icon, color: Colors.white),
+      messageColor: foregroundColor,
+      icon: Icon(icon, color: foregroundColor),
       duration: const Duration(seconds: 3),
       flushbarPosition: FlushbarPosition.TOP,
       margin: const EdgeInsets.all(12),
@@ -22,29 +24,35 @@ class AppFlushbar {
   }
 
   static void success(BuildContext context, String message) {
+    final colorScheme = Theme.of(context).colorScheme;
     show(
       context,
       message,
       icon: Icons.check_circle_rounded,
-      backgroundColor: Theme.of(context).colorScheme.primary,
+      backgroundColor: colorScheme.primary,
+      foregroundColor: colorScheme.onPrimary,
     );
   }
 
   static void error(BuildContext context, String message) {
+    final colorScheme = Theme.of(context).colorScheme;
     show(
       context,
       message,
       icon: Icons.error_rounded,
-      backgroundColor: Theme.of(context).colorScheme.error,
+      backgroundColor: colorScheme.error,
+      foregroundColor: colorScheme.onError,
     );
   }
 
   static void info(BuildContext context, String message) {
+    final colorScheme = Theme.of(context).colorScheme;
     show(
       context,
       message,
       icon: Icons.info_rounded,
-      backgroundColor: Theme.of(context).colorScheme.secondary,
+      backgroundColor: colorScheme.secondary,
+      foregroundColor: colorScheme.onSecondary,
     );
   }
 }

@@ -4,13 +4,20 @@ import 'dart:typed_data';
 import 'package:dart_discord_presence/dart_discord_presence.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart' as http;
 import 'package:phamijam/components/audio_player.dart';
+import 'package:phamijam/services/listening_history_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 enum PlaybackEngine { local, youtube }
 
 class PlaybackModel extends ChangeNotifier {
   static const int _queueAheadCount = 4;
   static const Duration _discordPresenceDebounce = Duration(milliseconds: 50);
+  static const String _prefsSongNameKey = 'phamijam.last_song_name';
+  static const String _prefsArtistNameKey = 'phamijam.last_artist_name';
+  static const String _prefsArtistIdKey = 'phamijam.last_artist_id';
+  static const String _prefsSongPathKey = 'phamijam.last_song_path';
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<AppPlayerState>? _playerStateSubscription;
   StreamSubscription<Duration?>? _durationSubscription;
@@ -37,6 +44,7 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> Function(dynamic item)? _onPrefetchQueueItem;
 
   String artistName = 'Unknown Artist';
+  String? currentArtistId;
   String songName = 'Unknown Song';
   String? currentSongPath;
   Uint8List? coverImageBytes;
@@ -51,13 +59,122 @@ class PlaybackModel extends ChangeNotifier {
   bool isSeeking = false;
   Duration seekPreview = Duration.zero;
   List<dynamic> queue = [];
+  bool needsResumeLoad = false;
 
   List<dynamic> _playlistItems = [];
   List<int> _playOrder = [];
   int _currentOrderIndex = -1;
 
+  PlaybackModel() {
+    unawaited(_restoreLastPlayedSong());
+  }
+
+  Future<void> _restoreLastPlayedSong() async {
+    final prefs = await SharedPreferences.getInstance();
+    final path = prefs.getString(_prefsSongPathKey);
+    if (path == null || path.isEmpty) return;
+
+    songName = prefs.getString(_prefsSongNameKey) ?? songName;
+    artistName = prefs.getString(_prefsArtistNameKey) ?? artistName;
+    final restoredArtistId = prefs.getString(_prefsArtistIdKey);
+    currentArtistId = (restoredArtistId == null || restoredArtistId.isEmpty)
+        ? null
+        : restoredArtistId;
+    currentSongPath = path;
+    needsResumeLoad = true;
+    notifyListeners();
+
+    if (path.startsWith('yt:')) {
+      final videoId = path.substring(3).trim();
+      if (videoId.isEmpty) return;
+      try {
+        final response = await http.get(
+          Uri.parse('https://i.ytimg.com/vi/$videoId/hqdefault.jpg'),
+        );
+        if (response.statusCode == 200) {
+          coverImageBytes = response.bodyBytes;
+          notifyListeners();
+        }
+      } catch (_) {
+        // text info still shows without the cover.
+      }
+    }
+  }
+
+  Future<void> _persistLastPlayedSong() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsSongNameKey, songName);
+      await prefs.setString(_prefsArtistNameKey, artistName);
+      await prefs.setString(_prefsArtistIdKey, currentArtistId ?? '');
+      await prefs.setString(_prefsSongPathKey, currentSongPath ?? '');
+    } catch (_) {
+      // Ignore errors during persistence.
+    }
+  }
+
   Duration get displayedProgress => isSeeking ? seekPreview : progress;
   PlaybackEngine get engine => _engine;
+
+  String? _activePlayId;
+  String _activePlayTitle = '';
+  String _activePlayArtist = '';
+  String _activePlayThumb = '';
+  DateTime? _activePlayStartedAt;
+  int _activePlayMaxProgressMs = 0;
+  int _activePlayDurationMs = 0;
+
+  void _finalizeActivePlay() {
+    final id = _activePlayId;
+    final startedAt = _activePlayStartedAt;
+    final listenedMs = max(_activePlayMaxProgressMs, progress.inMilliseconds);
+    final durationMs = _activePlayDurationMs;
+    final title = _activePlayTitle;
+    final artist = _activePlayArtist;
+    final thumb = _activePlayThumb;
+    _activePlayId = null;
+    _activePlayStartedAt = null;
+    _activePlayMaxProgressMs = 0;
+    _activePlayDurationMs = 0;
+    if (id == null || startedAt == null) return;
+    unawaited(
+      ListeningHistoryService.logPlay(
+        trackId: id,
+        title: title,
+        artist: artist,
+        thumbnailUrl: thumb,
+        trackDuration: Duration(milliseconds: durationMs),
+        startedAt: startedAt,
+        listened: Duration(milliseconds: listenedMs),
+      ),
+    );
+  }
+
+  void _beginActivePlay(String path) {
+    final isYouTube = path.startsWith('yt:');
+    final videoId = isYouTube ? path.substring(3) : '';
+    _activePlayId = isYouTube ? videoId : path;
+    _activePlayTitle = songName;
+    _activePlayArtist = artistName;
+    _activePlayThumb = isYouTube
+        ? 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg'
+        : '';
+    _activePlayStartedAt = DateTime.now();
+    _activePlayMaxProgressMs = 0;
+    _activePlayDurationMs = duration?.inMilliseconds ?? 0;
+  }
+
+  void _trackActiveProgress(Duration position) {
+    if (_activePlayId == null) return;
+    final ms = position.inMilliseconds;
+    if (ms > _activePlayMaxProgressMs) _activePlayMaxProgressMs = ms;
+  }
+
+  void _trackActiveDuration(Duration? value) {
+    if (_activePlayId == null || value == null) return;
+    final ms = value.inMilliseconds;
+    if (ms > _activePlayDurationMs) _activePlayDurationMs = ms;
+  }
 
   double get effectiveVolumePercent =>
       currentSliderValue.clamp(0, 100).toDouble();
@@ -139,6 +256,9 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> _restartCurrentTrack() async {
+    final path = currentSongPath;
+    _finalizeActivePlay();
+    if (path != null && path.trim().isNotEmpty) _beginActivePlay(path);
     setProgress(Duration.zero);
     if (_engine == PlaybackEngine.youtube) {
       await _youtubeSeek?.call(Duration.zero);
@@ -204,11 +324,13 @@ class PlaybackModel extends ChangeNotifier {
 
     if (position != null && !isSeeking && progress != position) {
       progress = position;
+      _trackActiveProgress(position);
       shouldNotify = true;
     }
 
     if (totalDuration != null && duration != totalDuration) {
       duration = totalDuration;
+      _trackActiveDuration(totalDuration);
       shouldNotify = true;
     }
 
@@ -595,6 +717,7 @@ class PlaybackModel extends ChangeNotifier {
     final artist = (item['artistName'] ?? item['artist'] ?? '').toString();
     if (song.isNotEmpty) setSongName(song);
     if (artist.isNotEmpty) setArtist(artist);
+    setArtistId(item['artistId'] as String?);
 
     final durationSeconds = item['durationSeconds'] as int?;
     if (durationSeconds != null && durationSeconds > 0) {
@@ -813,6 +936,11 @@ class PlaybackModel extends ChangeNotifier {
     _scheduleDiscordPresenceSync();
   }
 
+  void setArtistId(String? artistId) {
+    currentArtistId = artistId;
+    notifyListeners();
+  }
+
   void setSongName(String name) {
     songName = name;
     notifyListeners();
@@ -820,10 +948,14 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void setCurrentSongPath(String? path) {
+    needsResumeLoad = false;
+    _finalizeActivePlay();
+    if (path != null && path.trim().isNotEmpty) _beginActivePlay(path);
     currentSongPath = path;
     _completionHandledForCurrentTrack = false;
     notifyListeners();
     _scheduleDiscordPresenceSync(allowReconnect: true);
+    unawaited(_persistLastPlayedSong());
   }
 
   void setCoverImageBytes(Uint8List? bytes) {
@@ -834,6 +966,7 @@ class PlaybackModel extends ChangeNotifier {
   void setProgress(Duration value) {
     if (isSeeking) return;
     progress = value;
+    _trackActiveProgress(value);
     notifyListeners();
   }
 
@@ -858,6 +991,7 @@ class PlaybackModel extends ChangeNotifier {
 
   void setDuration(Duration? value) {
     duration = value;
+    _trackActiveDuration(value);
     notifyListeners();
     _scheduleDiscordPresenceSync();
   }
@@ -880,6 +1014,7 @@ class PlaybackModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _finalizeActivePlay();
     _discordPresenceTimer?.cancel();
     _positionSubscription?.cancel();
     _playerStateSubscription?.cancel();

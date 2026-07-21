@@ -11,7 +11,7 @@ class ConverterPage extends StatefulWidget {
 }
 
 class _ConverterPageState extends State<ConverterPage> {
-  static const String _title = 'ConverterPage';
+  static const String _title = 'Converter';
   static const String _webviewUrl = 'https://soundiiz.com';
 
   final WebviewController _controller = WebviewController();
@@ -73,6 +73,7 @@ class _ConverterPageState extends State<ConverterPage> {
   }
 
   Widget _buildConverterContent() {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       children: [
         Row(
@@ -80,8 +81,8 @@ class _ConverterPageState extends State<ConverterPage> {
             Expanded(
               child: Text(
                 _title,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: colorScheme.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
                 overflow: TextOverflow.ellipsis,
@@ -96,11 +97,14 @@ class _ConverterPageState extends State<ConverterPage> {
   }
 
   Widget _buildWebviewArea() {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF111827),
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(
+          color: colorScheme.onSurface.withValues(alpha: 0.12),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: _errorMessage != null
@@ -110,7 +114,10 @@ class _ConverterPageState extends State<ConverterPage> {
                 child: Text(
                   _errorMessage!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70, fontSize: 16),
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 16,
+                  ),
                 ),
               ),
             )

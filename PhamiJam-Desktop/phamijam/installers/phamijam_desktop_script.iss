@@ -31,9 +31,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
-OutputDir=C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\installers
+OutputDir=C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\installers
 OutputBaseFilename=phamijam_setup
-SetupIconFile=C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\assets\images\p_icon.ico
+SetupIconFile=C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\assets\images\p_icon.ico
 SolidCompression=yes
 WizardStyle=modern
 
@@ -44,24 +44,24 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\d3dcompiler_47.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\firebase_auth_plugin.lib"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\firebase_core_plugin.lib"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\flutter_windows.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\libEGL.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\libGLESv2.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\libmpv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\media_kit_libs_windows_video_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\media_kit_video_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\PhamiJam.exp"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\PhamiJam.lib"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\url_launcher_windows_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\vk_swiftshader.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\volume_controller_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\vulkan-1.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\zlib.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Users\phpa.skp\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\d3dcompiler_47.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\firebase_auth_plugin.lib"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\firebase_core_plugin.lib"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\flutter_windows.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\libEGL.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\libGLESv2.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\libmpv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\media_kit_libs_windows_video_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\media_kit_video_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\webview_windows_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\PhamiJam.exp"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\PhamiJam.lib"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\url_launcher_windows_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\vk_swiftshader.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\vulkan-1.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\zlib.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "C:\Users\phami\Desktop\PhamiJam-Desktop\PhamiJam-Desktop\phamijam\build\windows\x64\runner\Release\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

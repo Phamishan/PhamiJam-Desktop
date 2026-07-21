@@ -11,6 +11,7 @@ import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/sidebar.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/widgets/converter.dart';
+import 'package:phamijam/widgets/music_browse_pages.dart';
 import 'package:phamijam/widgets/playlist_inspect.dart';
 import 'package:phamijam/widgets/playlists.dart';
 import 'package:phamijam/widgets/liked.dart';
@@ -20,6 +21,7 @@ import 'package:phamijam/widgets/local_files.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt;
+import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
 
 class _YouTubeResolvedStreams {
   const _YouTubeResolvedStreams({required this.urls, required this.expiresAt});
@@ -39,6 +41,8 @@ class _HomeState extends State<Home> {
   late final TextEditingController _searchController;
   late final PlaybackModel _playback;
   late final VideoController _sidebarVideoController;
+  Future<YTMusic>? _ytmusicFuture;
+  YTMusic? _ytmusic;
 
   final yt.YoutubeExplode _youtubeExplode = yt.YoutubeExplode();
 
@@ -175,12 +179,14 @@ class _HomeState extends State<Home> {
     required String title,
     required String artist,
     String thumbnailUrl = '',
+    String artistId = '',
   }) async {
     if (videoId.isEmpty) return;
 
     final cover = await _downloadImageBytes(thumbnailUrl);
     _playback.setSongName(title.isEmpty ? 'Unknown song' : title);
     _playback.setArtist(artist.isEmpty ? 'Unknown artist' : artist);
+    _playback.setArtistId(artistId.isEmpty ? null : artistId);
     _playback.setCurrentSongPath('yt:$videoId');
     _playback.setCoverImageBytes(cover);
     await _playback.playYouTubeVideoById(videoId);
@@ -202,11 +208,49 @@ class _HomeState extends State<Home> {
     await player.play();
 
     _playback.setArtist(artist);
+    _playback.setArtistId(null);
     _playback.setSongName(title);
     _playback.setCurrentSongPath(songPath);
     _playback.setCoverImageBytes(coverImageBytes);
     _playback.setIsPlaying(true);
     _playback.setIsMuted(_playback.currentSliderValue == 0);
+  }
+
+  Future<void> _handlePlayPauseToggle() async {
+    if (_playback.needsResumeLoad) {
+      await _resumeRestoredSong();
+      return;
+    }
+    _playback.togglePlayPause();
+  }
+
+  Future<void> _resumeRestoredSong() async {
+    final path = _playback.currentSongPath;
+    if (path == null || path.isEmpty) return;
+
+    try {
+      if (path.startsWith('yt:')) {
+        final videoId = path.substring(3);
+        await _playYouTubeSelection(
+          videoId: videoId,
+          title: _playback.songName,
+          artist: _playback.artistName,
+          artistId: _playback.currentArtistId ?? '',
+          thumbnailUrl: 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
+        );
+        return;
+      }
+
+      await _playLocalSelection(
+        songPath: path,
+        title: _playback.songName,
+        artist: _playback.artistName,
+        coverImageBytes: _playback.coverImageBytes,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      AppFlushbar.error(context, "Couldn't resume the last played song.");
+    }
   }
 
   Future<void> _playRecentSong(Map<String, dynamic> item) async {
@@ -218,11 +262,13 @@ class _HomeState extends State<Home> {
     if (songPath.startsWith('yt:')) {
       final videoId = songPath.substring(3);
       final thumbnailUrl = (item['thumbnailUrl'] ?? '').toString();
+      final artistId = (item['artistId'] ?? '').toString();
       await _playYouTubeSelection(
         videoId: videoId,
         title: title,
         artist: artist,
         thumbnailUrl: thumbnailUrl,
+        artistId: artistId,
       );
       return;
     }
@@ -233,6 +279,26 @@ class _HomeState extends State<Home> {
       artist: artist,
       coverImageBytes: item['coverImageBytes'] as Uint8List?,
     );
+  }
+
+  Future<YTMusic> _ensureYtMusic() {
+    _ytmusicFuture ??= YTMusic.create().then((ytmusic) {
+      _ytmusic = ytmusic;
+      return ytmusic;
+    });
+    return _ytmusicFuture!;
+  }
+
+  Future<void> _submitSearch() async {
+    final query = _searchController.text.trim();
+    if (query.isEmpty) return;
+
+    await _ensureYtMusic();
+    if (!mounted) return;
+    setState(() {
+      _selectedTab = 'music_search';
+      _selectedTabExtra = {'query': query};
+    });
   }
 
   void _onPlaybackChanged() {
@@ -255,6 +321,7 @@ class _HomeState extends State<Home> {
         'songPath': currentPath,
         'songTitle': _playback.songName,
         'songArtist': _playback.artistName,
+        'artistId': _playback.currentArtistId ?? '',
         'thumbnailUrl': derivedThumbnailUrl,
         'coverImageBytes': _playback.coverImageBytes,
       }, 'songPath');
@@ -432,12 +499,13 @@ class _HomeState extends State<Home> {
   }
 
   Widget _buildHomeSectionTitle(String title) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Text(
         title,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: colorScheme.onSurface,
           fontSize: 20,
           fontWeight: FontWeight.w700,
         ),
@@ -446,16 +514,17 @@ class _HomeState extends State<Home> {
   }
 
   Widget _buildRecentlyPlayedPlaylistsSection() {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHomeSectionTitle('Recently Played Playlists'),
         if (_recentPlayedPlaylists.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 6),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
             child: Text(
               'No playlists played yet.',
-              style: TextStyle(color: Colors.white70),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           )
         else
@@ -464,7 +533,7 @@ class _HomeState extends State<Home> {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _recentPlayedPlaylists.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
               itemBuilder: (context, index) {
                 final item = _recentPlayedPlaylists[index];
                 final title = item['playlistTitle'] ?? 'Playlist';
@@ -485,7 +554,7 @@ class _HomeState extends State<Home> {
                     width: 220,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFdba43a),
+                      color: colorScheme.surface,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Row(
@@ -497,16 +566,18 @@ class _HomeState extends State<Home> {
                                   thumbnailUrl,
                                   width: 48,
                                   height: 48,
+                                  cacheWidth: 96,
+                                  cacheHeight: 96,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => const Icon(
+                                  errorBuilder: (_, _, _) => Icon(
                                     Icons.queue_music_rounded,
-                                    color: Colors.white,
+                                    color: colorScheme.onSurface,
                                   ),
                                 ),
                               )
-                            : const Icon(
+                            : Icon(
                                 Icons.queue_music_rounded,
-                                color: Colors.white,
+                                color: colorScheme.onSurface,
                               ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -514,7 +585,7 @@ class _HomeState extends State<Home> {
                             title,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: colorScheme.onSurface),
                           ),
                         ),
                       ],
@@ -529,16 +600,17 @@ class _HomeState extends State<Home> {
   }
 
   Widget _buildRecentlyPlayedSongsSection() {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildHomeSectionTitle('Recently Played Songs'),
         if (_recentPlayedSongs.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 6),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
             child: Text(
               'No songs played yet.',
-              style: TextStyle(color: Colors.white70),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           )
         else
@@ -551,7 +623,7 @@ class _HomeState extends State<Home> {
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFdba43a),
+                color: colorScheme.surface,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Material(
@@ -564,10 +636,12 @@ class _HomeState extends State<Home> {
                             thumbnailUrl,
                             width: 56,
                             height: 56,
+                            cacheWidth: 112,
+                            cacheHeight: 112,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            errorBuilder: (_, _, _) => Icon(
                               Icons.music_note_rounded,
-                              color: Colors.white,
+                              color: colorScheme.onSurface,
                             ),
                           ),
                         )
@@ -578,28 +652,30 @@ class _HomeState extends State<Home> {
                             coverBytes,
                             width: 56,
                             height: 56,
+                            cacheWidth: 112,
+                            cacheHeight: 112,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            errorBuilder: (_, _, _) => Icon(
                               Icons.music_note_rounded,
-                              color: Colors.white,
+                              color: colorScheme.onSurface,
                             ),
                           ),
                         )
-                      : const Icon(
+                      : Icon(
                           Icons.music_note_rounded,
-                          color: Colors.white,
+                          color: colorScheme.onSurface,
                         ),
                   title: Text(
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: colorScheme.onSurface),
                   ),
                   subtitle: Text(
                     artist,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                   onTap: () => _playRecentSong(item),
                 ),
@@ -611,6 +687,7 @@ class _HomeState extends State<Home> {
   }
 
   Widget _buildTrendingInDenmarkSection() {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -621,7 +698,7 @@ class _HomeState extends State<Home> {
               onPressed: _isLoadingTrendingInDenmark
                   ? null
                   : () => _loadTrendingInDenmark(),
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+              icon: Icon(Icons.refresh_rounded, color: colorScheme.onSurface),
               tooltip: 'Refresh trending',
             ),
           ],
@@ -636,15 +713,15 @@ class _HomeState extends State<Home> {
             padding: const EdgeInsets.only(bottom: 10),
             child: Text(
               'Failed to load trending songs: $_trendingInDenmarkError',
-              style: const TextStyle(color: Colors.white70),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           )
         else if (_trendingInDenmark.isEmpty)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 10),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
             child: Text(
               'No trending songs found right now.',
-              style: TextStyle(color: Colors.white70),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           )
         else
@@ -656,16 +733,16 @@ class _HomeState extends State<Home> {
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
               decoration: BoxDecoration(
-                color: const Color(0xFFdba43a),
+                color: colorScheme.surface,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Material(
                 type: MaterialType.transparency,
                 child: ListTile(
                   leading: thumbnail.isEmpty
-                      ? const Icon(
+                      ? Icon(
                           Icons.trending_up_rounded,
-                          color: Colors.white,
+                          color: colorScheme.onSurface,
                         )
                       : ClipRRect(
                           borderRadius: BorderRadius.circular(6),
@@ -673,10 +750,12 @@ class _HomeState extends State<Home> {
                             thumbnail,
                             width: 56,
                             height: 56,
+                            cacheWidth: 112,
+                            cacheHeight: 112,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            errorBuilder: (_, _, _) => Icon(
                               Icons.trending_up_rounded,
-                              color: Colors.white,
+                              color: colorScheme.onSurface,
                             ),
                           ),
                         ),
@@ -684,13 +763,13 @@ class _HomeState extends State<Home> {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: colorScheme.onSurface),
                   ),
                   subtitle: Text(
                     artist,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                   onTap: videoId.isEmpty
                       ? null
@@ -709,6 +788,7 @@ class _HomeState extends State<Home> {
   }
 
   Widget _buildHomeDashboard() {
+    final colorScheme = Theme.of(context).colorScheme;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -716,8 +796,8 @@ class _HomeState extends State<Home> {
         children: [
           Text(
             'Welcome back${userDisplayName == null ? '' : ', $userDisplayName'}',
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: colorScheme.onSurface,
               fontSize: 26,
               fontWeight: FontWeight.bold,
             ),
@@ -734,6 +814,200 @@ class _HomeState extends State<Home> {
   }
 
   Widget _buildMainContent() {
+    if (_selectedTab == 'music_search') {
+      final query = (_selectedTabExtra?['query'] as String?) ?? '';
+      if (query.trim().isEmpty) {
+        return _buildHomeDashboard();
+      }
+
+      return MusicSearchResultsPage(
+        query: query,
+        ytmusicFuture: _ensureYtMusic(),
+        onBack: () => _onSidebarTabSelected('home'),
+        onPlaySong:
+            ({
+              required String videoId,
+              required String title,
+              required String artist,
+              String thumbnailUrl = '',
+              String artistId = '',
+            }) async {
+              await _playYouTubeSelection(
+                videoId: videoId,
+                title: title,
+                artist: artist,
+                thumbnailUrl: thumbnailUrl,
+                artistId: artistId,
+              );
+            },
+        onOpenArtist: (artistId, artistName) {
+          _onSidebarTabSelected(
+            'artist_details',
+            extra: {
+              'artistId': artistId,
+              'artistName': artistName,
+              'backTab': 'music_search',
+              'backExtra': {'query': query},
+            },
+          );
+        },
+        onOpenAlbum: (albumId, albumTitle, artistId, artistName) {
+          _onSidebarTabSelected(
+            'album_details',
+            extra: {
+              'albumId': albumId,
+              'albumTitle': albumTitle,
+              'artistId': artistId,
+              'artistName': artistName,
+              'backTab': 'music_search',
+              'backExtra': {'query': query},
+            },
+          );
+        },
+      );
+    }
+
+    if (_selectedTab == 'artist_details') {
+      final artistId = (_selectedTabExtra?['artistId'] as String?) ?? '';
+      final artistName =
+          (_selectedTabExtra?['artistName'] as String?) ?? 'Artist';
+      final backTab = (_selectedTabExtra?['backTab'] as String?) ?? 'home';
+      final backExtra =
+          _selectedTabExtra?['backExtra'] as Map<String, dynamic>?;
+
+      if (artistId.isEmpty) {
+        return _buildHomeDashboard();
+      }
+
+      return ArtistDetailsPage(
+        artistId: artistId,
+        artistName: artistName,
+        ytmusicFuture: _ensureYtMusic(),
+        onBack: () => _onSidebarTabSelected(backTab, extra: backExtra),
+        onPlaySong:
+            ({
+              required String videoId,
+              required String title,
+              required String artist,
+              String thumbnailUrl = '',
+              String artistId = '',
+            }) async {
+              await _playYouTubeSelection(
+                videoId: videoId,
+                title: title,
+                artist: artist,
+                thumbnailUrl: thumbnailUrl,
+                artistId: artistId,
+              );
+            },
+        onOpenAlbum: (albumId, albumTitle, nextArtistId, nextArtistName) {
+          _onSidebarTabSelected(
+            'album_details',
+            extra: {
+              'albumId': albumId,
+              'albumTitle': albumTitle,
+              'artistId': nextArtistId,
+              'artistName': nextArtistName,
+              'backTab': 'artist_details',
+              'backExtra': {
+                'artistId': artistId,
+                'artistName': artistName,
+                'backTab': backTab,
+                'backExtra': backExtra,
+              },
+            },
+          );
+        },
+        onOpenArtist: (nextArtistId, nextArtistName) {
+          _onSidebarTabSelected(
+            'artist_details',
+            extra: {
+              'artistId': nextArtistId,
+              'artistName': nextArtistName,
+              'backTab': 'artist_details',
+              'backExtra': {
+                'artistId': artistId,
+                'artistName': artistName,
+                'backTab': backTab,
+                'backExtra': backExtra,
+              },
+            },
+          );
+        },
+      );
+    }
+
+    if (_selectedTab == 'album_details') {
+      final albumId = (_selectedTabExtra?['albumId'] as String?) ?? '';
+      final albumTitle =
+          (_selectedTabExtra?['albumTitle'] as String?) ?? 'Album';
+      final artistId = (_selectedTabExtra?['artistId'] as String?) ?? '';
+      final artistName =
+          (_selectedTabExtra?['artistName'] as String?) ?? 'Artist';
+      final backTab = (_selectedTabExtra?['backTab'] as String?) ?? 'home';
+      final backExtra =
+          _selectedTabExtra?['backExtra'] as Map<String, dynamic>?;
+
+      if (albumId.isEmpty) {
+        return _buildHomeDashboard();
+      }
+
+      return AlbumDetailsPage(
+        albumId: albumId,
+        albumTitle: albumTitle,
+        artistId: artistId,
+        artistName: artistName,
+        ytmusicFuture: _ensureYtMusic(),
+        onBack: () {
+          if (backTab == 'artist_details') {
+            _onSidebarTabSelected('artist_details', extra: backExtra);
+            return;
+          }
+          if (backTab == 'music_search') {
+            _onSidebarTabSelected('music_search', extra: backExtra);
+            return;
+          }
+          _onSidebarTabSelected('home');
+        },
+        onPlaySong:
+            ({
+              required String videoId,
+              required String title,
+              required String artist,
+              String thumbnailUrl = '',
+              String artistId = '',
+            }) async {
+              unawaited(
+                _playYouTubeSelection(
+                  videoId: videoId,
+                  title: title,
+                  artist: artist,
+                  thumbnailUrl: thumbnailUrl,
+                  artistId: artistId,
+                ),
+              );
+            },
+        onOpenArtist: (nextArtistId, nextArtistName) {
+          _onSidebarTabSelected(
+            'artist_details',
+            extra: {
+              'artistId': nextArtistId,
+              'artistName': nextArtistName,
+              'backTab': 'album_details',
+              'backExtra': {
+                'albumId': albumId,
+                'albumTitle': albumTitle,
+                'artistId': artistId,
+                'artistName': artistName,
+                'backTab': backTab,
+                'backExtra': backExtra,
+              },
+            },
+          );
+        },
+      );
+    }
+
     if (_selectedTab == 'playlists') {
       return PlaylistsPage(onTabSelected: _onSidebarTabSelected);
     }
@@ -762,6 +1036,17 @@ class _HomeState extends State<Home> {
       return PlaylistInspectPage(
         extra: _selectedTabExtra,
         onBack: () => _onSidebarTabSelected('playlists'),
+        onOpenArtist: (artistId, artistName) {
+          _onSidebarTabSelected(
+            'artist_details',
+            extra: {
+              'artistId': artistId,
+              'artistName': artistName,
+              'backTab': 'playlist_inspect',
+              'backExtra': _selectedTabExtra,
+            },
+          );
+        },
       );
     }
 
@@ -772,6 +1057,7 @@ class _HomeState extends State<Home> {
   void dispose() {
     _playback.removeListener(_onPlaybackChanged);
     _youtubeExplode.close();
+    _ytmusic?.close();
     _searchController.dispose();
     super.dispose();
   }
@@ -822,8 +1108,6 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> _onQueueItemTap(int index) async {
-    // Replace with your real PlaybackModel method if different.
-    // Example expected method names: playQueueIndex / playAtIndex / playFromQueue
     try {
       final dynamic model = _playback;
       await model.playQueueIndex(index);
@@ -831,29 +1115,31 @@ class _HomeState extends State<Home> {
   }
 
   void _openQueueSheet(BuildContext context, List<dynamic> queue) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final onSheet = colorScheme.onInverseSurface;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1f1f1f),
+      backgroundColor: colorScheme.inverseSurface,
       builder: (context) {
         return SafeArea(
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.6,
             child: queue.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
                       'Queue is empty',
-                      style: TextStyle(color: Colors.white70),
+                      style: TextStyle(color: onSheet.withValues(alpha: 0.7)),
                     ),
                   )
                 : ListView(
                     children: [
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                         child: Text(
                           'Now Playing',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: onSheet,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -865,15 +1151,15 @@ class _HomeState extends State<Home> {
                           return Material(
                             type: MaterialType.transparency,
                             child: ListTile(
-                              leading: const Icon(
+                              leading: Icon(
                                 Icons.graphic_eq_rounded,
-                                color: Colors.white70,
+                                color: onSheet.withValues(alpha: 0.7),
                               ),
                               title: Text(
                                 _queueTitle(item),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.white),
+                                style: TextStyle(color: onSheet),
                               ),
                               subtitle: subtitle == null
                                   ? null
@@ -881,31 +1167,36 @@ class _HomeState extends State<Home> {
                                       subtitle,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white70,
+                                      style: TextStyle(
+                                        color: onSheet.withValues(alpha: 0.7),
                                       ),
                                     ),
                             ),
                           );
                         },
                       ),
-                      const Divider(color: Colors.white12, height: 1),
-                      const Padding(
-                        padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      Divider(
+                        color: onSheet.withValues(alpha: 0.12),
+                        height: 1,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                         child: Text(
                           'Up Next',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: onSheet,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
                       if (queue.length <= 1)
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                           child: Text(
                             'No songs up next.',
-                            style: TextStyle(color: Colors.white70),
+                            style: TextStyle(
+                              color: onSheet.withValues(alpha: 0.7),
+                            ),
                           ),
                         )
                       else
@@ -920,15 +1211,15 @@ class _HomeState extends State<Home> {
                                 child: ListTile(
                                   leading: Text(
                                     '$index',
-                                    style: const TextStyle(
-                                      color: Colors.white54,
+                                    style: TextStyle(
+                                      color: onSheet.withValues(alpha: 0.54),
                                     ),
                                   ),
                                   title: Text(
                                     _queueTitle(item),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(color: Colors.white),
+                                    style: TextStyle(color: onSheet),
                                   ),
                                   subtitle: subtitle == null
                                       ? null
@@ -936,8 +1227,10 @@ class _HomeState extends State<Home> {
                                           subtitle,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            color: Colors.white70,
+                                          style: TextStyle(
+                                            color: onSheet.withValues(
+                                              alpha: 0.7,
+                                            ),
                                           ),
                                         ),
                                   onTap: () async {
@@ -946,7 +1239,10 @@ class _HomeState extends State<Home> {
                                   },
                                 ),
                               ),
-                              const Divider(color: Colors.white12, height: 1),
+                              Divider(
+                                color: onSheet.withValues(alpha: 0.12),
+                                height: 1,
+                              ),
                             ],
                           );
                         }),
@@ -960,8 +1256,9 @@ class _HomeState extends State<Home> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Color(0xFFdba43a),
+      backgroundColor: colorScheme.surface,
       bottomNavigationBar: Consumer<PlaybackModel>(
         builder: (context, playback, child) {
           return PlaybackInterface(
@@ -972,7 +1269,7 @@ class _HomeState extends State<Home> {
             isMuted: playback.isMuted,
             currentSliderValue: playback.currentSliderValue,
             onSeek: (duration) => playback.seekTo(duration),
-            onPlayPauseToggle: playback.togglePlayPause,
+            onPlayPauseToggle: _handlePlayPauseToggle,
             isShuffled: playback.isShuffled,
             isLooped: playback.isLooped,
             onPrevious: playback.playPrevious,
@@ -985,6 +1282,19 @@ class _HomeState extends State<Home> {
             onUnloop: playback.toggleLoop,
             queue: playback.queue,
             onQueuePressed: () => _openQueueSheet(context, playback.queue),
+            onArtistTap:
+                (playback.currentArtistId == null ||
+                    playback.currentArtistId!.isEmpty)
+                ? null
+                : () => _onSidebarTabSelected(
+                    'artist_details',
+                    extra: {
+                      'artistId': playback.currentArtistId,
+                      'artistName': playback.artistName,
+                      'backTab': _selectedTab,
+                      'backExtra': _selectedTabExtra,
+                    },
+                  ),
           );
         },
       ),
@@ -1016,7 +1326,10 @@ class _HomeState extends State<Home> {
                                 _selectedTab = 'home';
                               });
                             },
-                            icon: Icon(Icons.home_rounded, color: Colors.white),
+                            icon: Icon(
+                              Icons.home_rounded,
+                              color: colorScheme.onSurface,
+                            ),
                           ),
                           SizedBox(width: 10),
                           SizedBox(
@@ -1024,14 +1337,20 @@ class _HomeState extends State<Home> {
                             height: 45,
                             child: TextField(
                               controller: _searchController,
+                              textInputAction: TextInputAction.search,
+                              onSubmitted: (_) => _submitSearch(),
                               decoration: InputDecoration(
-                                hintText: 'Search',
+                                hintText: 'Search songs, artists or albums',
                                 hintStyle: TextStyle(
-                                  color: Colors.white.withAlpha(200),
+                                  color: colorScheme.onSurface.withValues(
+                                    alpha: 0.78,
+                                  ),
                                   fontSize: 15,
                                 ),
                                 filled: true,
-                                fillColor: Color.fromARGB(16, 217, 213, 207),
+                                fillColor: colorScheme.onSurface.withValues(
+                                  alpha: 0.08,
+                                ),
                                 contentPadding: EdgeInsets.symmetric(
                                   horizontal: 18,
                                   vertical: 14,
@@ -1039,25 +1358,23 @@ class _HomeState extends State<Home> {
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                   borderSide: BorderSide(
-                                    color: Colors.white,
+                                    color: colorScheme.onSurface,
                                     width: 1.0,
                                   ),
                                 ),
                                 enabledBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                   borderSide: BorderSide(
-                                    color: Colors.white70,
+                                    color: colorScheme.onSurfaceVariant,
                                     width: 1.0,
                                   ),
                                 ),
                                 suffixIcon: IconButton(
                                   icon: Icon(
                                     Icons.search_rounded,
-                                    color: Colors.white,
+                                    color: colorScheme.onSurface,
                                   ),
-                                  onPressed: () => debugPrint(
-                                    'Search: ${_searchController.text}',
-                                  ),
+                                  onPressed: _submitSearch,
                                 ),
                               ),
                             ),
@@ -1071,7 +1388,7 @@ class _HomeState extends State<Home> {
                             },
                             icon: Icon(
                               Icons.settings_rounded,
-                              color: Colors.white,
+                              color: colorScheme.onSurface,
                             ),
                           ),
                           SizedBox(width: 10),
@@ -1090,7 +1407,7 @@ class _HomeState extends State<Home> {
                             onPressed: _logout,
                             icon: Icon(
                               Icons.logout_rounded,
-                              color: Colors.white,
+                              color: colorScheme.onSurface,
                             ),
                           ),
                           SizedBox(width: 10),
@@ -1105,7 +1422,7 @@ class _HomeState extends State<Home> {
                       padding: EdgeInsets.all(10),
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Color(0xFFe2b661),
+                          color: colorScheme.surfaceContainerLowest,
                           borderRadius: BorderRadius.all(Radius.circular(10)),
                         ),
                         width: MediaQuery.of(context).size.width - 260,

@@ -16,46 +16,35 @@ to be continued
 
 ## Version History
 
-- x.x.x - xx/xx/xxxx
+- 1.0.0 - 21/07/2026
+  - Initial Release
 
 ## Screenshots:
 
 ![PhamiJam - Local Files](/PhamiJam-Desktop/phamijam/assets/images/phamijam%20pr/localfiles.png)
 <sup>PhamiJam - Local Files</sup>
 
-![PhamiJame - Playlist](/PhamiJam-Desktop/phamijam/assets/images/phamijam%20pr/playlist.png)
+![PhamiJam - Playlist](/PhamiJam-Desktop/phamijam/assets/images/phamijam%20pr/playlist.png)
 <sup>PhamiJam - Inside a playlist with songs</sup>
 
 # TODO
 
-## core
+## redesigns
 
-- [x] autoplay
-- [x] shuffle
-- [x] loop
-- [x] queue
-- [x] play next (local & yt)
-- [ ] general search function
-- [ ] home screen ui/design
-- [ ] artist page
-- [ ] album page
+- [ ] home screen redesign
+- [ ] artist page redesign
+- [ ] album page redesign
+- [ ] playlist page redesign?
 
 ##### playlist stuff
 
-- [x] create new playlist through phamijam
-- [x] delete playlist through phamijam
-- [x] edit playlist through phamijam
-- [x] search through playlists and songs
 - [ ] change order?
 
 ---
 
 ## misc
 
-- [ ] change theme color
-- [ ] wrapphamied (wrapped)
 - [ ] phun mode
 - [ ] Phami Picks (phamis special playlist)
 - [ ] social / friends tab?
-    - [ ] profile
-- [ ] convert ~~spotify~~ spotishit playlist to phamijam/youtube
+  - [ ] profile
