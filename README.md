@@ -3,21 +3,24 @@
 ## Features:
 
 ```
-👤 - Google Integration
+🎵 - Stream music
+👤 - Google integration
 🆓 - Free
-⛔ - No Ads
-🎗️ - Supports YouTube & local files
-🔊 - BEST VOLUME CONTROL IN THE WORLD*
-
-to be continued
+⛔ - No ads
+📃 - Library
+⬇️ - Offline downloads
+🌗 - Dark mode
+📱💻 - Cross-device
 ```
-
-<sup>\*according to phami</sup>
 
 ## Version History
 
 - 1.0.0 - 21/07/2026
   - Initial Release
+- 1.0.1 - 22/07/2026
+  - Added offline downloads for songs and playlists (needs testing)
+  - Added cross-device (needs testing)
+  - Redesigned the Now Playing screen
 
 ## Screenshots:
 

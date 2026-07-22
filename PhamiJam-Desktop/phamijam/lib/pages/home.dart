@@ -5,17 +5,27 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/playback_interface.dart';
 import 'package:phamijam/components/playback_model.dart';
+import 'package:phamijam/components/remote_session_banner.dart';
 import 'package:phamijam/components/sidebar.dart';
+import 'package:phamijam/models/play_event.dart';
+import 'package:phamijam/providers/liked_songs_provider.dart';
+import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
+import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/widgets/converter.dart';
+import 'package:phamijam/widgets/home_playlist_card.dart';
 import 'package:phamijam/widgets/music_browse_pages.dart';
 import 'package:phamijam/widgets/playlist_inspect.dart';
 import 'package:phamijam/widgets/playlists.dart';
 import 'package:phamijam/widgets/liked.dart';
 import 'package:phamijam/widgets/profile.dart';
+import 'package:phamijam/widgets/recent_artists_row.dart';
+import 'package:phamijam/widgets/recent_track_card.dart';
 import 'package:phamijam/widgets/settings.dart';
 import 'package:phamijam/widgets/local_files.dart';
 import 'package:phamijam/components/app_flushbar.dart';
@@ -40,6 +50,7 @@ class Home extends StatefulWidget {
 class _HomeState extends State<Home> {
   late final TextEditingController _searchController;
   late final PlaybackModel _playback;
+  late final DownloadsProvider _downloads;
   late final VideoController _sidebarVideoController;
   Future<YTMusic>? _ytmusicFuture;
   YTMusic? _ytmusic;
@@ -54,14 +65,11 @@ class _HomeState extends State<Home> {
       <String, _YouTubeResolvedStreams>{};
   final Map<String, Future<List<String>>> _resolvingStreamsByVideoId =
       <String, Future<List<String>>>{};
-  final List<Map<String, dynamic>> _recentPlayedSongs =
-      <Map<String, dynamic>>[];
-  final List<Map<String, dynamic>> _recentPlayedPlaylists =
-      <Map<String, dynamic>>[];
-  final List<Map<String, String>> _trendingInDenmark = <Map<String, String>>[];
-  bool _isLoadingTrendingInDenmark = false;
-  String? _trendingInDenmarkError;
-  String? _lastTrackedSongPath;
+  List<PlayEvent> _recentlyPlayedTracks = <PlayEvent>[];
+  List<Map<String, dynamic>> _myPlaylists = <Map<String, dynamic>>[];
+  bool _isLoadingHomeDashboard = false;
+  String? _homeDashboardError;
+  String? _currentlyLoadingRecentVideoId;
   static const Duration _resolvedStreamsTtl = Duration(minutes: 20);
   static const Map<String, String> _youtubeHttpHeaders = {
     'User-Agent':
@@ -73,94 +81,119 @@ class _HomeState extends State<Home> {
   void initState() {
     super.initState();
     _playback = context.read<PlaybackModel>();
+    _downloads = context.read<DownloadsProvider>();
+    _downloads.resolveStreamUrls = _resolvePlayableYouTubeStreamUrls;
     _sidebarVideoController = VideoController(player.mediaKitPlayer);
     _searchController = TextEditingController();
     _bindYouTubeEngineToPlayback();
-    _playback.addListener(_onPlaybackChanged);
     _checkCurrentUser();
-    unawaited(_loadTrendingInDenmark());
+    unawaited(_loadHomeDashboardData());
+    unawaited(context.read<LikedSongsProvider>().refresh());
   }
 
-  Future<void> _loadTrendingInDenmark() async {
+  Future<void> _loadHomeDashboardData({bool forceRefresh = false}) async {
     if (!mounted) return;
     setState(() {
-      _isLoadingTrendingInDenmark = true;
-      _trendingInDenmarkError = null;
+      _isLoadingHomeDashboard = true;
+      _homeDashboardError = null;
     });
 
     try {
-      final items = <Map<String, String>>[];
-      final searchResult = await _youtubeExplode.search.search(
-        'Denmark music trending now',
-      );
+      final since = DateTime.now().subtract(const Duration(days: 180));
+      final results = await Future.wait([
+        ListeningHistoryService.eventsSince(since),
+        YoutubePlaylistService.fetchMyPlaylists(),
+      ]);
+      final events = results[0] as List<PlayEvent>;
+      final playlists = results[1] as List<Map<String, dynamic>>;
 
-      for (final video in searchResult) {
-        final videoId = video.id.value;
-        if (videoId.isEmpty) {
-          continue;
-        }
-        items.add(<String, String>{
-          'videoId': videoId,
-          'title': video.title,
-          'artist': video.author,
-          'thumbnailUrl': video.thumbnails.highResUrl,
-        });
-        if (items.length >= 10) {
-          break;
-        }
+      final seen = <String>{};
+      final recent = <PlayEvent>[];
+      for (final event in events.reversed) {
+        if (!seen.add(event.videoId)) continue;
+        recent.add(event);
+        if (recent.length >= 15) break;
       }
 
       if (!mounted) return;
       setState(() {
-        _trendingInDenmark
-          ..clear()
-          ..addAll(items);
+        _recentlyPlayedTracks = recent;
+        _myPlaylists = playlists;
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _trendingInDenmarkError = '$error';
+        _homeDashboardError = '$error';
       });
     } finally {
       if (mounted) {
         setState(() {
-          _isLoadingTrendingInDenmark = false;
+          _isLoadingHomeDashboard = false;
         });
       }
     }
   }
 
-  void _pushRecentItem(
-    List<Map<String, dynamic>> target,
-    Map<String, dynamic> item,
-    String dedupeKey,
-  ) {
-    final value = (item[dedupeKey] ?? '').toString();
-    if (value.isEmpty) return;
+  Future<void> _playRecentlyPlayedTrack(int index) async {
+    if (index < 0 || index >= _recentlyPlayedTracks.length) return;
+    if (_currentlyLoadingRecentVideoId != null) return;
+    final event = _recentlyPlayedTracks[index];
+    if (event.videoId.isEmpty) return;
 
-    target.removeWhere(
-      (entry) => ((entry[dedupeKey] ?? '').toString()) == value,
-    );
-    target.insert(0, item);
-    if (target.length > 20) {
-      target.removeRange(20, target.length);
+    setState(() => _currentlyLoadingRecentVideoId = event.videoId);
+    try {
+      await _playYouTubeSelection(
+        videoId: event.videoId,
+        title: event.title,
+        artist: event.artist,
+        thumbnailUrl: event.thumbnailUrl,
+        artistId: event.channelId ?? '',
+      );
+      _playback.setPlaylistQueue(
+        [for (final e in _recentlyPlayedTracks) _playEventToSongMap(e)],
+        startIndex: index,
+      );
+      _registerRecentlyPlayedQueueHandlers();
+    } finally {
+      if (mounted) setState(() => _currentlyLoadingRecentVideoId = null);
     }
   }
 
-  void _trackRecentPlaylist(Map<String, dynamic>? extra) {
-    if (extra == null) return;
-    final playlistId = (extra['playlistId'] as String?) ?? '';
-    final playlistTitle = (extra['playlistTitle'] as String?) ?? '';
-    final thumbnailUrl = (extra['thumbnailUrl'] as String?) ?? '';
-    if (playlistId.isEmpty || playlistTitle.isEmpty) return;
+  Map<String, dynamic> _playEventToSongMap(PlayEvent event) => {
+    'videoId': event.videoId,
+    'title': event.title,
+    'artist': event.artist,
+    'artistId': event.channelId,
+    'thumbnailUrl': event.thumbnailUrl,
+    'durationSeconds': 0,
+  };
 
-    setState(() {
-      _pushRecentItem(_recentPlayedPlaylists, <String, dynamic>{
-        'playlistId': playlistId,
-        'playlistTitle': playlistTitle,
-        'thumbnailUrl': thumbnailUrl,
-      }, 'playlistId');
-    });
+  void _registerRecentlyPlayedQueueHandlers() {
+    final songs = [
+      for (final e in _recentlyPlayedTracks) _playEventToSongMap(e),
+    ];
+    _playback.setQueueHandlers(
+      playAtSourceIndex: (sourceIndex) async {
+        if (sourceIndex < 0 || sourceIndex >= songs.length) return;
+        final song = songs[sourceIndex];
+        final videoId = (song['videoId'] as String?) ?? '';
+        if (videoId.isEmpty) return;
+        await _playYouTubeSelection(
+          videoId: videoId,
+          title: (song['title'] as String?) ?? 'Unknown song',
+          artist: (song['artist'] as String?) ?? 'Unknown artist',
+          thumbnailUrl: (song['thumbnailUrl'] as String?) ?? '',
+          artistId: (song['artistId'] as String?) ?? '',
+        );
+        _playback.markCurrentSourceIndex(sourceIndex);
+      },
+      prefetchQueueItem: (item) async {
+        if (item is! Map<String, dynamic>) return;
+        final videoId = (item['videoId'] as String?) ?? '';
+        if (videoId.isEmpty) return;
+        await _playback.prefetchYouTubeVideoById(videoId);
+      },
+    );
   }
 
   Future<Uint8List?> _downloadImageBytes(String imageUrl) async {
@@ -253,34 +286,6 @@ class _HomeState extends State<Home> {
     }
   }
 
-  Future<void> _playRecentSong(Map<String, dynamic> item) async {
-    final songPath = (item['songPath'] ?? '').toString();
-    final title = (item['songTitle'] ?? 'Unknown song').toString();
-    final artist = (item['songArtist'] ?? 'Unknown artist').toString();
-    if (songPath.isEmpty) return;
-
-    if (songPath.startsWith('yt:')) {
-      final videoId = songPath.substring(3);
-      final thumbnailUrl = (item['thumbnailUrl'] ?? '').toString();
-      final artistId = (item['artistId'] ?? '').toString();
-      await _playYouTubeSelection(
-        videoId: videoId,
-        title: title,
-        artist: artist,
-        thumbnailUrl: thumbnailUrl,
-        artistId: artistId,
-      );
-      return;
-    }
-
-    await _playLocalSelection(
-      songPath: songPath,
-      title: title,
-      artist: artist,
-      coverImageBytes: item['coverImageBytes'] as Uint8List?,
-    );
-  }
-
   Future<YTMusic> _ensureYtMusic() {
     _ytmusicFuture ??= YTMusic.create().then((ytmusic) {
       _ytmusic = ytmusic;
@@ -298,33 +303,6 @@ class _HomeState extends State<Home> {
     setState(() {
       _selectedTab = 'music_search';
       _selectedTabExtra = {'query': query};
-    });
-  }
-
-  void _onPlaybackChanged() {
-    final currentPath = _playback.currentSongPath;
-    if (currentPath == null || currentPath.isEmpty) {
-      return;
-    }
-
-    if (_lastTrackedSongPath == currentPath) {
-      return;
-    }
-
-    _lastTrackedSongPath = currentPath;
-    final derivedThumbnailUrl = currentPath.startsWith('yt:')
-        ? 'https://i.ytimg.com/vi/${currentPath.substring(3)}/hqdefault.jpg'
-        : '';
-    if (!mounted) return;
-    setState(() {
-      _pushRecentItem(_recentPlayedSongs, <String, dynamic>{
-        'songPath': currentPath,
-        'songTitle': _playback.songName,
-        'songArtist': _playback.artistName,
-        'artistId': _playback.currentArtistId ?? '',
-        'thumbnailUrl': derivedThumbnailUrl,
-        'coverImageBytes': _playback.coverImageBytes,
-      }, 'songPath');
     });
   }
 
@@ -421,6 +399,15 @@ class _HomeState extends State<Home> {
     await _resolvePlayableYouTubeStreamUrls(videoId);
   }
 
+  Future<void> _openDownloadedFile(String path) async {
+    await player.setFilePath(path);
+    final effectivePercent = _playback.effectiveVolumePercent;
+    await player.setVolume(effectivePercent / 100);
+    _playback.setIsMuted(_playback.currentSliderValue == 0);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await player.play();
+  }
+
   Future<void> _openYouTubeStream(
     String streamUrl, {
     Map<String, String>? headers,
@@ -443,6 +430,12 @@ class _HomeState extends State<Home> {
         try {
           await player.stop();
         } catch (_) {}
+
+        final localPath = _downloads.localPathFor(videoId);
+        if (localPath != null) {
+          await _openDownloadedFile(localPath);
+          return;
+        }
 
         final streamUrls = await _resolvePlayableYouTubeStreamUrls(videoId);
         Object? lastError;
@@ -487,10 +480,6 @@ class _HomeState extends State<Home> {
     String tab, {
     Map<String, dynamic>? extra,
   }) async {
-    if (tab == 'playlist_inspect') {
-      _trackRecentPlaylist(extra);
-    }
-
     if (!mounted) return;
     setState(() {
       _selectedTab = tab;
@@ -498,98 +487,91 @@ class _HomeState extends State<Home> {
     });
   }
 
-  Widget _buildHomeSectionTitle(String title) {
+  Widget _buildHomeSectionTitle(String title, {VoidCallback? onSeeAll}) {
     final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Text(
-        title,
-        style: TextStyle(
-          color: colorScheme.onSurface,
-          fontSize: 20,
-          fontWeight: FontWeight.w700,
-        ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (onSeeAll != null)
+            TextButton(
+              onPressed: onSeeAll,
+              style: TextButton.styleFrom(
+                foregroundColor: colorScheme.onSurfaceVariant,
+              ),
+              child: const Text('See all'),
+            ),
+        ],
       ),
     );
   }
 
-  Widget _buildRecentlyPlayedPlaylistsSection() {
+  Widget _buildRecentArtistsSection() {
+    if (_recentlyPlayedTracks.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildHomeSectionTitle('Recently Played Artists'),
+        RecentArtistsRow(
+          events: _recentlyPlayedTracks,
+          onOpenArtist: (channelId, artistName) {
+            _onSidebarTabSelected(
+              'artist_details',
+              extra: {
+                'artistId': channelId,
+                'artistName': artistName,
+                'backTab': 'home',
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildYourPlaylistsSection() {
     final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildHomeSectionTitle('Recently Played Playlists'),
-        if (_recentPlayedPlaylists.isEmpty)
+        _buildHomeSectionTitle(
+          'Your Playlists',
+          onSeeAll: () => _onSidebarTabSelected('playlists'),
+        ),
+        if (_myPlaylists.isEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Text(
-              'No playlists played yet.',
+              'No playlists yet.',
               style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           )
         else
           SizedBox(
-            height: 100,
+            height: 240,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              itemCount: _recentPlayedPlaylists.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemCount: _myPlaylists.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 14),
               itemBuilder: (context, index) {
-                final item = _recentPlayedPlaylists[index];
-                final title = item['playlistTitle'] ?? 'Playlist';
-                final playlistId = item['playlistId'] ?? '';
-                final thumbnailUrl = item['thumbnailUrl']?.toString() ?? '';
-                return InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: playlistId.isEmpty
-                      ? null
-                      : () => _onSidebarTabSelected(
-                          'playlist_inspect',
-                          extra: {
-                            'playlistId': playlistId,
-                            'playlistTitle': title,
-                          },
-                        ),
-                  child: Container(
-                    width: 220,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        thumbnailUrl.isNotEmpty
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: Image.network(
-                                  thumbnailUrl,
-                                  width: 48,
-                                  height: 48,
-                                  cacheWidth: 96,
-                                  cacheHeight: 96,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, _, _) => Icon(
-                                    Icons.queue_music_rounded,
-                                    color: colorScheme.onSurface,
-                                  ),
-                                ),
-                              )
-                            : Icon(
-                                Icons.queue_music_rounded,
-                                color: colorScheme.onSurface,
-                              ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: colorScheme.onSurface),
-                          ),
-                        ),
-                      ],
-                    ),
+                final playlist = _myPlaylists[index];
+                return HomePlaylistCard(
+                  playlist: playlist,
+                  onTap: () => _onSidebarTabSelected(
+                    'playlist_inspect',
+                    extra: {
+                      'playlistId': playlist['playlistId'],
+                      'playlistTitle': playlist['title'],
+                    },
                   ),
                 );
               },
@@ -599,215 +581,113 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Widget _buildRecentlyPlayedSongsSection() {
-    final colorScheme = Theme.of(context).colorScheme;
+  Widget _buildJumpBackInSection() {
+    if (_recentlyPlayedTracks.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildHomeSectionTitle('Recently Played Songs'),
-        if (_recentPlayedSongs.isEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              'No songs played yet.',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          )
-        else
-          ..._recentPlayedSongs.take(5).map((item) {
-            final title = item['songTitle'] ?? 'Unknown song';
-            final artist = item['songArtist'] ?? 'Unknown artist';
-            final songPath = (item['songPath'] ?? '').toString();
-            final thumbnailUrl = (item['thumbnailUrl'] ?? '').toString();
-            final coverBytes = item['coverImageBytes'] as Uint8List?;
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Material(
-                type: MaterialType.transparency,
-                child: ListTile(
-                  leading: songPath.startsWith('yt:') && thumbnailUrl.isNotEmpty
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.network(
-                            thumbnailUrl,
-                            width: 56,
-                            height: 56,
-                            cacheWidth: 112,
-                            cacheHeight: 112,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Icon(
-                              Icons.music_note_rounded,
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        )
-                      : (coverBytes != null && coverBytes.isNotEmpty)
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.memory(
-                            coverBytes,
-                            width: 56,
-                            height: 56,
-                            cacheWidth: 112,
-                            cacheHeight: 112,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Icon(
-                              Icons.music_note_rounded,
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        )
-                      : Icon(
-                          Icons.music_note_rounded,
-                          color: colorScheme.onSurface,
-                        ),
-                  title: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colorScheme.onSurface),
-                  ),
-                  subtitle: Text(
-                    artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                  onTap: () => _playRecentSong(item),
-                ),
-              ),
-            );
-          }),
-      ],
-    );
-  }
-
-  Widget _buildTrendingInDenmarkSection() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(child: _buildHomeSectionTitle('Trending in Denmark')),
-            IconButton(
-              onPressed: _isLoadingTrendingInDenmark
-                  ? null
-                  : () => _loadTrendingInDenmark(),
-              icon: Icon(Icons.refresh_rounded, color: colorScheme.onSurface),
-              tooltip: 'Refresh trending',
-            ),
-          ],
+        _buildHomeSectionTitle('Jump Back In'),
+        SizedBox(
+          height: 210,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _recentlyPlayedTracks.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 12),
+            itemBuilder: (context, index) {
+              final event = _recentlyPlayedTracks[index];
+              return Builder(
+                builder: (context) {
+                  final likedSongs = context.watch<LikedSongsProvider>();
+                  final downloads = context.watch<DownloadsProvider>();
+                  final isCurrentSong = context.select<PlaybackModel, bool>(
+                    (playback) =>
+                        playback.currentSongPath == 'yt:${event.videoId}',
+                  );
+                  return RecentTrackCard(
+                    event: event,
+                    isActive: isCurrentSong,
+                    onTap: () => _playRecentlyPlayedTrack(index),
+                    onMore: () => showAddToPlaylistDialog(
+                      context,
+                      videoId: event.videoId,
+                      songTitle: event.title,
+                    ),
+                    isLiked: likedSongs.isLiked(event.videoId),
+                    onToggleLike: () =>
+                        likedSongs.toggleLike(_playEventToSongMap(event)),
+                    isDownloaded: downloads.isDownloaded(event.videoId),
+                    onToggleDownload: () {
+                      if (downloads.isDownloaded(event.videoId)) {
+                        downloads.remove(event.videoId);
+                      } else {
+                        downloads.download(
+                          videoId: event.videoId,
+                          songName: event.title,
+                          artistName: event.artist,
+                          artistId: event.channelId,
+                        );
+                      }
+                    },
+                  );
+                },
+              );
+            },
+          ),
         ),
-        if (_isLoadingTrendingInDenmark)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_trendingInDenmarkError != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              'Failed to load trending songs: $_trendingInDenmarkError',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          )
-        else if (_trendingInDenmark.isEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Text(
-              'No trending songs found right now.',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          )
-        else
-          ..._trendingInDenmark.take(5).map((item) {
-            final title = item['title'] ?? 'Unknown song';
-            final artist = item['artist'] ?? 'Unknown artist';
-            final thumbnail = item['thumbnailUrl'] ?? '';
-            final videoId = item['videoId'] ?? '';
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Material(
-                type: MaterialType.transparency,
-                child: ListTile(
-                  leading: thumbnail.isEmpty
-                      ? Icon(
-                          Icons.trending_up_rounded,
-                          color: colorScheme.onSurface,
-                        )
-                      : ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.network(
-                            thumbnail,
-                            width: 56,
-                            height: 56,
-                            cacheWidth: 112,
-                            cacheHeight: 112,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Icon(
-                              Icons.trending_up_rounded,
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
-                  title: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colorScheme.onSurface),
-                  ),
-                  subtitle: Text(
-                    artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                  onTap: videoId.isEmpty
-                      ? null
-                      : () => _playYouTubeSelection(
-                          videoId: videoId,
-                          title: title,
-                          artist: artist,
-                          thumbnailUrl: thumbnail,
-                        ),
-                ),
-              ),
-            );
-          }),
       ],
     );
   }
 
   Widget _buildHomeDashboard() {
     final colorScheme = Theme.of(context).colorScheme;
+    final isEmpty = _recentlyPlayedTracks.isEmpty && _myPlaylists.isEmpty;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Welcome back${userDisplayName == null ? '' : ', $userDisplayName'}',
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'Welcome back${userDisplayName == null ? '' : ', $userDisplayName'}',
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: _isLoadingHomeDashboard
+                    ? null
+                    : () => _loadHomeDashboardData(forceRefresh: true),
+                icon: Icon(Icons.refresh_rounded, color: colorScheme.onSurface),
+              ),
+            ],
           ),
           const SizedBox(height: 18),
-          _buildRecentlyPlayedPlaylistsSection(),
-          const SizedBox(height: 18),
-          _buildRecentlyPlayedSongsSection(),
-          const SizedBox(height: 18),
-          _buildTrendingInDenmarkSection(),
+          if (_isLoadingHomeDashboard && isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_homeDashboardError != null && isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Failed to load your home page: $_homeDashboardError',
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+            )
+          else ...[
+            _buildRecentArtistsSection(),
+            if (_recentlyPlayedTracks.isNotEmpty) const SizedBox(height: 24),
+            _buildYourPlaylistsSection(),
+            const SizedBox(height: 24),
+            _buildJumpBackInSection(),
+          ],
         ],
       ),
     );
@@ -1013,7 +893,18 @@ class _HomeState extends State<Home> {
     }
 
     if (_selectedTab == 'liked') {
-      return const LikedPage();
+      return LikedPage(
+        onOpenArtist: (artistId, artistName) {
+          _onSidebarTabSelected(
+            'artist_details',
+            extra: {
+              'artistId': artistId,
+              'artistName': artistName,
+              'backTab': 'liked',
+            },
+          );
+        },
+      );
     }
 
     if (_selectedTab == 'local_files') {
@@ -1055,7 +946,6 @@ class _HomeState extends State<Home> {
 
   @override
   void dispose() {
-    _playback.removeListener(_onPlaybackChanged);
     _youtubeExplode.close();
     _ytmusic?.close();
     _searchController.dispose();
@@ -1261,36 +1151,57 @@ class _HomeState extends State<Home> {
       backgroundColor: colorScheme.surface,
       bottomNavigationBar: Consumer<PlaybackModel>(
         builder: (context, playback, child) {
+          final remote = playback.isRemoteControlling
+              ? playback.remoteSession
+              : null;
+          final remoteTrack = remote?.currentTrack;
+          final artistId = remote != null
+              ? (remoteTrack?['artistId'] as String?)
+              : playback.currentArtistId;
+
           return PlaybackInterface(
-            artist: playback.artistName,
-            songName: playback.songName,
-            progress: playback.progress,
-            isPlaying: playback.isPlaying,
+            artist: remote != null
+                ? (remoteTrack?['artistName'] as String? ?? '')
+                : playback.artistName,
+            songName: remote != null
+                ? (remoteTrack?['songName'] as String? ?? '')
+                : playback.songName,
+            progress: remote?.position ?? playback.progress,
+            isPlaying: remote?.isPlaying ?? playback.isPlaying,
             isMuted: playback.isMuted,
-            currentSliderValue: playback.currentSliderValue,
+            currentSliderValue: remote != null
+                ? (remote.volume * 100).clamp(0, 100).toDouble()
+                : playback.currentSliderValue,
             onSeek: (duration) => playback.seekTo(duration),
             onPlayPauseToggle: _handlePlayPauseToggle,
-            isShuffled: playback.isShuffled,
-            isLooped: playback.isLooped,
+            isShuffled: remote?.shuffle ?? playback.isShuffled,
+            isLooped: remote?.loop ?? playback.isLooped,
             onPrevious: playback.playPrevious,
             onForward: playback.playNext,
             onVolumeChange: (value) => playback.applyVolume(value),
-            duration: playback.duration,
+            duration: remote != null
+                ? Duration(
+                    seconds: remoteTrack?['durationSeconds'] as int? ?? 0,
+                  )
+                : playback.duration,
             onShuffle: playback.toggleShuffle,
             onUnshuffle: playback.toggleShuffle,
             onLoop: playback.toggleLoop,
             onUnloop: playback.toggleLoop,
-            queue: playback.queue,
-            onQueuePressed: () => _openQueueSheet(context, playback.queue),
-            onArtistTap:
-                (playback.currentArtistId == null ||
-                    playback.currentArtistId!.isEmpty)
+            queue: remote != null ? remote.queue : playback.queue,
+            onQueuePressed: () => _openQueueSheet(
+              context,
+              remote != null ? remote.queue : playback.queue,
+            ),
+            onArtistTap: (artistId == null || artistId.isEmpty)
                 ? null
                 : () => _onSidebarTabSelected(
                     'artist_details',
                     extra: {
-                      'artistId': playback.currentArtistId,
-                      'artistName': playback.artistName,
+                      'artistId': artistId,
+                      'artistName': remote != null
+                          ? (remoteTrack?['artistName'] as String? ?? '')
+                          : playback.artistName,
                       'backTab': _selectedTab,
                       'backExtra': _selectedTabExtra,
                     },
@@ -1416,21 +1327,24 @@ class _HomeState extends State<Home> {
                     ),
                   ],
                 ),
-                Row(
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.all(10),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerLowest,
-                          borderRadius: BorderRadius.all(Radius.circular(10)),
+                const RemoteSessionBanner(),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.all(10),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerLowest,
+                            borderRadius: BorderRadius.all(Radius.circular(10)),
+                          ),
+                          width: MediaQuery.of(context).size.width - 260,
+                          child: _buildMainContent(),
                         ),
-                        width: MediaQuery.of(context).size.width - 260,
-                        height: MediaQuery.of(context).size.height - 200,
-                        child: _buildMainContent(),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),

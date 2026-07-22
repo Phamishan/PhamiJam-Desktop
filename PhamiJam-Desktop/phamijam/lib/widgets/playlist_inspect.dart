@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/providers/liked_songs_provider.dart';
+import 'package:phamijam/services/download_service.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -298,7 +300,59 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
               ? Icon(Icons.repeat_one_on_rounded, color: colorScheme.primary)
               : Icon(Icons.repeat_one_rounded, color: colorScheme.primary),
         ),
+        if (_songs.isNotEmpty) _buildDownloadPlaylistButton(),
       ],
+    );
+  }
+
+  Widget _buildDownloadPlaylistButton() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final downloads = context.watch<DownloadsProvider>();
+    final videoIds = _songs
+        .map((s) => (s['videoId'] as String?) ?? '')
+        .where((id) => id.isNotEmpty);
+    final allDownloaded =
+        videoIds.isNotEmpty && videoIds.every(downloads.isDownloaded);
+    final anyDownloading = videoIds.any(downloads.isDownloading);
+
+    if (anyDownloading) {
+      return IconButton(
+        onPressed: downloads.cancelAllDownloads,
+        icon: SizedBox(
+          width: 20,
+          height: 20,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              const CircularProgressIndicator(strokeWidth: 2),
+              Icon(
+                Icons.stop_rounded,
+                size: 12,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return IconButton(
+      onPressed: allDownloaded
+          ? null
+          : () => downloads.downloadTracks([
+              for (final s in _songs)
+                {
+                  'videoId': s['videoId'],
+                  'songName': s['title'],
+                  'artistName': s['artist'],
+                  'artistId': s['artistId'],
+                  'durationSeconds': s['durationSeconds'],
+                },
+            ]),
+      icon: Icon(
+        allDownloaded ? Icons.download_done_rounded : Icons.download_rounded,
+        color: allDownloaded ? colorScheme.primary : colorScheme.primary,
+      ),
     );
   }
 
@@ -744,6 +798,13 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                               (playback) =>
                                   playback.currentSongPath == 'yt:$videoId',
                             );
+                        final downloads = context.watch<DownloadsProvider>();
+                        final isDownloaded = downloads.isDownloaded(videoId);
+                        final isDownloadingThisSong = downloads.isDownloading(
+                          videoId,
+                        );
+                        final likedSongs = context.watch<LikedSongsProvider>();
+                        final isLiked = likedSongs.isLiked(videoId);
 
                         return ContextMenuRegion<String>(
                           contextMenu: ContextMenu(
@@ -758,6 +819,19 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                 value: 'add_to_playlist',
                                 icon: const Icon(Icons.playlist_add_rounded),
                                 label: const Text('Add to playlist'),
+                              ),
+                              MenuItem<String>(
+                                value: isDownloaded
+                                    ? 'remove_download'
+                                    : 'download',
+                                icon: Icon(
+                                  isDownloaded
+                                      ? Icons.download_done_rounded
+                                      : Icons.download_rounded,
+                                ),
+                                label: Text(
+                                  isDownloaded ? 'Remove download' : 'Download',
+                                ),
                               ),
                             ],
                           ),
@@ -777,6 +851,17 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                 videoId: videoId,
                                 songTitle: title,
                               );
+                            } else if (value == 'download') {
+                              if (videoId.isEmpty) return;
+                              downloads.download(
+                                videoId: videoId,
+                                songName: title,
+                                artistName: artist,
+                                artistId: artistId,
+                                durationSeconds: durationSeconds,
+                              );
+                            } else if (value == 'remove_download') {
+                              downloads.remove(videoId);
                             }
                           },
                           child: Container(
@@ -851,20 +936,79 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                           color: colorScheme.onSurfaceVariant,
                                         ),
                                       ),
-                                trailing: isLoadingThisSong
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : Text(
-                                        songDurationLabel,
-                                        style: TextStyle(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      onPressed: videoId.isEmpty
+                                          ? null
+                                          : () => likedSongs.toggleLike({
+                                              'videoId': videoId,
+                                              'title': title,
+                                              'artist': artist,
+                                              'artistId': artistId,
+                                              'thumbnailUrl': thumbnailUrl,
+                                              'durationSeconds':
+                                                  durationSeconds,
+                                            }),
+                                      icon: Icon(
+                                        isLiked
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        color: isLiked
+                                            ? colorScheme.onSurface
+                                            : colorScheme.onSurfaceVariant,
+                                        size: 18,
                                       ),
+                                      splashRadius: 18,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    isLoadingThisSong
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : isDownloadingThisSong
+                                        ? IconButton(
+                                            onPressed: () => downloads
+                                                .cancelDownload(videoId),
+                                            splashRadius: 14,
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(
+                                              minWidth: 18,
+                                              minHeight: 18,
+                                            ),
+                                            icon: SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: Stack(
+                                                alignment: Alignment.center,
+                                                children: [
+                                                  const CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                  Icon(
+                                                    Icons.stop_rounded,
+                                                    size: 10,
+                                                    color: colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          )
+                                        : Text(
+                                            songDurationLabel,
+                                            style: TextStyle(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                  ],
+                                ),
                                 onTap: () =>
                                     _playYouTubeSongAtIndex(sourceIndex, song),
                               ),

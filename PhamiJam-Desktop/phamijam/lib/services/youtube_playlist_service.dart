@@ -61,6 +61,15 @@ class YoutubePlaylistService {
     return response;
   }
 
+  static String _bestThumbnailUrl(Map<String, dynamic> snippet) {
+    final thumbnails = snippet['thumbnails'] as Map? ?? const {};
+    for (final key in ['high', 'medium', 'default']) {
+      final url = (thumbnails[key] as Map?)?['url'];
+      if (url is String && url.isNotEmpty) return url;
+    }
+    return '';
+  }
+
   static Map<String, dynamic> _normalizePlaylistItem(Map rawItem) {
     final item = Map<String, dynamic>.from(rawItem);
     final snippet = Map<String, dynamic>.from(
@@ -74,6 +83,7 @@ class YoutubePlaylistService {
       'playlistId': item['id'],
       'title': (snippet['title'] as String?) ?? 'Untitled playlist',
       'itemCount': (contentDetails['itemCount'] as num?)?.toInt() ?? 0,
+      'thumbnailUrl': _bestThumbnailUrl(snippet),
     };
   }
 

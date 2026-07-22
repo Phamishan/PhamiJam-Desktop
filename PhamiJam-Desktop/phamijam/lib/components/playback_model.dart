@@ -7,6 +7,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/playback_session_sync_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum PlaybackEngine { local, youtube }
@@ -64,9 +65,132 @@ class PlaybackModel extends ChangeNotifier {
   List<dynamic> _playlistItems = [];
   List<int> _playOrder = [];
   int _currentOrderIndex = -1;
+  RemoteSession? _remoteSession;
+  bool _isRemoteControlling = false;
+  String? _dismissedRemoteKey;
+  StreamSubscription<RemoteSession?>? _remoteSessionSub;
+  StreamSubscription<List<RemoteCommand>>? _incomingCommandsSub;
+  Timer? _sessionHeartbeat;
 
   PlaybackModel() {
     unawaited(_restoreLastPlayedSong());
+    _remoteSessionSub = PlaybackSessionSyncService.watchOtherSession().listen((
+      session,
+    ) {
+      _remoteSession = session;
+      if (_isRemoteControlling && session == null) {
+        _isRemoteControlling = false;
+      }
+      notifyListeners();
+    });
+    _incomingCommandsSub = PlaybackSessionSyncService.watchIncomingCommands()
+        .listen(_handleIncomingCommands);
+    _sessionHeartbeat = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (!_isRemoteControlling && isPlaying) _pushSessionIfHosting();
+    });
+  }
+
+  RemoteSession? get remoteSession => _remoteSession;
+  bool get isRemoteControlling => _isRemoteControlling;
+  bool get shouldShowRemoteBanner {
+    if (_isRemoteControlling) return false;
+    final session = _remoteSession;
+    if (session == null || !session.isLive) return false;
+    final key = session.currentTrack?['videoId'] as String?;
+    return key != null && key != _dismissedRemoteKey;
+  }
+
+  void dismissRemoteBanner() {
+    _dismissedRemoteKey = _remoteSession?.currentTrack?['videoId'] as String?;
+    notifyListeners();
+  }
+
+  Future<void> enterRemoteControl() async {
+    if (_remoteSession == null) return;
+    if (isPlaying) await _localTogglePlayPause();
+    _isRemoteControlling = true;
+    notifyListeners();
+  }
+
+  void _exitRemoteControl() {
+    if (!_isRemoteControlling) return;
+    _isRemoteControlling = false;
+    notifyListeners();
+  }
+
+  Future<void> resumeRemoteSessionLocally() async {
+    final session = _remoteSession;
+    final track = session?.currentTrack;
+    if (session == null || track == null) return;
+    _isRemoteControlling = false;
+    isShuffled = session.shuffle;
+    isLooped = session.loop;
+    setPlaylistQueue(session.queue, startIndex: session.queueIndex);
+    await playQueueIndex(0);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    await seekTo(session.position);
+  }
+
+  void _pushSessionIfHosting() {
+    if (_isRemoteControlling) return;
+    if (_currentOrderIndex < 0 || _currentOrderIndex >= _playOrder.length) {
+      return;
+    }
+    final unfiltered = <Map<String, dynamic>>[
+      for (final sourceIndex in _playOrder)
+        if (_playlistItems[sourceIndex] is Map<String, dynamic>)
+          _playlistItems[sourceIndex] as Map<String, dynamic>,
+    ];
+    if (_currentOrderIndex >= unfiltered.length) return;
+    final currentItem = unfiltered[_currentOrderIndex];
+    final currentVideoId = currentItem['videoId'] as String?;
+    if (currentVideoId == null || currentVideoId.isEmpty) {
+      return;
+    }
+
+    final syncable = <Map<String, dynamic>>[];
+    var syncableIndex = -1;
+    for (var i = 0; i < unfiltered.length; i++) {
+      final videoId = unfiltered[i]['videoId'] as String?;
+      if (videoId == null || videoId.isEmpty) continue;
+      if (i == _currentOrderIndex) syncableIndex = syncable.length;
+      syncable.add(unfiltered[i]);
+    }
+    if (syncableIndex < 0) return;
+
+    PlaybackSessionSyncService.pushSession(
+      queue: syncable,
+      queueIndex: syncableIndex,
+      position: displayedProgress,
+      isPlaying: isPlaying,
+      volume: effectiveVolumePercent / 100,
+      shuffle: isShuffled,
+      loop: isLooped,
+    );
+  }
+
+  Future<void> _handleIncomingCommands(List<RemoteCommand> commands) async {
+    for (final command in commands) {
+      switch (command.type) {
+        case RemoteCommandType.play:
+          if (!isPlaying) await _localTogglePlayPause();
+          break;
+        case RemoteCommandType.pause:
+          if (isPlaying) await _localTogglePlayPause();
+          break;
+        case RemoteCommandType.next:
+          await _localPlayNext();
+          break;
+        case RemoteCommandType.previous:
+          await _localPlayPrevious();
+          break;
+        case RemoteCommandType.setVolume:
+          final value = command.value;
+          if (value != null) await _localApplyVolume(value * 100);
+          break;
+      }
+      await PlaybackSessionSyncService.ackCommand(command.id);
+    }
   }
 
   Future<void> _restoreLastPlayedSong() async {
@@ -95,9 +219,7 @@ class PlaybackModel extends ChangeNotifier {
           coverImageBytes = response.bodyBytes;
           notifyListeners();
         }
-      } catch (_) {
-        // text info still shows without the cover.
-      }
+      } catch (_) {}
     }
   }
 
@@ -108,9 +230,7 @@ class PlaybackModel extends ChangeNotifier {
       await prefs.setString(_prefsArtistNameKey, artistName);
       await prefs.setString(_prefsArtistIdKey, currentArtistId ?? '');
       await prefs.setString(_prefsSongPathKey, currentSongPath ?? '');
-    } catch (_) {
-      // Ignore errors during persistence.
-    }
+    } catch (_) {}
   }
 
   Duration get displayedProgress => isSeeking ? seekPreview : progress;
@@ -120,6 +240,7 @@ class PlaybackModel extends ChangeNotifier {
   String _activePlayTitle = '';
   String _activePlayArtist = '';
   String _activePlayThumb = '';
+  String? _activePlayArtistId;
   DateTime? _activePlayStartedAt;
   int _activePlayMaxProgressMs = 0;
   int _activePlayDurationMs = 0;
@@ -132,10 +253,12 @@ class PlaybackModel extends ChangeNotifier {
     final title = _activePlayTitle;
     final artist = _activePlayArtist;
     final thumb = _activePlayThumb;
+    final channelId = _activePlayArtistId;
     _activePlayId = null;
     _activePlayStartedAt = null;
     _activePlayMaxProgressMs = 0;
     _activePlayDurationMs = 0;
+    _activePlayArtistId = null;
     if (id == null || startedAt == null) return;
     unawaited(
       ListeningHistoryService.logPlay(
@@ -143,6 +266,7 @@ class PlaybackModel extends ChangeNotifier {
         title: title,
         artist: artist,
         thumbnailUrl: thumb,
+        channelId: channelId,
         trackDuration: Duration(milliseconds: durationMs),
         startedAt: startedAt,
         listened: Duration(milliseconds: listenedMs),
@@ -159,6 +283,7 @@ class PlaybackModel extends ChangeNotifier {
     _activePlayThumb = isYouTube
         ? 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg'
         : '';
+    _activePlayArtistId = currentArtistId;
     _activePlayStartedAt = DateTime.now();
     _activePlayMaxProgressMs = 0;
     _activePlayDurationMs = duration?.inMilliseconds ?? 0;
@@ -239,7 +364,7 @@ class PlaybackModel extends ChangeNotifier {
       );
       return;
     }
-    await playNext(wrapAround: true);
+    await _localPlayNext(wrapAround: true);
     unawaited(
       Future<void>.delayed(const Duration(milliseconds: 150), () {
         return _syncDiscordPresence(force: true);
@@ -573,6 +698,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void clearPlaylistQueue() {
+    _exitRemoteControl();
     _playlistItems = [];
     _playOrder = [];
     _currentOrderIndex = -1;
@@ -581,6 +707,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void setPlaylistQueue(List<dynamic> items, {required int startIndex}) {
+    _exitRemoteControl();
     if (items.isEmpty || startIndex < 0 || startIndex >= items.length) {
       _playlistItems = [];
       _playOrder = [];
@@ -599,6 +726,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void addToQueue(dynamic item) {
+    _exitRemoteControl();
     _playlistItems = List<dynamic>.from(_playlistItems)..add(item);
     final sourceIndex = _playlistItems.length - 1;
 
@@ -635,6 +763,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> playQueueIndex(int queueIndex) async {
+    if (_isRemoteControlling) return;
     if (queueIndex < 0 || queueIndex >= queue.length) return;
     if (_currentOrderIndex < 0) return;
 
@@ -652,6 +781,14 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> playPrevious() async {
+    if (_isRemoteControlling) {
+      await PlaybackSessionSyncService.sendCommand(RemoteCommandType.previous);
+      return;
+    }
+    await _localPlayPrevious();
+  }
+
+  Future<void> _localPlayPrevious() async {
     if (_playOrder.isNotEmpty) {
       final previousOrderIndex = _normalizeOrderIndex(_currentOrderIndex - 1);
       if (previousOrderIndex == null) {
@@ -665,10 +802,19 @@ class PlaybackModel extends ChangeNotifier {
       await _playBySourceIndex(_playOrder[previousOrderIndex]);
       _forceDiscordPresenceRefreshAfterTrackChange();
       unawaited(_prefetchAhead());
+      _pushSessionIfHosting();
     }
   }
 
   Future<void> playNext({bool wrapAround = false}) async {
+    if (_isRemoteControlling) {
+      await PlaybackSessionSyncService.sendCommand(RemoteCommandType.next);
+      return;
+    }
+    await _localPlayNext(wrapAround: wrapAround);
+  }
+
+  Future<void> _localPlayNext({bool wrapAround = false}) async {
     if (_playOrder.isNotEmpty) {
       final nextOrderIndex = _normalizeOrderIndex(
         _currentOrderIndex + 1,
@@ -685,6 +831,7 @@ class PlaybackModel extends ChangeNotifier {
       await _playBySourceIndex(_playOrder[nextOrderIndex]);
       _forceDiscordPresenceRefreshAfterTrackChange();
       unawaited(_prefetchAhead());
+      _pushSessionIfHosting();
     }
   }
 
@@ -767,6 +914,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> seekTo(Duration value) async {
+    if (_isRemoteControlling) return;
     setProgress(value);
     if (_engine == PlaybackEngine.youtube) {
       await _youtubeSeek?.call(value);
@@ -777,6 +925,16 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause() async {
+    if (_isRemoteControlling) {
+      await PlaybackSessionSyncService.sendCommand(
+        isPlaying ? RemoteCommandType.pause : RemoteCommandType.play,
+      );
+      return;
+    }
+    await _localTogglePlayPause();
+  }
+
+  Future<void> _localTogglePlayPause() async {
     if (_engine == PlaybackEngine.youtube) {
       if (isPlaying) {
         await _youtubePause?.call();
@@ -785,6 +943,7 @@ class PlaybackModel extends ChangeNotifier {
         await _youtubePlay?.call();
         setIsPlaying(true);
       }
+      _pushSessionIfHosting();
       return;
     }
 
@@ -793,9 +952,11 @@ class PlaybackModel extends ChangeNotifier {
     } else {
       await player.play();
     }
+    _pushSessionIfHosting();
   }
 
   void toggleShuffle() {
+    if (_isRemoteControlling) return;
     isShuffled = !isShuffled;
     if (_playlistItems.isNotEmpty) {
       final fallbackSourceIndex =
@@ -812,6 +973,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void toggleLoop() {
+    if (_isRemoteControlling) return;
     isLooped = !isLooped;
     if (_playlistItems.isNotEmpty) {
       _refreshQueueWindow();
@@ -919,15 +1081,45 @@ class PlaybackModel extends ChangeNotifier {
     }
   }
 
+  Timer? _volumeCommandThrottle;
+  double? _pendingVolumeCommandValue;
+
   Future<void> applyVolume(double sliderValue) async {
+    if (_isRemoteControlling) {
+      _sendVolumeCommandThrottled((sliderValue.clamp(0, 100) / 100).toDouble());
+      return;
+    }
+    await _localApplyVolume(sliderValue);
+  }
+
+  void _sendVolumeCommandThrottled(double value) {
+    _pendingVolumeCommandValue = value;
+    if (_volumeCommandThrottle != null) return;
+    PlaybackSessionSyncService.sendCommand(
+      RemoteCommandType.setVolume,
+      value: value,
+    );
+    _volumeCommandThrottle = Timer(const Duration(milliseconds: 150), () {
+      _volumeCommandThrottle = null;
+      final pending = _pendingVolumeCommandValue;
+      if (pending != null) {
+        _pendingVolumeCommandValue = null;
+        _sendVolumeCommandThrottled(pending);
+      }
+    });
+  }
+
+  Future<void> _localApplyVolume(double sliderValue) async {
     setCurrentSliderValue(sliderValue);
     setIsMuted(sliderValue == 0);
     final effectivePercent = _sliderToOutputVolumePercent(sliderValue);
     if (_engine == PlaybackEngine.youtube) {
       await _youtubeSetVolume?.call(effectivePercent);
+      _pushSessionIfHosting();
       return;
     }
     await player.setVolume(effectivePercent / 100);
+    _pushSessionIfHosting();
   }
 
   void setArtist(String artist) {
@@ -1021,6 +1213,10 @@ class PlaybackModel extends ChangeNotifier {
     _durationSubscription?.cancel();
     _volumeSubscription?.cancel();
     _completedSubscription?.cancel();
+    _remoteSessionSub?.cancel();
+    _incomingCommandsSub?.cancel();
+    _sessionHeartbeat?.cancel();
+    _volumeCommandThrottle?.cancel();
     unawaited(_discordRpc?.clearPresence());
     unawaited(_discordRpc?.dispose());
     super.dispose();

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:phamijam/providers/theme_provider.dart';
+import 'package:phamijam/services/download_service.dart';
 import 'package:provider/provider.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -78,6 +79,104 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _confirmClearDownloads(DownloadsProvider downloads) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Clear all downloads?'),
+        content: const Text(
+          'This deletes every downloaded song from this device. '
+          "This can't be undone.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            child: const Text('Clear all'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await downloads.clearAll();
+    }
+  }
+
+  Widget _buildStorageCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Consumer<DownloadsProvider>(
+      builder: (context, downloads, _) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.download_done_rounded,
+                    color: colorScheme.onSurface,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Downloaded Songs',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${downloads.totalTracks} songs · '
+                          '${formatDownloadSize(downloads.totalSizeBytes)}',
+                          style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (downloads.totalTracks > 0) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _confirmClearDownloads(downloads),
+                    icon: Icon(
+                      Icons.delete_outline_rounded,
+                      color: colorScheme.error,
+                    ),
+                    label: const Text('Clear all downloads'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colorScheme.error,
+                      side: BorderSide(color: colorScheme.error),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildVersionInfoCard() {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
@@ -104,7 +203,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Version 1.0.0',
+                'Version 1.0.1',
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
             ],
@@ -136,6 +235,8 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 10),
         _buildAppearanceCard(),
+        const SizedBox(height: 10),
+        _buildStorageCard(),
         const SizedBox(height: 10),
         _buildVersionInfoCard(),
       ],

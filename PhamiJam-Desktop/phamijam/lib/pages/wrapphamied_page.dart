@@ -13,20 +13,44 @@ class WrapphamiedPage extends StatefulWidget {
 class _WrapphamiedPageState extends State<WrapphamiedPage> {
   WrappedStats? _stats;
   int _slideIndex = 0;
-
-  int get _year => DateTime.now().year;
+  int _year = DateTime.now().year;
+  int _earliestYear = DateTime.now().year;
 
   @override
   void initState() {
     super.initState();
     _loadStats();
+    _loadEarliestYear();
+  }
+
+  Future<void> _loadEarliestYear() async {
+    final year = await ListeningHistoryService.earliestEventYear();
+    if (!mounted) return;
+    setState(() => _earliestYear = year);
   }
 
   Future<void> _loadStats() async {
-    final events = await ListeningHistoryService.eventsSince(DateTime(_year));
+    setState(() => _stats = null);
+    final events = await ListeningHistoryService.eventsSince(
+      DateTime(_year),
+      until: DateTime(_year + 1),
+    );
     if (!mounted) return;
     setState(() => _stats = WrappedStats.fromEvents(events));
   }
+
+  void _selectYear(int year) {
+    if (year == _year) return;
+    setState(() {
+      _year = year;
+      _slideIndex = 0;
+    });
+    _loadStats();
+  }
+
+  List<int> get _availableYears => [
+    for (var y = DateTime.now().year; y >= _earliestYear; y--) y,
+  ];
 
   List<Widget> _buildSlides(WrappedStats stats) {
     return [
@@ -149,6 +173,16 @@ class _WrapphamiedPageState extends State<WrapphamiedPage> {
             ),
           ),
           body,
+          if (_availableYears.length > 1)
+            Positioned(
+              top: 16,
+              left: 16,
+              child: _YearPicker(
+                year: _year,
+                years: _availableYears,
+                onSelected: _selectYear,
+              ),
+            ),
           Positioned(
             top: 16,
             right: 16,
@@ -158,6 +192,82 @@ class _WrapphamiedPageState extends State<WrapphamiedPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _YearPicker extends StatelessWidget {
+  final int year;
+  final List<int> years;
+  final ValueChanged<int> onSelected;
+
+  const _YearPicker({
+    required this.year,
+    required this.years,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<int>(
+      initialValue: year,
+      onSelected: onSelected,
+      color: const Color(0xFF2A2210),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: kBrandGold.withValues(alpha: 0.3)),
+      ),
+      itemBuilder: (context) => [
+        for (final y in years)
+          PopupMenuItem(
+            value: y,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 18,
+                  child: y == year
+                      ? Icon(Icons.check_rounded, color: kBrandGold, size: 18)
+                      : null,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '$y',
+                  style: TextStyle(
+                    color: y == year ? kBrandGold : Colors.white,
+                    fontWeight: y == year ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: kBrandGold.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '$year',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.expand_more_rounded,
+              color: Colors.white,
+              size: 18,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -561,13 +671,16 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isCurrentYear = year == DateTime.now().year;
     return _SlideScaffold(
       children: [
         Text('Wrapphamied $year', style: _hero(context).copyWith(fontSize: 32)),
         const SizedBox(height: 16),
         Text(
-          "Nothing to wrap yet — PhamiJam starts counting your plays "
-          "from now on. Go jam for a bit and check back!",
+          isCurrentYear
+              ? "Nothing to wrap yet — PhamiJam starts counting your plays "
+                    "from now on. Go jam for a bit and check back!"
+              : "No listening logged for $year.",
           style: _body(context),
         ),
       ],

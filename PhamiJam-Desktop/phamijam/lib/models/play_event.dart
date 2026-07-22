@@ -3,6 +3,7 @@ class PlayEvent {
   final String title;
   final String artist;
   final String thumbnailUrl;
+  final String? channelId;
   final DateTime startedAt;
   final int listenedMs;
 
@@ -11,6 +12,7 @@ class PlayEvent {
     required this.title,
     required this.artist,
     required this.thumbnailUrl,
+    this.channelId,
     required this.startedAt,
     required this.listenedMs,
   });
@@ -30,6 +32,7 @@ class PlayEvent {
     't': title,
     'a': artist,
     'th': thumbnailUrl,
+    'c': channelId,
     's': startedAt.millisecondsSinceEpoch,
     'l': listenedMs,
   };
@@ -43,6 +46,7 @@ class PlayEvent {
       title: json['t'] is String ? json['t'] as String : '',
       artist: json['a'] is String ? json['a'] as String : '',
       thumbnailUrl: json['th'] is String ? json['th'] as String : '',
+      channelId: json['c'] is String ? json['c'] as String : null,
       startedAt: DateTime.fromMillisecondsSinceEpoch(startedAtMs),
       listenedMs: json['l'] is int ? json['l'] as int : 0,
     );

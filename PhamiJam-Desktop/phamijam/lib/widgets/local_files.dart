@@ -224,9 +224,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
         }
         currentCover = _pickPreferredCover(metadata.pictures);
         currentDurationSeconds = metadata.duration?.inSeconds ?? 0;
-      } catch (_) {
-        // Ignore metadata read failures per-file.
-      }
+      } catch (_) {}
 
       foundSongNames.add(currentTitle);
       foundArtistNames.add(currentArtist);

@@ -207,9 +207,6 @@ class _LoginState extends State<Login> {
                                   ),
                                   iconSize: 40,
                                   splashRadius: 24,
-                                  tooltip: isSignedIn
-                                      ? 'Sign Out'
-                                      : 'Sign In with Google',
                                 ),
                               ],
                             ),

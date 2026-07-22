@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/playback_model.dart';
+import 'package:phamijam/components/remote_control_badge.dart';
 import 'package:provider/provider.dart';
 
 class Sidebar extends StatelessWidget {
@@ -110,41 +111,68 @@ class Sidebar extends StatelessWidget {
             ],
           ),
           Spacer(),
-          Selector<PlaybackModel, (Uint8List?, PlaybackEngine)>(
-            selector: (context, playback) =>
-                (playback.coverImageBytes, playback.engine),
+          Selector<PlaybackModel, (Uint8List?, PlaybackEngine, bool, String?)>(
+            selector: (context, playback) => (
+              playback.coverImageBytes,
+              playback.engine,
+              playback.isRemoteControlling,
+              playback.remoteSession?.deviceName,
+            ),
             builder: (context, data, child) {
               final coverBytes = data.$1;
               final engine = data.$2;
+              final isRemoteControlling = data.$3;
+              final remoteDeviceName = data.$4;
               return Container(
                 margin: EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                ),
                 width: 160,
                 height: 160,
-                clipBehavior: Clip.antiAlias,
-                child: engine == PlaybackEngine.youtube && videoCover != null
-                    ? FittedBox(
-                        fit: BoxFit.cover,
-                        child: SizedBox(
-                          width: 284,
-                          height: 160,
-                          child: videoCover!,
-                        ),
-                      )
-                    : DecoratedBox(
-                        decoration: BoxDecoration(
-                          image: DecorationImage(
-                            image: coverBytes != null
-                                ? MemoryImage(coverBytes)
-                                : AssetImage('assets/images/p-trans.png')
-                                      as ImageProvider,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                        child: const SizedBox.expand(),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: SizedBox(
+                        width: 160,
+                        height: 160,
+                        child:
+                            engine == PlaybackEngine.youtube &&
+                                videoCover != null
+                            ? FittedBox(
+                                fit: BoxFit.cover,
+                                child: SizedBox(
+                                  width: 284,
+                                  height: 160,
+                                  child: videoCover!,
+                                ),
+                              )
+                            : DecoratedBox(
+                                decoration: BoxDecoration(
+                                  image: DecorationImage(
+                                    image: coverBytes != null
+                                        ? MemoryImage(coverBytes)
+                                        : AssetImage(
+                                                'assets/images/p-trans.png',
+                                              )
+                                              as ImageProvider,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                                child: const SizedBox.expand(),
+                              ),
                       ),
+                    ),
+                    if (isRemoteControlling)
+                      Positioned(
+                        right: 6,
+                        bottom: 6,
+                        child: RemoteControlBadge(
+                          deviceName: remoteDeviceName ?? 'device',
+                          size: 28,
+                        ),
+                      ),
+                  ],
+                ),
               );
             },
           ),

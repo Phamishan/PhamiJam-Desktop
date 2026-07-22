@@ -7,7 +7,9 @@ import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/firebase_options.dart';
 import 'package:phamijam/pages/login.dart';
 import 'package:phamijam/pages/home.dart';
+import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/theme_provider.dart';
+import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 
@@ -21,6 +23,8 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => PlaybackModel()..bindToPlayer()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => DownloadsProvider()),
+        ChangeNotifierProvider(create: (_) => LikedSongsProvider()),
       ],
       child: const MyApp(),
     ),
