@@ -7,7 +7,9 @@ import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
+import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -196,6 +198,25 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       debugPrint('Failed to download image from $imageUrl: $error');
     }
     return null;
+  }
+
+  Widget _buildPinButton() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final playlistId = _playlistId;
+    return Consumer<PlaylistPinProvider>(
+      builder: (context, pins, _) {
+        final isPinned = playlistId != null && pins.isPinned(playlistId);
+        return IconButton(
+          onPressed: playlistId == null
+              ? null
+              : () => pins.togglePin(playlistId),
+          icon: Icon(
+            isPinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+            color: isPinned ? colorScheme.primary : colorScheme.onSurface,
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildMetadataRow() {
@@ -394,9 +415,17 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     });
 
     try {
-      final playlistData = await _fetchPlaylistDataWithYoutubeExplode(
-        playlistId,
-      );
+      Map<String, dynamic> playlistData;
+      try {
+        playlistData = await YoutubePlaylistService.fetchPlaylistSongs(
+          playlistId,
+        );
+      } catch (apiError) {
+        debugPrint(
+          'Authenticated playlist fetch failed, falling back to public scrape: $apiError',
+        );
+        playlistData = await _fetchPlaylistDataWithYoutubeExplode(playlistId);
+      }
       final songsWithDurations =
           (playlistData['songs'] as List?)
               ?.whereType<Map<String, dynamic>>()
@@ -505,6 +534,10 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       if (index != null && index >= 0 && index < _songs.length) {
         if (syncQueue) {
           playback.setPlaylistQueue(_songs, startIndex: index);
+          playback.setSourcePlaylist(
+            id: _playlistId,
+            title: _displayPlaylistTitle,
+          );
           _registerQueueHandlersForSongs(
             List<Map<String, dynamic>>.from(_songs),
           );
@@ -644,6 +677,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              _buildPinButton(),
               const SizedBox(width: 12),
               ElevatedButton.icon(
                 onPressed: () => _loadSongs(forceRefresh: true),
@@ -697,6 +731,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            _buildPinButton(),
             const SizedBox(width: 12),
             ElevatedButton.icon(
               onPressed: () => _loadSongs(forceRefresh: true),

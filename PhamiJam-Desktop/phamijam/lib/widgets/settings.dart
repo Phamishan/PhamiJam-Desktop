@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/providers/theme_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:provider/provider.dart';
@@ -76,6 +77,55 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildPlayerCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Consumer<SettingsProvider>(
+      builder: (context, settings, _) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.playlist_remove_rounded, color: colorScheme.onSurface),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Suggest removing skipped songs',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Get asked to remove a playlist song you've skipped "
+                      'early several times',
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: settings.suggestRemovingSkippedSongs,
+                onChanged: settings.setSuggestRemovingSkippedSongs,
+                activeThumbColor: colorScheme.onPrimary,
+                inactiveThumbColor: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -203,7 +253,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Version 1.0.1',
+                'Version 1.0.2',
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
             ],
@@ -235,6 +285,8 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 10),
         _buildAppearanceCard(),
+        const SizedBox(height: 10),
+        _buildPlayerCard(),
         const SizedBox(height: 10),
         _buildStorageCard(),
         const SizedBox(height: 10),

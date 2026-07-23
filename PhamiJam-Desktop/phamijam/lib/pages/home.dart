@@ -13,6 +13,8 @@ import 'package:phamijam/components/remote_session_banner.dart';
 import 'package:phamijam/components/sidebar.dart';
 import 'package:phamijam/models/play_event.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
+import 'package:phamijam/providers/playlist_pin_provider.dart';
+import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
@@ -68,6 +70,7 @@ class _HomeState extends State<Home> {
   List<PlayEvent> _recentlyPlayedTracks = <PlayEvent>[];
   List<Map<String, dynamic>> _myPlaylists = <Map<String, dynamic>>[];
   bool _isLoadingHomeDashboard = false;
+  bool _showingSkipSuggestion = false;
   String? _homeDashboardError;
   String? _currentlyLoadingRecentVideoId;
   static const Duration _resolvedStreamsTtl = Duration(minutes: 20);
@@ -89,6 +92,76 @@ class _HomeState extends State<Home> {
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
     unawaited(context.read<LikedSongsProvider>().refresh());
+    _playback.addListener(_handlePlaybackChanged);
+  }
+
+  void _handlePlaybackChanged() {
+    final song = _playback.suggestedRemovalSong;
+    final playlistId = _playback.suggestedRemovalPlaylistId;
+    if (song == null || playlistId == null || _showingSkipSuggestion) return;
+    if (!context.read<SettingsProvider>().suggestRemovingSkippedSongs) {
+      _playback.dismissSkipSuggestion();
+      return;
+    }
+    _showingSkipSuggestion = true;
+    _showSkipSuggestionDialog(
+      song,
+      playlistId,
+      _playback.suggestedRemovalPlaylistTitle ?? 'this playlist',
+    ).whenComplete(() {
+      _showingSkipSuggestion = false;
+    });
+  }
+
+  Future<void> _showSkipSuggestionDialog(
+    Map<String, dynamic> song,
+    String playlistId,
+    String playlistTitle,
+  ) async {
+    final title = (song['title'] as String?) ?? 'This song';
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Skipping this a lot?'),
+        content: Text(
+          'You\'ve skipped "$title" early several times in "$playlistTitle". '
+          'Remove it from the playlist?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Keep it'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    await _playback.dismissSkipSuggestion();
+    if (remove != true || !mounted) return;
+
+    final videoId = (song['videoId'] as String?) ?? '';
+    if (videoId.isEmpty) return;
+    try {
+      final itemIds = await YoutubePlaylistService.fetchPlaylistItemIds(
+        playlistId,
+      );
+      final itemId = itemIds[videoId];
+      if (itemId == null) {
+        throw Exception('This song is no longer in the playlist.');
+      }
+      await YoutubePlaylistService.removeVideoFromPlaylist(itemId);
+      if (mounted) AppFlushbar.success(context, 'Removed "$title"');
+    } catch (error) {
+      if (mounted) {
+        AppFlushbar.error(context, "Couldn't remove track: $error");
+      }
+    }
   }
 
   Future<void> _loadHomeDashboardData({bool forceRefresh = false}) async {
@@ -540,6 +613,8 @@ class _HomeState extends State<Home> {
 
   Widget _buildYourPlaylistsSection() {
     final colorScheme = Theme.of(context).colorScheme;
+    final pins = context.watch<PlaylistPinProvider>();
+    final playlists = pins.sortByPin(_myPlaylists);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -547,7 +622,7 @@ class _HomeState extends State<Home> {
           'Your Playlists',
           onSeeAll: () => _onSidebarTabSelected('playlists'),
         ),
-        if (_myPlaylists.isEmpty)
+        if (playlists.isEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Text(
@@ -560,12 +635,17 @@ class _HomeState extends State<Home> {
             height: 240,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              itemCount: _myPlaylists.length,
+              itemCount: playlists.length,
               separatorBuilder: (_, _) => const SizedBox(width: 14),
               itemBuilder: (context, index) {
-                final playlist = _myPlaylists[index];
+                final playlist = playlists[index];
+                final playlistId = playlist['playlistId'] as String?;
                 return HomePlaylistCard(
                   playlist: playlist,
+                  isPinned: playlistId != null && pins.isPinned(playlistId),
+                  onTogglePin: playlistId == null
+                      ? null
+                      : () => pins.togglePin(playlistId),
                   onTap: () => _onSidebarTabSelected(
                     'playlist_inspect',
                     extra: {
@@ -946,6 +1026,7 @@ class _HomeState extends State<Home> {
 
   @override
   void dispose() {
+    _playback.removeListener(_handlePlaybackChanged);
     _youtubeExplode.close();
     _ytmusic?.close();
     _searchController.dispose();

@@ -21,6 +21,10 @@
   - Added offline downloads for songs and playlists (needs testing)
   - Added cross-device (needs testing)
   - Redesigned the Now Playing screen
+- 1.0.2 - 23/07/2026
+  - Added playlist pinning
+  - Added a skip feature
+  - Fixed Discord presence
 
 ## Screenshots:
 

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
+import 'package:phamijam/services/skip_tracking_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum PlaybackEngine { local, youtube }
@@ -65,6 +66,11 @@ class PlaybackModel extends ChangeNotifier {
   List<dynamic> _playlistItems = [];
   List<int> _playOrder = [];
   int _currentOrderIndex = -1;
+  String? _sourcePlaylistId;
+  String? _sourcePlaylistTitle;
+  Map<String, dynamic>? suggestedRemovalSong;
+  String? suggestedRemovalPlaylistId;
+  String? suggestedRemovalPlaylistTitle;
   RemoteSession? _remoteSession;
   bool _isRemoteControlling = false;
   String? _dismissedRemoteKey;
@@ -355,6 +361,21 @@ class PlaybackModel extends ChangeNotifier {
     if (!_isNearTrackEnd()) return;
 
     _completionHandledForCurrentTrack = true;
+    final playlistId = _sourcePlaylistId;
+    if (playlistId != null &&
+        _currentOrderIndex >= 0 &&
+        _currentOrderIndex < _playOrder.length) {
+      final sourceIndex = _playOrder[_currentOrderIndex];
+      if (sourceIndex >= 0 && sourceIndex < _playlistItems.length) {
+        final item = _playlistItems[sourceIndex];
+        if (item is Map<String, dynamic>) {
+          final videoId = (item['videoId'] as String?) ?? '';
+          if (videoId.isNotEmpty) {
+            unawaited(SkipTrackingService.recordCompleted(playlistId, videoId));
+          }
+        }
+      }
+    }
     if (isLooped) {
       await _restartCurrentTrack();
       unawaited(
@@ -627,8 +648,8 @@ class PlaybackModel extends ChangeNotifier {
     return DiscordPresence(
       type: DiscordActivityType.listening,
       details: title,
-      state: artist,
-      timestamps: _buildProgressTimestamps(),
+      state: isPlaying ? artist : '$artist (Paused)',
+      timestamps: isPlaying ? _buildProgressTimestamps() : null,
       largeAsset: largeAsset,
       statusDisplayType: DiscordStatusDisplayType.details,
     );
@@ -702,11 +723,24 @@ class PlaybackModel extends ChangeNotifier {
     _playlistItems = [];
     _playOrder = [];
     _currentOrderIndex = -1;
+    _sourcePlaylistId = null;
+    _sourcePlaylistTitle = null;
+    suggestedRemovalSong = null;
+    suggestedRemovalPlaylistId = null;
+    suggestedRemovalPlaylistTitle = null;
     queue = [];
     notifyListeners();
   }
 
+  void setSourcePlaylist({required String? id, String? title}) {
+    _sourcePlaylistId = id;
+    _sourcePlaylistTitle = title;
+  }
+
   void setPlaylistQueue(List<dynamic> items, {required int startIndex}) {
+    unawaited(_recordPotentialSkip());
+    _sourcePlaylistId = null;
+    _sourcePlaylistTitle = null;
     _exitRemoteControl();
     if (items.isEmpty || startIndex < 0 || startIndex >= items.length) {
       _playlistItems = [];
@@ -723,6 +757,48 @@ class PlaybackModel extends ChangeNotifier {
     _refreshQueueWindow();
     unawaited(_prefetchAhead());
     notifyListeners();
+  }
+
+  Future<void> _recordPotentialSkip() async {
+    final playlistId = _sourcePlaylistId;
+    if (playlistId == null) return;
+    if (_currentOrderIndex < 0 || _currentOrderIndex >= _playOrder.length) {
+      return;
+    }
+    final sourceIndex = _playOrder[_currentOrderIndex];
+    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) return;
+    final item = _playlistItems[sourceIndex];
+    if (item is! Map<String, dynamic>) return;
+    final videoId = (item['videoId'] as String?) ?? '';
+    if (videoId.isEmpty) return;
+
+    final total = duration;
+    if (total == null || total <= Duration.zero) return;
+    final playedFraction = progress.inMilliseconds / total.inMilliseconds;
+    if (playedFraction >= SkipTrackingService.consideredSkippedBeforeFraction) {
+      return;
+    }
+
+    final count = await SkipTrackingService.recordSkip(playlistId, videoId);
+    if (count >= SkipTrackingService.skipThreshold) {
+      suggestedRemovalSong = Map<String, dynamic>.from(item);
+      suggestedRemovalPlaylistId = playlistId;
+      suggestedRemovalPlaylistTitle = _sourcePlaylistTitle;
+      notifyListeners();
+    }
+  }
+
+  Future<void> dismissSkipSuggestion() async {
+    final song = suggestedRemovalSong;
+    final playlistId = suggestedRemovalPlaylistId;
+    suggestedRemovalSong = null;
+    suggestedRemovalPlaylistId = null;
+    suggestedRemovalPlaylistTitle = null;
+    notifyListeners();
+    final videoId = song != null ? (song['videoId'] as String?) : null;
+    if (playlistId != null && videoId != null && videoId.isNotEmpty) {
+      await SkipTrackingService.clearForTrack(playlistId, videoId);
+    }
   }
 
   void addToQueue(dynamic item) {
@@ -766,6 +842,7 @@ class PlaybackModel extends ChangeNotifier {
     if (_isRemoteControlling) return;
     if (queueIndex < 0 || queueIndex >= queue.length) return;
     if (_currentOrderIndex < 0) return;
+    await _recordPotentialSkip();
 
     final targetRawOrderIndex = _currentOrderIndex + queueIndex;
     final targetOrderIndex = _normalizeOrderIndex(targetRawOrderIndex);
@@ -785,6 +862,7 @@ class PlaybackModel extends ChangeNotifier {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.previous);
       return;
     }
+    await _recordPotentialSkip();
     await _localPlayPrevious();
   }
 
@@ -811,6 +889,7 @@ class PlaybackModel extends ChangeNotifier {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.next);
       return;
     }
+    await _recordPotentialSkip();
     await _localPlayNext(wrapAround: wrapAround);
   }
 

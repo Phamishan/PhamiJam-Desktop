@@ -8,6 +8,8 @@ import 'package:phamijam/firebase_options.dart';
 import 'package:phamijam/pages/login.dart';
 import 'package:phamijam/pages/home.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
+import 'package:phamijam/providers/playlist_pin_provider.dart';
+import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/providers/theme_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
@@ -25,6 +27,8 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => DownloadsProvider()),
         ChangeNotifierProvider(create: (_) => LikedSongsProvider()),
+        ChangeNotifierProvider(create: (_) => PlaylistPinProvider()),
+        ChangeNotifierProvider(create: (_) => SettingsProvider()),
       ],
       child: const MyApp(),
     ),

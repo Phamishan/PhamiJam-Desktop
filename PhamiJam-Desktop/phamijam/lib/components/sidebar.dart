@@ -45,7 +45,7 @@ class Sidebar extends StatelessWidget {
                     color: colorScheme.onSurface,
                   ),
                   title: Text(
-                    'Playlists',
+                    'Library',
                     style: TextStyle(color: colorScheme.onSurface),
                   ),
                   onTap: () {

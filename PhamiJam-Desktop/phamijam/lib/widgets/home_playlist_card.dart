@@ -1,16 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_context_menu/flutter_context_menu.dart';
 
 class HomePlaylistCard extends StatefulWidget {
   final Map<String, dynamic> playlist;
   final double width;
   final VoidCallback onTap;
   final VoidCallback? onPlay;
+  final bool isPinned;
+  final VoidCallback? onTogglePin;
 
   const HomePlaylistCard({
     super.key,
     required this.playlist,
     required this.onTap,
     this.onPlay,
+    this.isPinned = false,
+    this.onTogglePin,
     this.width = 148,
   });
 
@@ -28,7 +33,7 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
     final itemCount = (widget.playlist['itemCount'] as int?) ?? 0;
     final thumbnailUrl = (widget.playlist['thumbnailUrl'] as String?) ?? '';
 
-    return MouseRegion(
+    final card = MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
       cursor: SystemMouseCursors.click,
@@ -77,6 +82,74 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
                             ),
                     ),
                   ),
+                  if (widget.isPinned)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: colorScheme.shadow.withValues(alpha: 0.45),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.push_pin_rounded,
+                          color: colorScheme.onPrimary,
+                          size: 14,
+                        ),
+                      ),
+                    ),
+                  if (widget.onTogglePin != null)
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: Material(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        shape: const CircleBorder(),
+                        child: PopupMenuButton<String>(
+                          splashRadius: 16,
+                          borderRadius: BorderRadius.circular(16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          onSelected: (value) {
+                            if (value == 'toggle_pin') widget.onTogglePin?.call();
+                          },
+                          itemBuilder: (context) => [
+                            PopupMenuItem(
+                              value: 'toggle_pin',
+                              child: ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: Icon(
+                                  widget.isPinned
+                                      ? Icons.push_pin_outlined
+                                      : Icons.push_pin_rounded,
+                                ),
+                                title: Text(
+                                  widget.isPinned
+                                      ? 'Unpin playlist'
+                                      : 'Pin playlist',
+                                ),
+                              ),
+                            ),
+                          ],
+                          child: const Padding(
+                            padding: EdgeInsets.all(7),
+                            child: Icon(
+                              Icons.more_vert_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (widget.onPlay != null)
                     AnimatedOpacity(
                       opacity: _hovering ? 1 : 0,
@@ -135,6 +208,30 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
           ),
         ),
       ),
+    );
+
+    final onTogglePin = widget.onTogglePin;
+    if (onTogglePin == null) return card;
+
+    return ContextMenuRegion<String>(
+      contextMenu: ContextMenu(
+        borderRadius: BorderRadius.circular(12),
+        entries: [
+          MenuItem<String>(
+            value: 'toggle_pin',
+            icon: Icon(
+              widget.isPinned
+                  ? Icons.push_pin_outlined
+                  : Icons.push_pin_rounded,
+            ),
+            label: Text(widget.isPinned ? 'Unpin playlist' : 'Pin playlist'),
+          ),
+        ],
+      ),
+      onItemSelected: (value) {
+        if (value == 'toggle_pin') onTogglePin();
+      },
+      child: card,
     );
   }
 }

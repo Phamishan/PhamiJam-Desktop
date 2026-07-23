@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/providers/playlist_pin_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
 
 class PlaylistsPage extends StatefulWidget {
@@ -929,159 +931,207 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                     style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 )
-              : ListView.builder(
-                  itemCount: _filteredPlaylists.length,
-                  itemBuilder: (context, index) {
-                    final playlist = _filteredPlaylists[index];
-                    final title =
-                        (playlist['title'] as String?) ?? 'Unknown Playlist';
-                    final description =
-                        (playlist['description'] as String?) ?? '';
-                    final author =
-                        (playlist['author'] as String?) ?? 'Unknown Author';
-                    final itemCount =
-                        (playlist['itemCount'] as String?) ??
-                        (playlist['count'] as String?) ??
-                        '';
-                    final subtitle = itemCount.isNotEmpty
-                        ? '$author - $itemCount songs'
-                        : author;
-                    final thumbnails =
-                        (playlist['thumbnails'] as List?) ?? const [];
-                    String? thumbnailUrl;
-                    for (final rawThumbnail in thumbnails.reversed) {
-                      if (rawThumbnail is! Map) {
-                        continue;
-                      }
-                      final candidate = rawThumbnail['url'] as String?;
-                      if (_isUsableThumbnailUrl(candidate)) {
-                        thumbnailUrl = candidate;
-                        break;
-                      }
-                    }
+              : Builder(
+                  builder: (context) {
+                    final pins = context.watch<PlaylistPinProvider>();
+                    final sortedPlaylists = pins.sortByPin(_filteredPlaylists);
+                    return ListView.builder(
+                      itemCount: sortedPlaylists.length,
+                      itemBuilder: (context, index) {
+                        final playlist = sortedPlaylists[index];
+                        final title =
+                            (playlist['title'] as String?) ??
+                            'Unknown Playlist';
+                        final description =
+                            (playlist['description'] as String?) ?? '';
+                        final author =
+                            (playlist['author'] as String?) ?? 'Unknown Author';
+                        final itemCount =
+                            (playlist['itemCount'] as String?) ??
+                            (playlist['count'] as String?) ??
+                            '';
+                        final subtitle = itemCount.isNotEmpty
+                            ? '$author - $itemCount songs'
+                            : author;
+                        final thumbnails =
+                            (playlist['thumbnails'] as List?) ?? const [];
+                        String? thumbnailUrl;
+                        for (final rawThumbnail in thumbnails.reversed) {
+                          if (rawThumbnail is! Map) {
+                            continue;
+                          }
+                          final candidate = rawThumbnail['url'] as String?;
+                          if (_isUsableThumbnailUrl(candidate)) {
+                            thumbnailUrl = candidate;
+                            break;
+                          }
+                        }
 
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Material(
-                          type: MaterialType.transparency,
-                          child: ListTile(
-                            leading:
-                                thumbnailUrl != null && thumbnailUrl.isNotEmpty
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
-                                    child: Image.network(
-                                      thumbnailUrl,
-                                      width: 56,
-                                      height: 56,
-                                      cacheWidth: 112,
-                                      cacheHeight: 112,
-                                      fit: BoxFit.cover,
-                                      errorBuilder:
-                                          (context, error, stackTrace) => Icon(
-                                            Icons.playlist_play_rounded,
-                                            color: colorScheme.onSurface,
-                                          ),
-                                    ),
-                                  )
-                                : Icon(
-                                    Icons.playlist_play_rounded,
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: colorScheme.surface,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: ListTile(
+                                leading:
+                                    thumbnailUrl != null &&
+                                        thumbnailUrl.isNotEmpty
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.network(
+                                          thumbnailUrl,
+                                          width: 56,
+                                          height: 56,
+                                          cacheWidth: 112,
+                                          cacheHeight: 112,
+                                          fit: BoxFit.cover,
+                                          errorBuilder:
+                                              (context, error, stackTrace) =>
+                                                  Icon(
+                                                    Icons.playlist_play_rounded,
+                                                    color:
+                                                        colorScheme.onSurface,
+                                                  ),
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.playlist_play_rounded,
+                                        color: colorScheme.onSurface,
+                                      ),
+                                title: Text(
+                                  title,
+                                  style: TextStyle(
                                     color: colorScheme.onSurface,
                                   ),
-                            title: Text(
-                              title,
-                              style: TextStyle(color: colorScheme.onSurface),
-                            ),
-                            subtitle: Text(
-                              subtitle,
-                              style: TextStyle(
-                                color: colorScheme.onSurfaceVariant,
+                                ),
+                                subtitle: Text(
+                                  subtitle,
+                                  style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Builder(
+                                      builder: (context) {
+                                        final playlistId =
+                                            (playlist['playlistId']
+                                                as String?) ??
+                                            '';
+                                        final isPinned =
+                                            playlistId.isNotEmpty &&
+                                            pins.isPinned(playlistId);
+                                        return Container(
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.onSurface
+                                                .withValues(alpha: 0.38),
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          child: IconButton(
+                                            icon: Icon(
+                                              isPinned
+                                                  ? Icons.push_pin_rounded
+                                                  : Icons.push_pin_outlined,
+                                              color: colorScheme.onSurface,
+                                            ),
+                                            onPressed: playlistId.isEmpty
+                                                ? null
+                                                : () => pins.togglePin(
+                                                    playlistId,
+                                                  ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.38,
+                                        ),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.edit_rounded,
+                                          color: colorScheme.onSurface,
+                                        ),
+                                        onPressed: () {
+                                          final playlistId =
+                                              (playlist['playlistId']
+                                                  as String?) ??
+                                              '';
+                                          if (playlistId.isEmpty) {
+                                            AppFlushbar.error(
+                                              context,
+                                              'This playlist cannot be edited.',
+                                            );
+                                            return;
+                                          }
+
+                                          _showEditPlaylistDialog(
+                                            playlistId: playlistId,
+                                            initialTitle: title,
+                                            initialDescription: description,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.error,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.delete_rounded,
+                                          color: colorScheme.onError,
+                                        ),
+                                        onPressed: () {
+                                          final playlistId =
+                                              (playlist['playlistId']
+                                                  as String?) ??
+                                              '';
+                                          if (playlistId.isEmpty) {
+                                            AppFlushbar.error(
+                                              context,
+                                              'This playlist cannot be deleted.',
+                                            );
+                                            return;
+                                          }
+
+                                          _confirmDeletePlaylist(
+                                            playlistId: playlistId,
+                                            playlistTitle: title,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                onTap: () {
+                                  widget.onTabSelected?.call(
+                                    'playlist_inspect',
+                                    extra: {
+                                      'playlistId': playlist['playlistId'],
+                                      'playlistTitle': title,
+                                      'thumbnailUrl': thumbnailUrl,
+                                    },
+                                  );
+                                },
                               ),
                             ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: colorScheme.onSurface.withValues(
-                                      alpha: 0.38,
-                                    ),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: IconButton(
-                                    icon: Icon(
-                                      Icons.edit_rounded,
-                                      color: colorScheme.onSurface,
-                                    ),
-                                    onPressed: () {
-                                      final playlistId =
-                                          (playlist['playlistId'] as String?) ??
-                                          '';
-                                      if (playlistId.isEmpty) {
-                                        AppFlushbar.error(
-                                          context,
-                                          'This playlist cannot be edited.',
-                                        );
-                                        return;
-                                      }
-
-                                      _showEditPlaylistDialog(
-                                        playlistId: playlistId,
-                                        initialTitle: title,
-                                        initialDescription: description,
-                                      );
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: colorScheme.error,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: IconButton(
-                                    icon: Icon(
-                                      Icons.delete_rounded,
-                                      color: colorScheme.onError,
-                                    ),
-                                    onPressed: () {
-                                      final playlistId =
-                                          (playlist['playlistId'] as String?) ??
-                                          '';
-                                      if (playlistId.isEmpty) {
-                                        AppFlushbar.error(
-                                          context,
-                                          'This playlist cannot be deleted.',
-                                        );
-                                        return;
-                                      }
-
-                                      _confirmDeletePlaylist(
-                                        playlistId: playlistId,
-                                        playlistTitle: title,
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                            onTap: () {
-                              widget.onTabSelected?.call(
-                                'playlist_inspect',
-                                extra: {
-                                  'playlistId': playlist['playlistId'],
-                                  'playlistTitle': title,
-                                  'thumbnailUrl': thumbnailUrl,
-                                },
-                              );
-                            },
                           ),
-                        ),
-                      ),
+                        );
+                      },
                     );
                   },
                 ),
