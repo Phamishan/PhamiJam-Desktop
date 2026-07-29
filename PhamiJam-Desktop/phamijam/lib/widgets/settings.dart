@@ -253,7 +253,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Version 1.0.2',
+                'Version 1.0.3',
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
             ],

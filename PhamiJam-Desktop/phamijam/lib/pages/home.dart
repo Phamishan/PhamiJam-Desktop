@@ -92,6 +92,7 @@ class _HomeState extends State<Home> {
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
     unawaited(context.read<LikedSongsProvider>().refresh());
+    unawaited(context.read<PlaylistPinProvider>().refresh());
     _playback.addListener(_handlePlaybackChanged);
   }
 
@@ -222,10 +223,9 @@ class _HomeState extends State<Home> {
         thumbnailUrl: event.thumbnailUrl,
         artistId: event.channelId ?? '',
       );
-      _playback.setPlaylistQueue(
-        [for (final e in _recentlyPlayedTracks) _playEventToSongMap(e)],
-        startIndex: index,
-      );
+      _playback.setPlaylistQueue([
+        for (final e in _recentlyPlayedTracks) _playEventToSongMap(e),
+      ], startIndex: index);
       _registerRecentlyPlayedQueueHandlers();
     } finally {
       if (mounted) setState(() => _currentlyLoadingRecentVideoId = null);
@@ -324,7 +324,17 @@ class _HomeState extends State<Home> {
 
   Future<void> _handlePlayPauseToggle() async {
     if (_playback.needsResumeLoad) {
-      await _resumeRestoredSong();
+      if (_playback.hasRestorableQueue) {
+        try {
+          await _playback.resumeRestoredQueue();
+        } catch (error) {
+          if (mounted) {
+            AppFlushbar.error(context, "Couldn't resume the last played song.");
+          }
+        }
+      } else {
+        await _resumeRestoredSong();
+      }
       return;
     }
     _playback.togglePlayPause();

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
+import 'package:phamijam/services/playback_state_service.dart';
 import 'package:phamijam/services/skip_tracking_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -77,9 +78,12 @@ class PlaybackModel extends ChangeNotifier {
   StreamSubscription<RemoteSession?>? _remoteSessionSub;
   StreamSubscription<List<RemoteCommand>>? _incomingCommandsSub;
   Timer? _sessionHeartbeat;
+  Timer? _positionAutosaveTimer;
+  Duration? _restoredResumePosition;
 
   PlaybackModel() {
-    unawaited(_restoreLastPlayedSong());
+    unawaited(_restoreVolume());
+    unawaited(_restoreLastPlayedState());
     _remoteSessionSub = PlaybackSessionSyncService.watchOtherSession().listen((
       session,
     ) {
@@ -94,7 +98,12 @@ class PlaybackModel extends ChangeNotifier {
     _sessionHeartbeat = Timer.periodic(const Duration(seconds: 45), (_) {
       if (!_isRemoteControlling && isPlaying) _pushSessionIfHosting();
     });
+    _positionAutosaveTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (isPlaying) _persistQueueState();
+    });
   }
+
+  bool get hasRestorableQueue => needsResumeLoad && _playOrder.isNotEmpty;
 
   RemoteSession? get remoteSession => _remoteSession;
   bool get isRemoteControlling => _isRemoteControlling;
@@ -199,6 +208,83 @@ class PlaybackModel extends ChangeNotifier {
     }
   }
 
+  Future<void> _restoreVolume() async {
+    final saved = await PlaybackStateService.loadVolume();
+    if (saved == null) return;
+    currentSliderValue = saved.clamp(0, 100).toDouble();
+    isMuted = currentSliderValue == 0;
+    notifyListeners();
+    try {
+      await player.setVolume(currentSliderValue / 100);
+    } catch (_) {}
+  }
+
+  Future<void> _fetchAndApplyYouTubeThumbnail(String videoId) async {
+    if (videoId.isEmpty) return;
+    try {
+      final response = await http.get(
+        Uri.parse('https://i.ytimg.com/vi/$videoId/hqdefault.jpg'),
+      );
+      if (response.statusCode == 200) {
+        coverImageBytes = response.bodyBytes;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _restoreLastPlayedState() async {
+    final savedQueue = await PlaybackStateService.loadQueue();
+    if (savedQueue != null) {
+      _playlistItems = savedQueue.playlistItems;
+      _playOrder = savedQueue.playOrder;
+      _currentOrderIndex = savedQueue.currentOrderIndex;
+      isShuffled = savedQueue.shuffle;
+      isLooped = savedQueue.loop;
+      _refreshQueueWindow();
+
+      final sourceIndex = _playOrder[_currentOrderIndex];
+      final item = _playlistItems[sourceIndex];
+      String? restoredVideoId;
+      if (item is Map<String, dynamic>) {
+        final restoredSongName = (item['songName'] ?? item['title']) as String?;
+        final restoredArtistName =
+            (item['artistName'] ?? item['artist']) as String?;
+        if (restoredSongName != null && restoredSongName.isNotEmpty) {
+          songName = restoredSongName;
+        }
+        if (restoredArtistName != null && restoredArtistName.isNotEmpty) {
+          artistName = restoredArtistName;
+        }
+        currentArtistId = item['artistId'] as String?;
+
+        final durationSeconds = item['durationSeconds'] as int?;
+        if (durationSeconds != null && durationSeconds > 0) {
+          duration = Duration(seconds: durationSeconds);
+        }
+
+        final videoId = (item['videoId'] as String?) ?? '';
+        final path = (item['path'] as String?) ?? '';
+        if (videoId.isNotEmpty) {
+          currentSongPath = 'yt:$videoId';
+          restoredVideoId = videoId;
+        } else if (path.isNotEmpty) {
+          currentSongPath = path;
+        }
+      }
+
+      needsResumeLoad = true;
+      _restoredResumePosition = savedQueue.position;
+      notifyListeners();
+
+      if (restoredVideoId != null) {
+        await _fetchAndApplyYouTubeThumbnail(restoredVideoId);
+      }
+      return;
+    }
+
+    await _restoreLastPlayedSong();
+  }
+
   Future<void> _restoreLastPlayedSong() async {
     final prefs = await SharedPreferences.getInstance();
     final path = prefs.getString(_prefsSongPathKey);
@@ -217,15 +303,7 @@ class PlaybackModel extends ChangeNotifier {
     if (path.startsWith('yt:')) {
       final videoId = path.substring(3).trim();
       if (videoId.isEmpty) return;
-      try {
-        final response = await http.get(
-          Uri.parse('https://i.ytimg.com/vi/$videoId/hqdefault.jpg'),
-        );
-        if (response.statusCode == 200) {
-          coverImageBytes = response.bodyBytes;
-          notifyListeners();
-        }
-      } catch (_) {}
+      await _fetchAndApplyYouTubeThumbnail(videoId);
     }
   }
 
@@ -237,6 +315,45 @@ class PlaybackModel extends ChangeNotifier {
       await prefs.setString(_prefsArtistIdKey, currentArtistId ?? '');
       await prefs.setString(_prefsSongPathKey, currentSongPath ?? '');
     } catch (_) {}
+  }
+
+  void _persistQueueState() {
+    if (_playlistItems.isEmpty ||
+        _playOrder.isEmpty ||
+        _currentOrderIndex < 0 ||
+        _currentOrderIndex >= _playOrder.length) {
+      unawaited(PlaybackStateService.clearQueue());
+      return;
+    }
+    unawaited(
+      PlaybackStateService.saveQueue(
+        playlistItems: _playlistItems,
+        playOrder: _playOrder,
+        currentOrderIndex: _currentOrderIndex,
+        shuffle: isShuffled,
+        loop: isLooped,
+        position: displayedProgress,
+      ),
+    );
+  }
+
+  Future<void> resumeRestoredQueue() async {
+    if (!hasRestorableQueue) return;
+    needsResumeLoad = false;
+    final resumePosition = _restoredResumePosition;
+    _restoredResumePosition = null;
+
+    await _playBySourceIndex(_playOrder[_currentOrderIndex]);
+    _forceDiscordPresenceRefreshAfterTrackChange();
+    unawaited(_prefetchAhead());
+
+    if (resumePosition != null && resumePosition > Duration.zero) {
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 400), () {
+          return seekTo(resumePosition);
+        }),
+      );
+    }
   }
 
   Duration get displayedProgress => isSeeking ? seekPreview : progress;
@@ -730,6 +847,7 @@ class PlaybackModel extends ChangeNotifier {
     suggestedRemovalPlaylistTitle = null;
     queue = [];
     notifyListeners();
+    _persistQueueState();
   }
 
   void setSourcePlaylist({required String? id, String? title}) {
@@ -748,6 +866,7 @@ class PlaybackModel extends ChangeNotifier {
       _currentOrderIndex = -1;
       queue = [];
       notifyListeners();
+      _persistQueueState();
       return;
     }
 
@@ -757,6 +876,7 @@ class PlaybackModel extends ChangeNotifier {
     _refreshQueueWindow();
     unawaited(_prefetchAhead());
     notifyListeners();
+    _persistQueueState();
   }
 
   Future<void> _recordPotentialSkip() async {
@@ -820,6 +940,7 @@ class PlaybackModel extends ChangeNotifier {
     _refreshQueueWindow();
     unawaited(_prefetchAhead());
     notifyListeners();
+    _persistQueueState();
   }
 
   void markCurrentSourceIndex(int sourceIndex) {
@@ -836,6 +957,7 @@ class PlaybackModel extends ChangeNotifier {
     _refreshQueueWindow();
     unawaited(_prefetchAhead());
     notifyListeners();
+    _persistQueueState();
   }
 
   Future<void> playQueueIndex(int queueIndex) async {
@@ -1049,6 +1171,7 @@ class PlaybackModel extends ChangeNotifier {
       unawaited(_prefetchAhead());
     }
     notifyListeners();
+    _persistQueueState();
   }
 
   void toggleLoop() {
@@ -1058,6 +1181,7 @@ class PlaybackModel extends ChangeNotifier {
       _refreshQueueWindow();
     }
     notifyListeners();
+    _persistQueueState();
   }
 
   int? _sourceIndexFromCurrentPath() {
@@ -1192,6 +1316,7 @@ class PlaybackModel extends ChangeNotifier {
     setCurrentSliderValue(sliderValue);
     setIsMuted(sliderValue == 0);
     final effectivePercent = _sliderToOutputVolumePercent(sliderValue);
+    unawaited(PlaybackStateService.saveVolume(effectivePercent));
     if (_engine == PlaybackEngine.youtube) {
       await _youtubeSetVolume?.call(effectivePercent);
       _pushSessionIfHosting();
@@ -1227,6 +1352,7 @@ class PlaybackModel extends ChangeNotifier {
     notifyListeners();
     _scheduleDiscordPresenceSync(allowReconnect: true);
     unawaited(_persistLastPlayedSong());
+    _persistQueueState();
   }
 
   void setCoverImageBytes(Uint8List? bytes) {
@@ -1258,6 +1384,7 @@ class PlaybackModel extends ChangeNotifier {
     seekPreview = value;
     notifyListeners();
     _scheduleDiscordPresenceSync();
+    _persistQueueState();
   }
 
   void setDuration(Duration? value) {
@@ -1271,6 +1398,7 @@ class PlaybackModel extends ChangeNotifier {
     isPlaying = value;
     notifyListeners();
     _scheduleDiscordPresenceSync();
+    if (!value) _persistQueueState();
   }
 
   void setIsMuted(bool value) {
@@ -1295,6 +1423,7 @@ class PlaybackModel extends ChangeNotifier {
     _remoteSessionSub?.cancel();
     _incomingCommandsSub?.cancel();
     _sessionHeartbeat?.cancel();
+    _positionAutosaveTimer?.cancel();
     _volumeCommandThrottle?.cancel();
     unawaited(_discordRpc?.clearPresence());
     unawaited(_discordRpc?.dispose());

@@ -25,6 +25,9 @@
   - Added playlist pinning
   - Added a skip feature
   - Fixed Discord presence
+- 1.0.3 - 30/07/2026
+  - Desktop now remembers volume and queue/position
+  - Pinned playlists now sync between mobile and desktop
 
 ## Screenshots:
 
