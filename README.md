@@ -28,6 +28,11 @@
 - 1.0.3 - 30/07/2026
   - Desktop now remembers volume and queue/position
   - Pinned playlists now sync between mobile and desktop
+- 1.0.4 - 01/08/2026
+  - Added synced lyrics
+  - Added a YouTube Music/YouTube search engine toggle
+  - Redesigned artist page
+  - Fixed the settings switch color
 
 ## Screenshots:
 

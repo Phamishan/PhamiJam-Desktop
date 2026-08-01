@@ -30,6 +30,7 @@ import 'package:phamijam/widgets/recent_artists_row.dart';
 import 'package:phamijam/widgets/recent_track_card.dart';
 import 'package:phamijam/widgets/settings.dart';
 import 'package:phamijam/widgets/local_files.dart';
+import 'package:phamijam/widgets/lyrics_sheet.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt;
@@ -783,57 +784,133 @@ class _HomeState extends State<Home> {
     );
   }
 
+  Widget _buildSearchEngineToggle(SearchEngine searchEngine) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SegmentedButton<SearchEngine>(
+          segments: const [
+            ButtonSegment(
+              value: SearchEngine.youtubeMusic,
+              label: Text('YouTube Music'),
+              icon: Icon(Icons.music_note_rounded),
+            ),
+            ButtonSegment(
+              value: SearchEngine.youtube,
+              label: Text('YouTube'),
+              icon: Icon(Icons.smart_display_rounded),
+            ),
+          ],
+          selected: {searchEngine},
+          showSelectedIcon: false,
+          style: SegmentedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            backgroundColor: colorScheme.onSurface.withValues(alpha: 0.12),
+            foregroundColor: colorScheme.onSurfaceVariant,
+            selectedBackgroundColor: colorScheme.primary,
+            selectedForegroundColor: colorScheme.onPrimary,
+          ),
+          onSelectionChanged: (selection) =>
+              context.read<SettingsProvider>().setSearchEngine(selection.first),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMainContent() {
+    final searchEngine = context.watch<SettingsProvider>().searchEngine;
+
     if (_selectedTab == 'music_search') {
       final query = (_selectedTabExtra?['query'] as String?) ?? '';
       if (query.trim().isEmpty) {
         return _buildHomeDashboard();
       }
 
-      return MusicSearchResultsPage(
-        query: query,
-        ytmusicFuture: _ensureYtMusic(),
-        onBack: () => _onSidebarTabSelected('home'),
-        onPlaySong:
-            ({
-              required String videoId,
-              required String title,
-              required String artist,
-              String thumbnailUrl = '',
-              String artistId = '',
-            }) async {
-              await _playYouTubeSelection(
-                videoId: videoId,
-                title: title,
-                artist: artist,
-                thumbnailUrl: thumbnailUrl,
-                artistId: artistId,
-              );
-            },
-        onOpenArtist: (artistId, artistName) {
-          _onSidebarTabSelected(
-            'artist_details',
-            extra: {
-              'artistId': artistId,
-              'artistName': artistName,
-              'backTab': 'music_search',
-              'backExtra': {'query': query},
-            },
-          );
-        },
-        onOpenAlbum: (albumId, albumTitle, artistId, artistName) {
-          _onSidebarTabSelected(
-            'album_details',
-            extra: {
-              'albumId': albumId,
-              'albumTitle': albumTitle,
-              'artistId': artistId,
-              'artistName': artistName,
-              'backTab': 'music_search',
-              'backExtra': {'query': query},
-            },
-          );
-        },
+      final resultsPage = searchEngine == SearchEngine.youtube
+          ? YoutubeSearchResultsPage(
+              query: query,
+              onBack: () => _onSidebarTabSelected('home'),
+              onPlaySong:
+                  ({
+                    required String videoId,
+                    required String title,
+                    required String artist,
+                    String thumbnailUrl = '',
+                    String artistId = '',
+                  }) async {
+                    await _playYouTubeSelection(
+                      videoId: videoId,
+                      title: title,
+                      artist: artist,
+                      thumbnailUrl: thumbnailUrl,
+                      artistId: artistId,
+                    );
+                  },
+              onOpenArtist: (artistId, artistName) {
+                _onSidebarTabSelected(
+                  'artist_details',
+                  extra: {
+                    'artistId': artistId,
+                    'artistName': artistName,
+                    'backTab': 'music_search',
+                    'backExtra': {'query': query},
+                  },
+                );
+              },
+            )
+          : MusicSearchResultsPage(
+              query: query,
+              ytmusicFuture: _ensureYtMusic(),
+              onBack: () => _onSidebarTabSelected('home'),
+              onPlaySong:
+                  ({
+                    required String videoId,
+                    required String title,
+                    required String artist,
+                    String thumbnailUrl = '',
+                    String artistId = '',
+                  }) async {
+                    await _playYouTubeSelection(
+                      videoId: videoId,
+                      title: title,
+                      artist: artist,
+                      thumbnailUrl: thumbnailUrl,
+                      artistId: artistId,
+                    );
+                  },
+              onOpenArtist: (artistId, artistName) {
+                _onSidebarTabSelected(
+                  'artist_details',
+                  extra: {
+                    'artistId': artistId,
+                    'artistName': artistName,
+                    'backTab': 'music_search',
+                    'backExtra': {'query': query},
+                  },
+                );
+              },
+              onOpenAlbum: (albumId, albumTitle, artistId, artistName) {
+                _onSidebarTabSelected(
+                  'album_details',
+                  extra: {
+                    'albumId': albumId,
+                    'albumTitle': albumTitle,
+                    'artistId': artistId,
+                    'artistName': artistName,
+                    'backTab': 'music_search',
+                    'backExtra': {'query': query},
+                  },
+                );
+              },
+            );
+
+      return Column(
+        children: [
+          _buildSearchEngineToggle(searchEngine),
+          Expanded(child: resultsPage),
+        ],
       );
     }
 
@@ -847,6 +924,30 @@ class _HomeState extends State<Home> {
 
       if (artistId.isEmpty) {
         return _buildHomeDashboard();
+      }
+
+      if (searchEngine == SearchEngine.youtube) {
+        return YoutubeChannelDetailsPage(
+          channelId: artistId,
+          channelName: artistName,
+          onBack: () => _onSidebarTabSelected(backTab, extra: backExtra),
+          onPlaySong:
+              ({
+                required String videoId,
+                required String title,
+                required String artist,
+                String thumbnailUrl = '',
+                String artistId = '',
+              }) async {
+                await _playYouTubeSelection(
+                  videoId: videoId,
+                  title: title,
+                  artist: artist,
+                  thumbnailUrl: thumbnailUrl,
+                  artistId: artistId,
+                );
+              },
+        );
       }
 
       return ArtistDetailsPage(
@@ -1095,6 +1196,16 @@ class _HomeState extends State<Home> {
     } catch (_) {}
   }
 
+  void _openLyricsSheet(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: colorScheme.inverseSurface,
+      builder: (context) => const LyricsSheet(),
+    );
+  }
+
   void _openQueueSheet(BuildContext context, List<dynamic> queue) {
     final colorScheme = Theme.of(context).colorScheme;
     final onSheet = colorScheme.onInverseSurface;
@@ -1284,6 +1395,11 @@ class _HomeState extends State<Home> {
               context,
               remote != null ? remote.queue : playback.queue,
             ),
+            onLyricsPressed:
+                (remote != null ||
+                    (playback.currentYouTubeVideoId ?? '').isEmpty)
+                ? null
+                : () => _openLyricsSheet(context),
             onArtistTap: (artistId == null || artistId.isEmpty)
                 ? null
                 : () => _onSidebarTabSelected(

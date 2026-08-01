@@ -20,7 +20,7 @@ class _SettingsPageState extends State<SettingsPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
@@ -80,6 +80,67 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildSearchEngineCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Search & Artists',
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Choose what powers search results and artist pages.',
+            style: TextStyle(color: colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 12),
+          Consumer<SettingsProvider>(
+            builder: (context, settings, _) {
+              return SegmentedButton<SearchEngine>(
+                segments: const [
+                  ButtonSegment(
+                    value: SearchEngine.youtubeMusic,
+                    label: Text('YouTube Music'),
+                    icon: Icon(Icons.music_note_rounded),
+                  ),
+                  ButtonSegment(
+                    value: SearchEngine.youtube,
+                    label: Text('YouTube'),
+                    icon: Icon(Icons.smart_display_rounded),
+                  ),
+                ],
+                selected: {settings.searchEngine},
+                showSelectedIcon: false,
+                onSelectionChanged: (selection) =>
+                    settings.setSearchEngine(selection.first),
+                style: SegmentedButton.styleFrom(
+                  backgroundColor: colorScheme.onSurface.withValues(
+                    alpha: 0.12,
+                  ),
+                  foregroundColor: colorScheme.onSurfaceVariant,
+                  selectedBackgroundColor: colorScheme.primary,
+                  selectedForegroundColor: colorScheme.onPrimary,
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPlayerCard() {
     final colorScheme = Theme.of(context).colorScheme;
     return Consumer<SettingsProvider>(
@@ -88,7 +149,7 @@ class _SettingsPageState extends State<SettingsPage> {
           width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: colorScheme.surface,
+            color: colorScheme.surfaceContainer,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
@@ -166,7 +227,7 @@ class _SettingsPageState extends State<SettingsPage> {
           width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: colorScheme.surface,
+            color: colorScheme.surfaceContainer,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Column(
@@ -233,7 +294,7 @@ class _SettingsPageState extends State<SettingsPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -253,7 +314,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Version 1.0.3',
+                'Version 1.0.4',
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
             ],
@@ -285,6 +346,8 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 10),
         _buildAppearanceCard(),
+        const SizedBox(height: 10),
+        _buildSearchEngineCard(),
         const SizedBox(height: 10),
         _buildPlayerCard(),
         const SizedBox(height: 10),

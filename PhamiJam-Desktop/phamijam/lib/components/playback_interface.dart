@@ -25,6 +25,7 @@ class PlaybackInterface extends StatefulWidget {
   final List<dynamic> queue;
   final VoidCallback onQueuePressed;
   final VoidCallback? onArtistTap;
+  final VoidCallback? onLyricsPressed;
 
   const PlaybackInterface({
     super.key,
@@ -49,6 +50,7 @@ class PlaybackInterface extends StatefulWidget {
     required this.queue,
     required this.onQueuePressed,
     this.onArtistTap,
+    this.onLyricsPressed,
   });
 
   @override
@@ -309,6 +311,14 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (widget.onLyricsPressed != null)
+                          IconButton(
+                            onPressed: widget.onLyricsPressed,
+                            icon: Icon(
+                              Icons.lyrics_outlined,
+                              color: colorScheme.primary,
+                            ),
+                          ),
                         IconButton(
                           onPressed: widget.onQueuePressed,
                           icon: Icon(

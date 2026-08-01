@@ -3,6 +3,8 @@ import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/components/playback_model.dart';
+import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/enums.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
@@ -49,6 +51,39 @@ Widget _wrapSongTileWithContextMenu({
       }
     },
     child: child,
+  );
+}
+
+Widget _buildSearchEngineToggle(BuildContext context) {
+  final colorScheme = Theme.of(context).colorScheme;
+  final searchEngine = context.watch<SettingsProvider>().searchEngine;
+  return Align(
+    alignment: Alignment.centerLeft,
+    child: SegmentedButton<SearchEngine>(
+      segments: const [
+        ButtonSegment(
+          value: SearchEngine.youtubeMusic,
+          label: Text('YouTube Music'),
+          icon: Icon(Icons.music_note_rounded),
+        ),
+        ButtonSegment(
+          value: SearchEngine.youtube,
+          label: Text('YouTube'),
+          icon: Icon(Icons.smart_display_rounded),
+        ),
+      ],
+      selected: {searchEngine},
+      showSelectedIcon: false,
+      style: SegmentedButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        backgroundColor: colorScheme.onSurface.withValues(alpha: 0.12),
+        foregroundColor: colorScheme.onSurfaceVariant,
+        selectedBackgroundColor: colorScheme.primary,
+        selectedForegroundColor: colorScheme.onPrimary,
+      ),
+      onSelectionChanged: (selection) =>
+          context.read<SettingsProvider>().setSearchEngine(selection.first),
+    ),
   );
 }
 
@@ -551,11 +586,6 @@ class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
                 ],
               ),
               const SizedBox(height: 6),
-              Text(
-                'Tap a song to play it, or open an artist or album to browse more music.',
-                style: TextStyle(color: colorScheme.onSurface.withAlpha(200)),
-              ),
-              const SizedBox(height: 18),
               if (!hasResults)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 32),
@@ -1113,6 +1143,9 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
               ),
               const SizedBox(height: 14),
               _buildHeader(data),
+              const SizedBox(height: 14),
+              _buildSearchEngineToggle(context),
+              const SizedBox(height: 6),
               _buildSection('Songs', data.songs, _buildSongTile),
               _buildSection('Albums', data.albums, _buildAlbumTile),
               _buildSection('Singles', data.singles, _buildAlbumTile),
@@ -1603,4 +1636,525 @@ class _AlbumDetailsData {
 
   final Map<String, dynamic> album;
   final List<Map<String, dynamic>> tracks;
+}
+
+class YoutubeChannelDetailsPage extends StatefulWidget {
+  const YoutubeChannelDetailsPage({
+    super.key,
+    required this.channelId,
+    required this.channelName,
+    required this.onBack,
+    required this.onPlaySong,
+  });
+
+  final String channelId;
+  final String channelName;
+  final VoidCallback onBack;
+  final PlaySongCallback onPlaySong;
+
+  @override
+  State<YoutubeChannelDetailsPage> createState() =>
+      _YoutubeChannelDetailsPageState();
+}
+
+class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
+  late Future<_YoutubeChannelData> _loadFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFuture = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant YoutubeChannelDetailsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.channelId != widget.channelId) {
+      _loadFuture = _load();
+    }
+  }
+
+  Future<_YoutubeChannelData> _load() async {
+    final results = await Future.wait([
+      YoutubeDataService.fetchChannelInfo(widget.channelId),
+      YoutubeDataService.fetchChannelVideos(widget.channelId, maxItems: 25),
+    ]);
+    return _YoutubeChannelData(
+      channel: results[0] as Map<String, dynamic>?,
+      videos: results[1] as List<Map<String, dynamic>>,
+    );
+  }
+
+  String _formatSubscribers(String raw) {
+    final value = int.tryParse(raw);
+    if (value == null || raw.isEmpty) return raw;
+    if (value >= 1000000) {
+      final millions = value / 1000000;
+      final rounded = millions.truncateToDouble() == millions ? 0 : 1;
+      return '${millions.toStringAsFixed(rounded)}M subscribers';
+    }
+    if (value >= 1000) {
+      final thousands = value / 1000;
+      final rounded = thousands.truncateToDouble() == thousands ? 0 : 1;
+      return '${thousands.toStringAsFixed(rounded)}K subscribers';
+    }
+    return '$value subscribers';
+  }
+
+  Widget _buildCardShell({required Widget child}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildHeader(Map<String, dynamic>? channel) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final name = (channel?['name'] as String?) ?? widget.channelName;
+    final description = (channel?['description'] as String?) ?? '';
+    final subscriberCount = (channel?['subscriberCount'] as String?) ?? '';
+    final thumbnailUrl = (channel?['thumbnailUrl'] as String?) ?? '';
+
+    return _buildCardShell(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: thumbnailUrl.isEmpty
+                  ? Container(
+                      width: 96,
+                      height: 96,
+                      color: colorScheme.onSurface.withValues(alpha: 0.12),
+                      child: Icon(
+                        Icons.person_rounded,
+                        color: colorScheme.onSurface,
+                      ),
+                    )
+                  : Image.network(
+                      thumbnailUrl,
+                      width: 96,
+                      height: 96,
+                      cacheWidth: 192,
+                      cacheHeight: 192,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Container(
+                        width: 96,
+                        height: 96,
+                        color: colorScheme.onSurface.withValues(alpha: 0.12),
+                        child: Icon(
+                          Icons.person_rounded,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (subscriberCount.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _formatSubscribers(subscriberCount),
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                  if (description.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      description,
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoTile(Map<String, dynamic> item) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final title = (item['title'] as String?) ?? 'Unknown video';
+    final artist = (item['artist'] as String?) ?? widget.channelName;
+    final videoId = (item['videoId'] as String?) ?? '';
+    final thumbnailUrl = (item['thumbnailUrl'] as String?) ?? '';
+
+    return _wrapSongTileWithContextMenu(
+      context: context,
+      videoId: videoId,
+      title: title,
+      artist: artist,
+      thumbnailUrl: thumbnailUrl,
+      child: _buildCardShell(
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 6,
+          ),
+          leading: thumbnailUrl.isEmpty
+              ? Icon(Icons.smart_display_rounded, color: colorScheme.onSurface)
+              : ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    thumbnailUrl,
+                    width: 54,
+                    height: 54,
+                    cacheWidth: 108,
+                    cacheHeight: 108,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Icon(
+                      Icons.smart_display_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          trailing: Icon(
+            Icons.play_arrow_rounded,
+            color: colorScheme.onSurface,
+          ),
+          onTap: videoId.isEmpty
+              ? null
+              : () => widget.onPlaySong(
+                  videoId: videoId,
+                  title: title,
+                  artist: artist,
+                  thumbnailUrl: thumbnailUrl,
+                  artistId: widget.channelId,
+                ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_YoutubeChannelData>(
+      future: _loadFuture,
+      builder: (context, snapshot) {
+        final colorScheme = Theme.of(context).colorScheme;
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Failed to load this channel: ${snapshot.error}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 16,
+              ),
+            ),
+          );
+        }
+
+        final data = snapshot.data;
+        final channel = data?.channel;
+        final videos = data?.videos ?? const <Map<String, dynamic>>[];
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: widget.onBack,
+                    icon: Icon(
+                      Icons.arrow_back_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      (channel?['name'] as String?) ?? widget.channelName,
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              _buildHeader(channel),
+              const SizedBox(height: 14),
+              _buildSearchEngineToggle(context),
+              Padding(
+                padding: const EdgeInsets.only(top: 14, bottom: 10),
+                child: Text(
+                  'Videos (${videos.length})',
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (videos.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    'No videos found for this channel.',
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                )
+              else
+                ...videos.map(_buildVideoTile),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _YoutubeChannelData {
+  const _YoutubeChannelData({required this.channel, required this.videos});
+
+  final Map<String, dynamic>? channel;
+  final List<Map<String, dynamic>> videos;
+}
+
+class YoutubeSearchResultsPage extends StatefulWidget {
+  const YoutubeSearchResultsPage({
+    super.key,
+    required this.query,
+    required this.onBack,
+    required this.onPlaySong,
+    required this.onOpenArtist,
+  });
+
+  final String query;
+  final VoidCallback onBack;
+  final PlaySongCallback onPlaySong;
+  final OpenArtistCallback onOpenArtist;
+
+  @override
+  State<YoutubeSearchResultsPage> createState() =>
+      _YoutubeSearchResultsPageState();
+}
+
+class _YoutubeSearchResultsPageState extends State<YoutubeSearchResultsPage> {
+  late Future<List<Map<String, dynamic>>> _loadFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFuture = _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant YoutubeSearchResultsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query) {
+      _loadFuture = _load();
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _load() {
+    final query = widget.query.trim();
+    if (query.isEmpty) return Future.value(const []);
+    return YoutubeDataService.searchVideos(query, maxResults: 25);
+  }
+
+  Widget _buildCardShell({required Widget child}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildVideoTile(Map<String, dynamic> item) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final title = (item['title'] as String?) ?? 'Unknown video';
+    final artist = (item['artist'] as String?) ?? 'YouTube';
+    final artistId = (item['artistId'] as String?) ?? '';
+    final videoId = (item['videoId'] as String?) ?? '';
+    final thumbnailUrl = (item['thumbnailUrl'] as String?) ?? '';
+
+    return _wrapSongTileWithContextMenu(
+      context: context,
+      videoId: videoId,
+      title: title,
+      artist: artist,
+      thumbnailUrl: thumbnailUrl,
+      child: _buildCardShell(
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 6,
+          ),
+          leading: thumbnailUrl.isEmpty
+              ? Icon(Icons.smart_display_rounded, color: colorScheme.onSurface)
+              : ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    thumbnailUrl,
+                    width: 54,
+                    height: 54,
+                    cacheWidth: 108,
+                    cacheHeight: 108,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Icon(
+                      Icons.smart_display_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 6,
+              children: [
+                Text(
+                  'Channel:',
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+                if (artistId.isNotEmpty)
+                  _LinkLabel(
+                    label: artist,
+                    onTap: () => widget.onOpenArtist(artistId, artist),
+                  )
+                else
+                  Text(artist, style: TextStyle(color: colorScheme.onSurface)),
+              ],
+            ),
+          ),
+          trailing: Icon(
+            Icons.play_arrow_rounded,
+            color: colorScheme.onSurface,
+          ),
+          onTap: videoId.isEmpty
+              ? null
+              : () => widget.onPlaySong(
+                  videoId: videoId,
+                  title: title,
+                  artist: artist,
+                  thumbnailUrl: thumbnailUrl,
+                  artistId: artistId,
+                ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _loadFuture,
+      builder: (context, snapshot) {
+        final colorScheme = Theme.of(context).colorScheme;
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Failed to search YouTube: ${snapshot.error}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 16,
+              ),
+            ),
+          );
+        }
+
+        final videos = snapshot.data ?? const <Map<String, dynamic>>[];
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: widget.onBack,
+                    icon: Icon(
+                      Icons.arrow_back_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'Results for "${widget.query}"',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              if (videos.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    'No results found.',
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                )
+              else
+                ...videos.map(_buildVideoTile),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
