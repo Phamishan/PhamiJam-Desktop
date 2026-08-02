@@ -33,6 +33,12 @@
   - Added a YouTube Music/YouTube search engine toggle
   - Redesigned artist page
   - Fixed the settings switch color
+- 1.0.5 - 02/08/2026
+  - Added custom color
+  - Added song editing
+  - Added in-app update checking for desktop
+  - Fixed Discord presence
+  - Fixed "Failed to load artist"
 
 ## Screenshots:
 

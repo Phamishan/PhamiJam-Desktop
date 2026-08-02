@@ -5,6 +5,7 @@ import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/services/download_service.dart';
@@ -225,6 +226,11 @@ class _LikedPageState extends State<LikedPage> {
                     ),
                     label: Text(isDownloaded ? 'Remove download' : 'Download'),
                   ),
+                  MenuItem<String>(
+                    value: 'edit_trim',
+                    icon: const Icon(Icons.content_cut_rounded),
+                    label: const Text('Edit song'),
+                  ),
                 ],
               ),
               onItemSelected: (value) {
@@ -254,6 +260,19 @@ class _LikedPageState extends State<LikedPage> {
                   );
                 } else if (value == 'remove_download') {
                   downloads.remove(videoId);
+                } else if (value == 'edit_trim') {
+                  if (videoId.isEmpty) {
+                    AppFlushbar.error(context, 'This song is unavailable.');
+                    return;
+                  }
+                  showEditSongDialog(
+                    context,
+                    videoId: videoId,
+                    title: title,
+                    artist: artist,
+                    thumbnailUrl: thumbnailUrl,
+                    durationSeconds: durationSeconds,
+                  );
                 }
               },
               child: Container(

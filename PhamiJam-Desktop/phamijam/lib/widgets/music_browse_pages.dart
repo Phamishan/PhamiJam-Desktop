@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
@@ -16,6 +17,7 @@ Widget _wrapSongTileWithContextMenu({
   required String title,
   required String artist,
   required String thumbnailUrl,
+  int durationSeconds = 0,
 }) {
   return ContextMenuRegion<String>(
     contextMenu: ContextMenu(
@@ -30,6 +32,11 @@ Widget _wrapSongTileWithContextMenu({
           value: 'add_to_playlist',
           icon: const Icon(Icons.playlist_add_rounded),
           label: const Text('Add to playlist'),
+        ),
+        MenuItem<String>(
+          value: 'edit_trim',
+          icon: const Icon(Icons.content_cut_rounded),
+          label: const Text('Edit song'),
         ),
       ],
     ),
@@ -48,6 +55,15 @@ Widget _wrapSongTileWithContextMenu({
         AppFlushbar.info(context, '"$title" will play next.');
       } else if (value == 'add_to_playlist') {
         showAddToPlaylistDialog(context, videoId: videoId, songTitle: title);
+      } else if (value == 'edit_trim') {
+        showEditSongDialog(
+          context,
+          videoId: videoId,
+          title: title,
+          artist: artist,
+          thumbnailUrl: thumbnailUrl,
+          durationSeconds: durationSeconds,
+        );
       }
     },
     child: child,
@@ -160,9 +176,9 @@ class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
 
     final ytmusic = await widget.ytmusicFuture;
     final responses = await Future.wait([
-      ytmusic.search(query, filter: SearchFilter.songs, limit: 25),
-      ytmusic.search(query, filter: SearchFilter.artists, limit: 10),
-      ytmusic.search(query, filter: SearchFilter.albums, limit: 10),
+      ytmusic.search(query, filter: SearchFilterType.songs, limit: 25),
+      ytmusic.search(query, filter: SearchFilterType.artists, limit: 10),
+      ytmusic.search(query, filter: SearchFilterType.albums, limit: 10),
     ]);
 
     return _SearchResultsData(

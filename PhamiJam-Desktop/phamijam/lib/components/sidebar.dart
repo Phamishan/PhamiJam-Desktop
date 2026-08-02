@@ -26,7 +26,6 @@ class Sidebar extends StatelessWidget {
           topRight: Radius.circular(30),
           bottomRight: Radius.circular(30),
         ),
-        //color: Color(0xFFe2b661),
       ),
       width: 200,
       height: double.infinity,

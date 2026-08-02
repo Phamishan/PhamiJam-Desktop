@@ -29,6 +29,11 @@ ArchitecturesAllowed=x64compatible
 ; the 64-bit view of the registry.
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
+; Lets in-app auto-update overwrite the running exe: Setup closes PhamiJam.exe
+; automatically (instead of failing with a file-in-use error) and relaunches
+; it once the install finishes.
+CloseApplications=yes
+RestartApplications=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
 OutputDir=.

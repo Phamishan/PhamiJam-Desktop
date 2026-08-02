@@ -7,6 +7,7 @@ import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/firebase_options.dart';
 import 'package:phamijam/pages/login.dart';
 import 'package:phamijam/pages/home.dart';
+import 'package:phamijam/providers/edited_songs_provider.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
@@ -28,6 +29,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => DownloadsProvider()),
         ChangeNotifierProvider(create: (_) => LikedSongsProvider()),
         ChangeNotifierProvider(create: (_) => PlaylistPinProvider()),
+        ChangeNotifierProvider(create: (_) => EditedSongsProvider()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
       ],
       child: const MyApp(),
@@ -39,13 +41,13 @@ class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
   Widget build(BuildContext context) {
-    final themeMode = context.watch<ThemeProvider>().flutterThemeMode;
+    final themeProvider = context.watch<ThemeProvider>();
     return MaterialApp(
       title: 'PhamiJam',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      themeMode: themeMode,
+      theme: AppTheme.light(accentColor: themeProvider.accentColor),
+      darkTheme: AppTheme.dark(accentColor: themeProvider.accentColor),
+      themeMode: themeProvider.flutterThemeMode,
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {

@@ -12,6 +12,7 @@ import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/remote_session_banner.dart';
 import 'package:phamijam/components/sidebar.dart';
 import 'package:phamijam/models/play_event.dart';
+import 'package:phamijam/providers/edited_songs_provider.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
@@ -90,10 +91,12 @@ class _HomeState extends State<Home> {
     _sidebarVideoController = VideoController(player.mediaKitPlayer);
     _searchController = TextEditingController();
     _bindYouTubeEngineToPlayback();
+    _playback.bindEditedSongsLookup(context.read<EditedSongsProvider>().trimFor);
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
     unawaited(context.read<LikedSongsProvider>().refresh());
     unawaited(context.read<PlaylistPinProvider>().refresh());
+    unawaited(context.read<EditedSongsProvider>().refresh());
     _playback.addListener(_handlePlaybackChanged);
   }
 

@@ -6,7 +6,15 @@ const Color kErrorRed = Color(0xFFD32F2F);
 class AppTheme {
   AppTheme._();
 
-  static ThemeData get light {
+  static ThemeData light({Color? accentColor}) {
+    if (accentColor != null) {
+      final colorScheme = ColorScheme.fromSeed(
+        seedColor: accentColor,
+        brightness: Brightness.light,
+      );
+      return ThemeData(colorScheme: colorScheme, fontFamily: 'Lexend');
+    }
+
     final colorScheme =
         ColorScheme.fromSeed(
           seedColor: kBrandGold,
@@ -29,7 +37,15 @@ class AppTheme {
     return ThemeData(colorScheme: colorScheme, fontFamily: 'Lexend');
   }
 
-  static ThemeData get dark {
+  static ThemeData dark({Color? accentColor}) {
+    if (accentColor != null) {
+      final colorScheme = ColorScheme.fromSeed(
+        seedColor: accentColor,
+        brightness: Brightness.dark,
+      );
+      return ThemeData(colorScheme: colorScheme, fontFamily: 'Lexend');
+    }
+
     final colorScheme =
         ColorScheme.fromSeed(
           seedColor: kBrandGold,

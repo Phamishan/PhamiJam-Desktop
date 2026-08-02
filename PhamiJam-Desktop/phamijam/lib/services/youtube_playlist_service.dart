@@ -315,6 +315,12 @@ class YoutubePlaylistService {
     };
   }
 
+  static Future<int> fetchVideoDurationSeconds(String videoId) async {
+    if (videoId.isEmpty) return 0;
+    final result = await _fetchVideoDurationsSeconds([videoId]);
+    return result[videoId] ?? 0;
+  }
+
   static Future<Map<String, int>> _fetchVideoDurationsSeconds(
     List<String> videoIds,
   ) async {

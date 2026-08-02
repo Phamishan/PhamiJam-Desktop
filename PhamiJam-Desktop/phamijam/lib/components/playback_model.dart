@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/audio_player.dart';
+import 'package:phamijam/models/edited_song_trim.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
 import 'package:phamijam/services/playback_state_service.dart';
@@ -45,6 +46,9 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> _engineTransition = Future<void>.value();
   Future<void> Function(int sourceIndex)? _onPlaySourceIndexRequested;
   Future<void> Function(dynamic item)? _onPrefetchQueueItem;
+  EditedSongTrim? Function(String videoId)? _trimLookup;
+  Duration? _trimStart;
+  Duration? _trimEnd;
 
   String artistName = 'Unknown Artist';
   String? currentArtistId;
@@ -463,7 +467,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   bool _isNearTrackEnd() {
-    final total = duration;
+    final total = _trimEnd ?? duration;
     if (total == null || total <= Duration.zero) return false;
 
     final current = progress;
@@ -471,6 +475,13 @@ class PlaybackModel extends ChangeNotifier {
 
     final remaining = total - current;
     return remaining <= const Duration(milliseconds: 800);
+  }
+
+  void _checkTrimEndReached() {
+    final end = _trimEnd;
+    if (end == null || _completionHandledForCurrentTrack) return;
+    if (progress < end - const Duration(milliseconds: 500)) return;
+    unawaited(_triggerTrackCompletedIfNeeded());
   }
 
   Future<void> _triggerTrackCompletedIfNeeded() async {
@@ -522,15 +533,16 @@ class PlaybackModel extends ChangeNotifier {
     final path = currentSongPath;
     _finalizeActivePlay();
     if (path != null && path.trim().isNotEmpty) _beginActivePlay(path);
-    setProgress(Duration.zero);
+    final restartPosition = _trimStart ?? Duration.zero;
+    setProgress(restartPosition);
     if (_engine == PlaybackEngine.youtube) {
-      await _youtubeSeek?.call(Duration.zero);
+      await _youtubeSeek?.call(restartPosition);
       await _youtubePlay?.call();
       _completionHandledForCurrentTrack = false;
       return;
     }
 
-    await player.seek(Duration.zero);
+    await player.seek(restartPosition);
     await player.play();
     _completionHandledForCurrentTrack = false;
   }
@@ -554,6 +566,10 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> playYouTubeVideoById(String videoId) async {
+    final trim = _trimLookup?.call(videoId);
+    _trimStart = trim != null ? Duration(milliseconds: trim.startMs) : null;
+    _trimEnd = trim != null ? Duration(milliseconds: trim.endMs) : null;
+
     _engineTransition = _engineTransition.catchError((_) {}).then((_) async {
       setDuration(Duration.zero);
       setProgress(Duration.zero);
@@ -572,6 +588,15 @@ class PlaybackModel extends ChangeNotifier {
 
       await _youtubeLoadVideoById?.call(videoId);
       _useYouTubeEngine(videoId);
+
+      final start = _trimStart;
+      if (start != null && start > Duration.zero) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        try {
+          await player.seek(start);
+        } catch (_) {}
+        setProgress(start);
+      }
     });
     await _engineTransition;
   }
@@ -615,7 +640,10 @@ class PlaybackModel extends ChangeNotifier {
           minPeriod: const Duration(milliseconds: 16),
           maxPeriod: const Duration(milliseconds: 40),
         )
-        .listen(setProgress);
+        .listen((position) {
+          setProgress(position);
+          _checkTrimEndReached();
+        });
 
     _playerStateSubscription = player.playerStateStream.listen((state) async {
       final wasPlaying = _wasPlaying;
@@ -813,6 +841,9 @@ class PlaybackModel extends ChangeNotifier {
     }
 
     try {
+      if (presence.timestamps == null) {
+        await discordRpc.clearPresence();
+      }
       await discordRpc.setPresence(presence);
       _lastDiscordPresenceSignature = signature;
     } catch (error) {
@@ -833,6 +864,23 @@ class PlaybackModel extends ChangeNotifier {
   }) {
     _onPlaySourceIndexRequested = playAtSourceIndex;
     _onPrefetchQueueItem = prefetchQueueItem;
+  }
+
+  void bindEditedSongsLookup(EditedSongTrim? Function(String videoId) lookup) {
+    _trimLookup = lookup;
+  }
+
+  Duration? get trimStart => _trimStart;
+  Duration? get trimEnd => _trimEnd;
+  bool get hasActiveTrim => _trimEnd != null;
+
+  Duration _clampToTrim(Duration value) {
+    var result = value;
+    final start = _trimStart;
+    final end = _trimEnd;
+    if (start != null && result < start) result = start;
+    if (end != null && result > end) result = end;
+    return result;
   }
 
   void clearPlaylistQueue() {
@@ -1116,11 +1164,12 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> seekTo(Duration value) async {
     if (_isRemoteControlling) return;
-    setProgress(value);
+    final clamped = _clampToTrim(value);
+    setProgress(clamped);
     if (_engine == PlaybackEngine.youtube) {
-      await _youtubeSeek?.call(value);
+      await _youtubeSeek?.call(clamped);
     } else {
-      await player.seek(value);
+      await player.seek(clamped);
     }
     _scheduleDiscordPresenceSync();
   }
