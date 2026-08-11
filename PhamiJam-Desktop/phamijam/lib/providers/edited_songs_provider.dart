@@ -7,9 +7,24 @@ class EditedSongsProvider extends ChangeNotifier {
   bool isLoading = false;
   bool hasLoadedOnce = false;
 
+  static String _key(String videoId, [String? playlistId]) =>
+      playlistId == null ? videoId : '$videoId::$playlistId';
+
   List<EditedSongTrim> get all => _trims.values.toList();
-  EditedSongTrim? trimFor(String videoId) => _trims[videoId];
-  bool hasTrim(String videoId) => _trims.containsKey(videoId);
+
+  EditedSongTrim? trimFor(String videoId, [String? playlistId]) {
+    if (playlistId != null) {
+      final scoped = _trims[_key(videoId, playlistId)];
+      if (scoped != null) return scoped;
+    }
+    return _trims[videoId];
+  }
+
+  bool hasTrim(String videoId, [String? playlistId]) =>
+      trimFor(videoId, playlistId) != null;
+
+  EditedSongTrim? exactTrimFor(String videoId, [String? playlistId]) =>
+      _trims[_key(videoId, playlistId)];
 
   Future<void> refresh() async {
     isLoading = true;
@@ -17,7 +32,9 @@ class EditedSongsProvider extends ChangeNotifier {
 
     try {
       final list = await EditedSongsService.fetchAll();
-      _trims = {for (final trim in list) trim.videoId: trim};
+      _trims = {
+        for (final trim in list) _key(trim.videoId, trim.playlistId): trim,
+      };
     } catch (error) {
       debugPrint('EditedSongsProvider: refresh failed: $error');
     } finally {
@@ -28,8 +45,9 @@ class EditedSongsProvider extends ChangeNotifier {
   }
 
   Future<void> saveTrim(EditedSongTrim trim) async {
-    final previous = _trims[trim.videoId];
-    _trims = {..._trims, trim.videoId: trim};
+    final key = _key(trim.videoId, trim.playlistId);
+    final previous = _trims[key];
+    _trims = {..._trims, key: trim};
     notifyListeners();
 
     try {
@@ -37,25 +55,26 @@ class EditedSongsProvider extends ChangeNotifier {
     } catch (error) {
       _trims = {..._trims};
       if (previous != null) {
-        _trims[trim.videoId] = previous;
+        _trims[key] = previous;
       } else {
-        _trims.remove(trim.videoId);
+        _trims.remove(key);
       }
       notifyListeners();
       rethrow;
     }
   }
 
-  Future<void> removeTrim(String videoId) async {
-    final previous = _trims[videoId];
+  Future<void> removeTrim(String videoId, [String? playlistId]) async {
+    final key = _key(videoId, playlistId);
+    final previous = _trims[key];
     if (previous == null) return;
-    _trims = {..._trims}..remove(videoId);
+    _trims = {..._trims}..remove(key);
     notifyListeners();
 
     try {
-      await EditedSongsService.removeTrim(videoId);
+      await EditedSongsService.removeTrim(videoId, playlistId);
     } catch (error) {
-      _trims = {..._trims, videoId: previous};
+      _trims = {..._trims, key: previous};
       notifyListeners();
       rethrow;
     }

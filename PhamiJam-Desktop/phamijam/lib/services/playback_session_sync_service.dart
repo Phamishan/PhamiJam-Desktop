@@ -32,7 +32,7 @@ class RemoteSession {
   final bool isPlaying;
   final double volume;
   final bool shuffle;
-  final bool loop;
+  final String repeatMode;
   final String deviceName;
   final DateTime updatedAt;
 
@@ -43,7 +43,7 @@ class RemoteSession {
     required this.isPlaying,
     required this.volume,
     required this.shuffle,
-    required this.loop,
+    required this.repeatMode,
     required this.deviceName,
     required this.updatedAt,
   });
@@ -113,7 +113,7 @@ class PlaybackSessionSyncService {
     required bool isPlaying,
     required double volume,
     required bool shuffle,
-    required bool loop,
+    required String repeatMode,
   }) async {
     final doc = _ownDoc;
     if (doc == null) return;
@@ -137,7 +137,7 @@ class PlaybackSessionSyncService {
         'isPlaying': isPlaying,
         'volume': volume,
         'shuffle': shuffle,
-        'repeatMode': loop ? 'one' : 'off',
+        'repeatMode': repeatMode,
         'deviceName': _selfName,
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -171,7 +171,7 @@ class PlaybackSessionSyncService {
         isPlaying: data['isPlaying'] as bool? ?? false,
         volume: (data['volume'] as num?)?.toDouble() ?? 0.8,
         shuffle: data['shuffle'] as bool? ?? false,
-        loop: data['repeatMode'] == 'one',
+        repeatMode: data['repeatMode'] as String? ?? 'off',
         deviceName: data['deviceName'] as String? ?? 'Other device',
         updatedAt: updatedAt.toDate(),
       );

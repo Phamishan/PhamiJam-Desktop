@@ -8,7 +8,7 @@ class SavedQueueState {
     required this.playOrder,
     required this.currentOrderIndex,
     required this.shuffle,
-    required this.loop,
+    required this.repeatMode,
     required this.position,
   });
 
@@ -16,7 +16,7 @@ class SavedQueueState {
   final List<int> playOrder;
   final int currentOrderIndex;
   final bool shuffle;
-  final bool loop;
+  final String repeatMode;
   final Duration position;
 }
 
@@ -52,7 +52,7 @@ class PlaybackStateService {
     required List<int> playOrder,
     required int currentOrderIndex,
     required bool shuffle,
-    required bool loop,
+    required String repeatMode,
     required Duration position,
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -76,7 +76,7 @@ class PlaybackStateService {
         'playOrder': playOrder,
         'currentOrderIndex': currentOrderIndex,
         'shuffle': shuffle,
-        'loop': loop,
+        'repeatMode': repeatMode,
         'positionMs': position.inMilliseconds,
       }),
     );
@@ -114,7 +114,7 @@ class PlaybackStateService {
         playOrder: playOrder,
         currentOrderIndex: currentOrderIndex,
         shuffle: decoded['shuffle'] as bool? ?? false,
-        loop: decoded['loop'] as bool? ?? false,
+        repeatMode: decoded['repeatMode'] as String? ?? 'off',
         position: Duration(milliseconds: decoded['positionMs'] as int? ?? 0),
       );
     } catch (_) {

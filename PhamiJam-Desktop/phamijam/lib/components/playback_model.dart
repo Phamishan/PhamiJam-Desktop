@@ -15,6 +15,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum PlaybackEngine { local, youtube }
 
+enum PlayerRepeatMode { off, all, one }
+
 class PlaybackModel extends ChangeNotifier {
   static const int _queueAheadCount = 4;
   static const Duration _discordPresenceDebounce = Duration(milliseconds: 50);
@@ -46,7 +48,8 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> _engineTransition = Future<void>.value();
   Future<void> Function(int sourceIndex)? _onPlaySourceIndexRequested;
   Future<void> Function(dynamic item)? _onPrefetchQueueItem;
-  EditedSongTrim? Function(String videoId)? _trimLookup;
+  EditedSongTrim? Function(String videoId, [String? playlistId])?
+  _trimLookup;
   Duration? _trimStart;
   Duration? _trimEnd;
 
@@ -61,7 +64,7 @@ class PlaybackModel extends ChangeNotifier {
   bool isPlaying = false;
   bool isMuted = false;
   bool isShuffled = false;
-  bool isLooped = false;
+  PlayerRepeatMode repeatMode = PlayerRepeatMode.off;
   double currentSliderValue = 20.0;
   bool isSeeking = false;
   Duration seekPreview = Duration.zero;
@@ -143,7 +146,10 @@ class PlaybackModel extends ChangeNotifier {
     if (session == null || track == null) return;
     _isRemoteControlling = false;
     isShuffled = session.shuffle;
-    isLooped = session.loop;
+    repeatMode = PlayerRepeatMode.values.firstWhere(
+      (mode) => mode.name == session.repeatMode,
+      orElse: () => PlayerRepeatMode.off,
+    );
     setPlaylistQueue(session.queue, startIndex: session.queueIndex);
     await playQueueIndex(0);
     await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -184,7 +190,7 @@ class PlaybackModel extends ChangeNotifier {
       isPlaying: isPlaying,
       volume: effectiveVolumePercent / 100,
       shuffle: isShuffled,
-      loop: isLooped,
+      repeatMode: repeatMode.name,
     );
   }
 
@@ -243,7 +249,10 @@ class PlaybackModel extends ChangeNotifier {
       _playOrder = savedQueue.playOrder;
       _currentOrderIndex = savedQueue.currentOrderIndex;
       isShuffled = savedQueue.shuffle;
-      isLooped = savedQueue.loop;
+      repeatMode = PlayerRepeatMode.values.firstWhere(
+        (mode) => mode.name == savedQueue.repeatMode,
+        orElse: () => PlayerRepeatMode.off,
+      );
       _refreshQueueWindow();
 
       final sourceIndex = _playOrder[_currentOrderIndex];
@@ -335,7 +344,7 @@ class PlaybackModel extends ChangeNotifier {
         playOrder: _playOrder,
         currentOrderIndex: _currentOrderIndex,
         shuffle: isShuffled,
-        loop: isLooped,
+        repeatMode: repeatMode.name,
         position: displayedProgress,
       ),
     );
@@ -504,7 +513,7 @@ class PlaybackModel extends ChangeNotifier {
         }
       }
     }
-    if (isLooped) {
+    if (repeatMode == PlayerRepeatMode.one) {
       await _restartCurrentTrack();
       unawaited(
         Future<void>.delayed(const Duration(milliseconds: 150), () {
@@ -513,7 +522,7 @@ class PlaybackModel extends ChangeNotifier {
       );
       return;
     }
-    await _localPlayNext(wrapAround: true);
+    await _localPlayNext();
     unawaited(
       Future<void>.delayed(const Duration(milliseconds: 150), () {
         return _syncDiscordPresence(force: true);
@@ -566,7 +575,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> playYouTubeVideoById(String videoId) async {
-    final trim = _trimLookup?.call(videoId);
+    final trim = _trimLookup?.call(videoId, _sourcePlaylistId);
     _trimStart = trim != null ? Duration(milliseconds: trim.startMs) : null;
     _trimEnd = trim != null ? Duration(milliseconds: trim.endMs) : null;
 
@@ -866,7 +875,9 @@ class PlaybackModel extends ChangeNotifier {
     _onPrefetchQueueItem = prefetchQueueItem;
   }
 
-  void bindEditedSongsLookup(EditedSongTrim? Function(String videoId) lookup) {
+  void bindEditedSongsLookup(
+    EditedSongTrim? Function(String videoId, [String? playlistId]) lookup,
+  ) {
     _trimLookup = lookup;
   }
 
@@ -1054,20 +1065,20 @@ class PlaybackModel extends ChangeNotifier {
     }
   }
 
-  Future<void> playNext({bool wrapAround = false}) async {
+  Future<void> playNext() async {
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.next);
       return;
     }
     await _recordPotentialSkip();
-    await _localPlayNext(wrapAround: wrapAround);
+    await _localPlayNext();
   }
 
-  Future<void> _localPlayNext({bool wrapAround = false}) async {
+  Future<void> _localPlayNext() async {
     if (_playOrder.isNotEmpty) {
       final nextOrderIndex = _normalizeOrderIndex(
         _currentOrderIndex + 1,
-        wrapAround: wrapAround,
+        wrapAround: repeatMode == PlayerRepeatMode.all,
       );
       if (nextOrderIndex == null) {
         return;
@@ -1223,9 +1234,11 @@ class PlaybackModel extends ChangeNotifier {
     _persistQueueState();
   }
 
-  void toggleLoop() {
+  void cycleRepeatMode() {
     if (_isRemoteControlling) return;
-    isLooped = !isLooped;
+    repeatMode =
+        PlayerRepeatMode.values[(repeatMode.index + 1) %
+            PlayerRepeatMode.values.length];
     if (_playlistItems.isNotEmpty) {
       _refreshQueueWindow();
     }

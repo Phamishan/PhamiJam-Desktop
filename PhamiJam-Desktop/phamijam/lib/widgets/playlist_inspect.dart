@@ -40,7 +40,7 @@ class PlaylistInspectPage extends StatefulWidget {
   final VoidCallback? onLoopToggle;
   final bool isPlaying;
   final bool isShuffled;
-  final bool isLooped;
+  final PlayerRepeatMode repeatMode;
   final void Function(String artistId, String artistName)? onOpenArtist;
 
   const PlaylistInspectPage({
@@ -52,7 +52,7 @@ class PlaylistInspectPage extends StatefulWidget {
     this.onLoopToggle,
     this.isPlaying = false,
     this.isShuffled = false,
-    this.isLooped = false,
+    this.repeatMode = PlayerRepeatMode.off,
     this.onOpenArtist,
   });
 
@@ -74,6 +74,10 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   String _songSearchQuery = '';
   late final TextEditingController _songSearchController;
   late final PlaybackModel _playback;
+
+  Map<String, String>? _itemIdsCache;
+  String? _itemIdsCachePlaylistId;
+  String? _removingVideoId;
 
   List<Map<String, dynamic>> get _filteredSongs {
     final query = _songSearchQuery.trim().toLowerCase();
@@ -107,6 +111,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       (widget.extra?['playlistTitle'] as String?) ?? 'Playlist';
 
   String get _displayPlaylistTitle => _resolvedPlaylistTitle ?? _playlistTitle;
+
+  bool get _isOwnedByUser => (widget.extra?['isOwnedByUser'] as bool?) ?? true;
 
   String? get _playlistId => widget.extra?['playlistId'] as String?;
 
@@ -254,9 +260,9 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         widget.onShuffleToggle == null ||
         widget.onLoopToggle == null;
     final playbackState = needsPlaybackState
-        ? context.select<PlaybackModel, (bool, bool, bool)>(
+        ? context.select<PlaybackModel, (bool, bool, PlayerRepeatMode)>(
             (playback) =>
-                (playback.isPlaying, playback.isShuffled, playback.isLooped),
+                (playback.isPlaying, playback.isShuffled, playback.repeatMode),
           )
         : null;
     final isPlaying = widget.onPlayPauseToggle != null
@@ -265,8 +271,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     final isShuffled = widget.onShuffleToggle != null
         ? widget.isShuffled
         : playbackState!.$2;
-    final isLooped = widget.onLoopToggle != null
-        ? widget.isLooped
+    final repeatMode = widget.onLoopToggle != null
+        ? widget.repeatMode
         : playbackState!.$3;
 
     return Row(
@@ -316,11 +322,13 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
               onLoopToggle();
               return;
             }
-            _playback.toggleLoop();
+            _playback.cycleRepeatMode();
           },
-          icon: isLooped
-              ? Icon(Icons.repeat_one_on_rounded, color: colorScheme.primary)
-              : Icon(Icons.repeat_one_rounded, color: colorScheme.primary),
+          icon: Icon(switch (repeatMode) {
+            PlayerRepeatMode.off => Icons.repeat_rounded,
+            PlayerRepeatMode.all => Icons.repeat_on_rounded,
+            PlayerRepeatMode.one => Icons.repeat_one_on_rounded,
+          }, color: colorScheme.primary),
         ),
         if (_songs.isNotEmpty) _buildDownloadPlaylistButton(),
       ],
@@ -571,6 +579,40 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     if (!mounted) return;
     final title = (song['title'] as String?) ?? 'Song';
     AppFlushbar.info(context, '"$title" will play next.');
+  }
+
+  Future<void> _removeSongFromPlaylist(String videoId, String title) async {
+    final playlistId = _playlistId;
+    if (playlistId == null || videoId.isEmpty || _removingVideoId != null) {
+      return;
+    }
+    setState(() => _removingVideoId = videoId);
+    try {
+      if (_itemIdsCachePlaylistId != playlistId) {
+        _itemIdsCache = await YoutubePlaylistService.fetchPlaylistItemIds(
+          playlistId,
+        );
+        _itemIdsCachePlaylistId = playlistId;
+      }
+      final itemId = _itemIdsCache?[videoId];
+      if (itemId == null) {
+        throw Exception("Couldn't find this song in the playlist.");
+      }
+      await YoutubePlaylistService.removeVideoFromPlaylist(itemId);
+      _itemIdsCache?.remove(videoId);
+      if (!mounted) return;
+      setState(() {
+        _songs = _songs
+            .where((song) => (song['videoId'] as String?) != videoId)
+            .toList();
+        _removingVideoId = null;
+      });
+      AppFlushbar.success(context, 'Removed "$title" from playlist');
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _removingVideoId = null);
+      AppFlushbar.error(context, 'Failed to remove song: $error');
+    }
   }
 
   void _registerQueueHandlersForSongs(List<Map<String, dynamic>> songs) {
@@ -874,6 +916,14 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                 icon: const Icon(Icons.content_cut_rounded),
                                 label: const Text('Edit song'),
                               ),
+                              if (_isOwnedByUser)
+                                MenuItem<String>(
+                                  value: 'remove_from_playlist',
+                                  icon: const Icon(
+                                    Icons.playlist_remove_rounded,
+                                  ),
+                                  label: const Text('Remove from playlist'),
+                                ),
                             ],
                           ),
                           onItemSelected: (value) {
@@ -918,7 +968,11 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                 artist: artist,
                                 thumbnailUrl: thumbnailUrl,
                                 durationSeconds: durationSeconds,
+                                playlistId: _playlistId,
+                                playlistName: _displayPlaylistTitle,
                               );
+                            } else if (value == 'remove_from_playlist') {
+                              _removeSongFromPlaylist(videoId, title);
                             }
                           },
                           child: Container(

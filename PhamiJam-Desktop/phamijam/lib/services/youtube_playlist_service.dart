@@ -134,6 +134,23 @@ class YoutubePlaylistService {
     return playlists;
   }
 
+  static Future<Map<String, dynamic>?> fetchPlaylistMetadata(
+    String playlistId,
+  ) async {
+    final uri = Uri.parse('https://www.googleapis.com/youtube/v3/playlists')
+        .replace(
+          queryParameters: {'part': 'snippet,contentDetails', 'id': playlistId},
+        );
+    final response = await _getWithAutoRefresh(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to load playlist (${response.statusCode}).');
+    }
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final items = (payload['items'] as List?) ?? const [];
+    if (items.isEmpty) return null;
+    return _normalizePlaylistItem(items.first as Map);
+  }
+
   static Future<void> addVideoToPlaylist({
     required String playlistId,
     required String videoId,

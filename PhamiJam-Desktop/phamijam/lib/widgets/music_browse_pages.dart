@@ -1,14 +1,31 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
+import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/enums.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
+
+String _formatDurationSeconds(int seconds) {
+  final minutes = seconds ~/ 60;
+  final secs = seconds % 60;
+  return '$minutes:${secs.toString().padLeft(2, '0')}';
+}
+
+String? _durationLabelFromItem(Map<String, dynamic> item) {
+  final seconds =
+      (item['duration_seconds'] as num?)?.toInt() ??
+      (item['durationSeconds'] as num?)?.toInt();
+  if (seconds == null || seconds <= 0) return null;
+  return _formatDurationSeconds(seconds);
+}
 
 Widget _wrapSongTileWithContextMenu({
   required BuildContext context,
@@ -296,6 +313,10 @@ class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
     final albumId = _songAlbumId(item);
     final videoId = _readString(item['videoId']);
     final thumbnailUrl = _thumbnailUrl(item);
+    final isLiked = videoId.isNotEmpty
+        ? context.watch<LikedSongsProvider>().isLiked(videoId)
+        : false;
+    final durationLabel = _durationLabelFromItem(item);
     debugPrint("name$item");
 
     return _wrapSongTileWithContextMenu(
@@ -379,9 +400,37 @@ class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
                 ],
               ),
             ),
-            trailing: Icon(
-              Icons.play_arrow_rounded,
-              color: colorScheme.onSurface,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (durationLabel != null) ...[
+                  Text(
+                    durationLabel,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                if (videoId.isNotEmpty)
+                  IconButton(
+                    onPressed: () =>
+                        context.read<LikedSongsProvider>().toggleLike({
+                          'videoId': videoId,
+                          'title': title,
+                          'artist': artistName,
+                          'thumbnailUrl': thumbnailUrl,
+                          'artistId': artistId,
+                        }),
+                    icon: Icon(
+                      isLiked
+                          ? Icons.favorite_rounded
+                          : Icons.favorite_border_rounded,
+                      color: colorScheme.onSurface,
+                      size: 20,
+                    ),
+                    splashRadius: 18,
+                  ),
+                Icon(Icons.play_arrow_rounded, color: colorScheme.onSurface),
+              ],
             ),
             onTap: videoId.isEmpty
                 ? null
@@ -812,93 +861,194 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
     );
   }
 
+  bool _isOneOfSongs(
+    String? currentSongPath,
+    List<Map<String, dynamic>> songs,
+  ) {
+    if (currentSongPath == null || !currentSongPath.startsWith('yt:')) {
+      return false;
+    }
+    final currentVideoId = currentSongPath.substring(3);
+    return songs.any((song) => _readString(song['videoId']) == currentVideoId);
+  }
+
+  Map<String, dynamic> _toQueueItem(Map<String, dynamic> item) => {
+    'videoId': _readString(item['videoId']),
+    'title': _readString(item['title'], 'Unknown song'),
+    'artist': _artistNameFromSong(item),
+    'artistId': _artistIdFromSong(item),
+    'thumbnailUrl': _thumbnailUrl(item),
+  };
+
+  void _playSongs(List<Map<String, dynamic>> songs, {required bool shuffle}) {
+    if (songs.isEmpty) return;
+    final playback = context.read<PlaybackModel>();
+    final items = songs.map(_toQueueItem).toList();
+    final startIndex = shuffle ? Random().nextInt(items.length) : 0;
+    if (!playback.isShuffled && shuffle) playback.toggleShuffle();
+    playback.setPlaylistQueue(items, startIndex: startIndex);
+  }
+
   Widget _buildHeader(_ArtistDetailsData data) {
     final colorScheme = Theme.of(context).colorScheme;
     final description = _readString(data.artist['description']);
     final subscribers = _readString(data.artist['subscribers']);
     final views = _readString(data.artist['views']);
     final thumbnailUrl = _thumbnailUrl(data.artist);
+    final playback = context.watch<PlaybackModel>();
+    final isThisArtistPlaying =
+        playback.isPlaying &&
+        _isOneOfSongs(playback.currentSongPath, data.songs);
 
-    return _buildCardShell(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: thumbnailUrl.isEmpty
-                  ? Container(
-                      width: 96,
-                      height: 96,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            colorScheme.primary.withValues(alpha: 0.35),
+            colorScheme.surface,
+          ],
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+      child: Column(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: thumbnailUrl.isEmpty
+                ? Container(
+                    width: 128,
+                    height: 128,
+                    color: colorScheme.onSurface.withValues(alpha: 0.12),
+                    child: Icon(
+                      Icons.person_rounded,
+                      color: colorScheme.onSurface,
+                      size: 48,
+                    ),
+                  )
+                : Image.network(
+                    thumbnailUrl,
+                    width: 128,
+                    height: 128,
+                    cacheWidth: 256,
+                    cacheHeight: 256,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Container(
+                      width: 128,
+                      height: 128,
                       color: colorScheme.onSurface.withValues(alpha: 0.12),
                       child: Icon(
                         Icons.person_rounded,
                         color: colorScheme.onSurface,
-                      ),
-                    )
-                  : Image.network(
-                      thumbnailUrl,
-                      width: 96,
-                      height: 96,
-                      cacheWidth: 192,
-                      cacheHeight: 192,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(
-                        width: 96,
-                        height: 96,
-                        color: colorScheme.onSurface.withValues(alpha: 0.12),
-                        child: Icon(
-                          Icons.person_rounded,
-                          color: colorScheme.onSurface,
-                        ),
+                        size: 48,
                       ),
                     ),
+                  ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'ARTIST',
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 12,
+              letterSpacing: 1.5,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _readString(data.artist['name'], widget.artistName),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 26,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (subscribers.isNotEmpty || views.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 10,
+              runSpacing: 6,
+              children: [
+                if (subscribers.isNotEmpty)
                   Text(
-                    _readString(data.artist['name'], widget.artistName),
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    subscribers,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 6,
-                    children: [
-                      if (subscribers.isNotEmpty)
-                        Text(
-                          subscribers,
-                          style: TextStyle(color: colorScheme.onSurfaceVariant),
-                        ),
-                      if (views.isNotEmpty)
-                        Text(
-                          views,
-                          style: TextStyle(color: colorScheme.onSurfaceVariant),
-                        ),
-                    ],
+                if (views.isNotEmpty)
+                  Text(
+                    views,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
-                  if (description.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      description,
-                      maxLines: 4,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: colorScheme.onSurfaceVariant),
-                    ),
-                  ],
-                ],
-              ),
+              ],
             ),
           ],
-        ),
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+          if (data.songs.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  onPressed: playback.toggleShuffle,
+                  icon: Icon(
+                    Icons.shuffle_rounded,
+                    color: playback.isShuffled
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                Material(
+                  color: colorScheme.primary,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => isThisArtistPlaying
+                        ? context.read<PlaybackModel>().togglePlayPause()
+                        : _playSongs(data.songs, shuffle: true),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Icon(
+                        isThisArtistPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        color: colorScheme.onPrimary,
+                        size: 30,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                IconButton(
+                  onPressed: playback.cycleRepeatMode,
+                  icon: Icon(
+                    playback.repeatMode == PlayerRepeatMode.one
+                        ? Icons.repeat_one_rounded
+                        : Icons.repeat_rounded,
+                    color: playback.repeatMode == PlayerRepeatMode.off
+                        ? colorScheme.onSurfaceVariant
+                        : colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -912,6 +1062,10 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
     final albumId = _albumIdFromSong(item);
     final videoId = _readString(item['videoId']);
     final thumbnailUrl = _thumbnailUrl(item);
+    final isLiked = videoId.isNotEmpty
+        ? context.watch<LikedSongsProvider>().isLiked(videoId)
+        : false;
+    final durationLabel = _durationLabelFromItem(item);
 
     return _wrapSongTileWithContextMenu(
       context: context,
@@ -983,9 +1137,37 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
               ],
             ),
           ),
-          trailing: Icon(
-            Icons.play_arrow_rounded,
-            color: colorScheme.onSurface,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (durationLabel != null) ...[
+                Text(
+                  durationLabel,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(width: 4),
+              ],
+              if (videoId.isNotEmpty)
+                IconButton(
+                  onPressed: () =>
+                      context.read<LikedSongsProvider>().toggleLike({
+                        'videoId': videoId,
+                        'title': title,
+                        'artist': artistName,
+                        'thumbnailUrl': thumbnailUrl,
+                        'artistId': artistId,
+                      }),
+                  icon: Icon(
+                    isLiked
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    color: colorScheme.onSurface,
+                    size: 20,
+                  ),
+                  splashRadius: 18,
+                ),
+              Icon(Icons.play_arrow_rounded, color: colorScheme.onSurface),
+            ],
           ),
           onTap: videoId.isEmpty
               ? null
@@ -1417,6 +1599,10 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
     final videoId = _readString(item['videoId']);
     final thumbnailUrl = _thumbnailUrl(item);
     final albumTitle = _readString(item['album'], widget.albumTitle);
+    final isLiked = videoId.isNotEmpty
+        ? context.watch<LikedSongsProvider>().isLiked(videoId)
+        : false;
+    final durationLabel = _durationLabelFromItem(item);
 
     return _wrapSongTileWithContextMenu(
       context: context,
@@ -1471,9 +1657,37 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
               ],
             ),
           ),
-          trailing: Icon(
-            Icons.play_arrow_rounded,
-            color: colorScheme.onSurface,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (durationLabel != null) ...[
+                Text(
+                  durationLabel,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(width: 4),
+              ],
+              if (videoId.isNotEmpty)
+                IconButton(
+                  onPressed: () =>
+                      context.read<LikedSongsProvider>().toggleLike({
+                        'videoId': videoId,
+                        'title': title,
+                        'artist': artistName,
+                        'thumbnailUrl': thumbnailUrl,
+                        'artistId': artistId,
+                      }),
+                  icon: Icon(
+                    isLiked
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    color: colorScheme.onSurface,
+                    size: 20,
+                  ),
+                  splashRadius: 18,
+                ),
+              Icon(Icons.play_arrow_rounded, color: colorScheme.onSurface),
+            ],
           ),
           onTap: videoId.isEmpty
               ? null
@@ -1693,7 +1907,7 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
   Future<_YoutubeChannelData> _load() async {
     final results = await Future.wait([
       YoutubeDataService.fetchChannelInfo(widget.channelId),
-      YoutubeDataService.fetchChannelVideos(widget.channelId, maxItems: 25),
+      YoutubeDataService.fetchChannelVideos(widget.channelId),
     ]);
     return _YoutubeChannelData(
       channel: results[0] as Map<String, dynamic>?,
@@ -1729,82 +1943,188 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
     );
   }
 
-  Widget _buildHeader(Map<String, dynamic>? channel) {
+  bool _isOneOfVideos(
+    String? currentSongPath,
+    List<Map<String, dynamic>> videos,
+  ) {
+    if (currentSongPath == null || !currentSongPath.startsWith('yt:')) {
+      return false;
+    }
+    final currentVideoId = currentSongPath.substring(3);
+    return videos.any((video) => video['videoId'] == currentVideoId);
+  }
+
+  void _playVideos(List<Map<String, dynamic>> videos, {required bool shuffle}) {
+    if (videos.isEmpty) return;
+    final playback = context.read<PlaybackModel>();
+    final startIndex = shuffle ? Random().nextInt(videos.length) : 0;
+    if (!playback.isShuffled && shuffle) playback.toggleShuffle();
+    playback.setPlaylistQueue(videos, startIndex: startIndex);
+  }
+
+  Widget _buildHeader(
+    Map<String, dynamic>? channel,
+    List<Map<String, dynamic>> videos,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
     final name = (channel?['name'] as String?) ?? widget.channelName;
     final description = (channel?['description'] as String?) ?? '';
     final subscriberCount = (channel?['subscriberCount'] as String?) ?? '';
     final thumbnailUrl = (channel?['thumbnailUrl'] as String?) ?? '';
+    final playback = context.watch<PlaybackModel>();
+    final isThisChannelPlaying =
+        playback.isPlaying && _isOneOfVideos(playback.currentSongPath, videos);
 
-    return _buildCardShell(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: thumbnailUrl.isEmpty
-                  ? Container(
-                      width: 96,
-                      height: 96,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            colorScheme.primary.withValues(alpha: 0.35),
+            colorScheme.surface,
+          ],
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+      child: Column(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: thumbnailUrl.isEmpty
+                ? Container(
+                    width: 128,
+                    height: 128,
+                    color: colorScheme.onSurface.withValues(alpha: 0.12),
+                    child: Icon(
+                      Icons.person_rounded,
+                      color: colorScheme.onSurface,
+                      size: 48,
+                    ),
+                  )
+                : Image.network(
+                    thumbnailUrl,
+                    width: 128,
+                    height: 128,
+                    cacheWidth: 256,
+                    cacheHeight: 256,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Container(
+                      width: 128,
+                      height: 128,
                       color: colorScheme.onSurface.withValues(alpha: 0.12),
                       child: Icon(
                         Icons.person_rounded,
                         color: colorScheme.onSurface,
+                        size: 48,
                       ),
-                    )
-                  : Image.network(
-                      thumbnailUrl,
-                      width: 96,
-                      height: 96,
-                      cacheWidth: 192,
-                      cacheHeight: 192,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Container(
-                        width: 96,
-                        height: 96,
-                        color: colorScheme.onSurface.withValues(alpha: 0.12),
-                        child: Icon(
-                          Icons.person_rounded,
-                          color: colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  if (subscriberCount.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      _formatSubscribers(subscriberCount),
-                      style: TextStyle(color: colorScheme.onSurfaceVariant),
-                    ),
-                  ],
-                  if (description.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      description,
-                      maxLines: 4,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: colorScheme.onSurfaceVariant),
-                    ),
-                  ],
-                ],
-              ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'CHANNEL',
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 12,
+              letterSpacing: 1.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            name,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 26,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (subscriberCount.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              _formatSubscribers(subscriberCount),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           ],
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+          if (videos.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  onPressed: playback.toggleShuffle,
+                  icon: Icon(
+                    Icons.shuffle_rounded,
+                    color: playback.isShuffled
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 20),
+                Material(
+                  color: colorScheme.primary,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => isThisChannelPlaying
+                        ? context.read<PlaybackModel>().togglePlayPause()
+                        : _playVideos(videos, shuffle: true),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Icon(
+                        isThisChannelPlaying
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                        color: colorScheme.onPrimary,
+                        size: 30,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                IconButton(
+                  onPressed: playback.cycleRepeatMode,
+                  icon: Icon(
+                    playback.repeatMode == PlayerRepeatMode.one
+                        ? Icons.repeat_one_rounded
+                        : Icons.repeat_rounded,
+                    color: playback.repeatMode == PlayerRepeatMode.off
+                        ? colorScheme.onSurfaceVariant
+                        : colorScheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title, int count) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 10),
+      child: Text(
+        '$title ($count)',
+        style: TextStyle(
+          color: colorScheme.onSurface,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -1816,6 +2136,10 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
     final artist = (item['artist'] as String?) ?? widget.channelName;
     final videoId = (item['videoId'] as String?) ?? '';
     final thumbnailUrl = (item['thumbnailUrl'] as String?) ?? '';
+    final isLiked = videoId.isNotEmpty
+        ? context.watch<LikedSongsProvider>().isLiked(videoId)
+        : false;
+    final durationLabel = _durationLabelFromItem(item);
 
     return _wrapSongTileWithContextMenu(
       context: context,
@@ -1855,9 +2179,37 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          trailing: Icon(
-            Icons.play_arrow_rounded,
-            color: colorScheme.onSurface,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (durationLabel != null) ...[
+                Text(
+                  durationLabel,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(width: 4),
+              ],
+              if (videoId.isNotEmpty)
+                IconButton(
+                  onPressed: () =>
+                      context.read<LikedSongsProvider>().toggleLike({
+                        'videoId': videoId,
+                        'title': title,
+                        'artist': artist,
+                        'thumbnailUrl': thumbnailUrl,
+                        'artistId': widget.channelId,
+                      }),
+                  icon: Icon(
+                    isLiked
+                        ? Icons.favorite_rounded
+                        : Icons.favorite_border_rounded,
+                    color: colorScheme.onSurface,
+                    size: 20,
+                  ),
+                  splashRadius: 18,
+                ),
+              Icon(Icons.play_arrow_rounded, color: colorScheme.onSurface),
+            ],
           ),
           onTap: videoId.isEmpty
               ? null
@@ -1899,6 +2251,13 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
         final data = snapshot.data;
         final channel = data?.channel;
         final videos = data?.videos ?? const <Map<String, dynamic>>[];
+        final mostStreamed = [...videos]
+          ..sort(
+            (a, b) => ((b['viewCount'] as int?) ?? 0).compareTo(
+              (a['viewCount'] as int?) ?? 0,
+            ),
+          );
+        final topStreamed = mostStreamed.take(5).toList();
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -1928,30 +2287,25 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
                 ],
               ),
               const SizedBox(height: 14),
-              _buildHeader(channel),
+              _buildHeader(channel, videos),
               const SizedBox(height: 14),
               _buildSearchEngineToggle(context),
-              Padding(
-                padding: const EdgeInsets.only(top: 14, bottom: 10),
-                child: Text(
-                  'Videos (${videos.length})',
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
               if (videos.isEmpty)
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Text(
                     'No videos found for this channel.',
                     style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
                 )
-              else
+              else ...[
+                if (topStreamed.isNotEmpty) ...[
+                  _buildSectionTitle('Most streamed', topStreamed.length),
+                  ...topStreamed.map(_buildVideoTile),
+                ],
+                _buildSectionTitle('Latest released', videos.length),
                 ...videos.map(_buildVideoTile),
+              ],
             ],
           ),
         );
@@ -2028,6 +2382,7 @@ class _YoutubeSearchResultsPageState extends State<YoutubeSearchResultsPage> {
     final artistId = (item['artistId'] as String?) ?? '';
     final videoId = (item['videoId'] as String?) ?? '';
     final thumbnailUrl = (item['thumbnailUrl'] as String?) ?? '';
+    final durationLabel = _durationLabelFromItem(item);
 
     return _wrapSongTileWithContextMenu(
       context: context,
@@ -2087,9 +2442,18 @@ class _YoutubeSearchResultsPageState extends State<YoutubeSearchResultsPage> {
               ],
             ),
           ),
-          trailing: Icon(
-            Icons.play_arrow_rounded,
-            color: colorScheme.onSurface,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (durationLabel != null) ...[
+                Text(
+                  durationLabel,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Icon(Icons.play_arrow_rounded, color: colorScheme.onSurface),
+            ],
           ),
           onTap: videoId.isEmpty
               ? null

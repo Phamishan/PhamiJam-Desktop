@@ -5,6 +5,7 @@ class EditedSongTrim {
   final String title;
   final String artist;
   final String thumbnailUrl;
+  final String? playlistId;
 
   const EditedSongTrim({
     required this.videoId,
@@ -13,6 +14,7 @@ class EditedSongTrim {
     required this.title,
     required this.artist,
     required this.thumbnailUrl,
+    this.playlistId,
   });
 
   Duration get start => Duration(milliseconds: startMs);

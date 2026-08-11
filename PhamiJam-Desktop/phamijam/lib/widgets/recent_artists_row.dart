@@ -140,17 +140,24 @@ class _RecentArtistCardState extends State<_RecentArtistCard> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
-                child: widget.thumbnailUrl.isNotEmpty
-                    ? Image.network(
-                        widget.thumbnailUrl,
-                        width: 108,
-                        height: 108,
-                        cacheWidth: 216,
-                        cacheHeight: 216,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => Container(
-                          width: 108,
-                          height: 108,
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: widget.thumbnailUrl.isNotEmpty
+                      ? Image.network(
+                          widget.thumbnailUrl,
+                          cacheWidth: 216,
+                          cacheHeight: 216,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Container(
+                            color: colorScheme.surfaceContainerHigh,
+                            child: Icon(
+                              Icons.person_rounded,
+                              color: colorScheme.onSurface,
+                              size: 44,
+                            ),
+                          ),
+                        )
+                      : Container(
                           color: colorScheme.surfaceContainerHigh,
                           child: Icon(
                             Icons.person_rounded,
@@ -158,17 +165,7 @@ class _RecentArtistCardState extends State<_RecentArtistCard> {
                             size: 44,
                           ),
                         ),
-                      )
-                    : Container(
-                        width: 108,
-                        height: 108,
-                        color: colorScheme.surfaceContainerHigh,
-                        child: Icon(
-                          Icons.person_rounded,
-                          color: colorScheme.onSurface,
-                          size: 44,
-                        ),
-                      ),
+                ),
               ),
               const SizedBox(height: 10),
               Text(

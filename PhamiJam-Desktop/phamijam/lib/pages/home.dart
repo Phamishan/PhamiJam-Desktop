@@ -15,6 +15,7 @@ import 'package:phamijam/models/play_event.dart';
 import 'package:phamijam/providers/edited_songs_provider.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
+import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
@@ -91,12 +92,16 @@ class _HomeState extends State<Home> {
     _sidebarVideoController = VideoController(player.mediaKitPlayer);
     _searchController = TextEditingController();
     _bindYouTubeEngineToPlayback();
-    _playback.bindEditedSongsLookup(context.read<EditedSongsProvider>().trimFor);
+    _playback.bindEditedSongsLookup(
+      context.read<EditedSongsProvider>().trimFor,
+    );
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
     unawaited(context.read<LikedSongsProvider>().refresh());
     unawaited(context.read<PlaylistPinProvider>().refresh());
     unawaited(context.read<EditedSongsProvider>().refresh());
+    unawaited(context.read<SavedPlaylistsProvider>().refresh());
+    unawaited(context.read<SettingsProvider>().refreshHiddenPlaylists());
     _playback.addListener(_handlePlaybackChanged);
   }
 
@@ -610,6 +615,7 @@ class _HomeState extends State<Home> {
         _buildHomeSectionTitle('Recently Played Artists'),
         RecentArtistsRow(
           events: _recentlyPlayedTracks,
+          maxArtists: _recentlyPlayedTracks.length,
           onOpenArtist: (channelId, artistName) {
             _onSidebarTabSelected(
               'artist_details',
@@ -628,7 +634,13 @@ class _HomeState extends State<Home> {
   Widget _buildYourPlaylistsSection() {
     final colorScheme = Theme.of(context).colorScheme;
     final pins = context.watch<PlaylistPinProvider>();
-    final playlists = pins.sortByPin(_myPlaylists);
+    final settings = context.watch<SettingsProvider>();
+    final visibleMyPlaylists = _myPlaylists
+        .where(
+          (p) => !settings.isPlaylistHidden((p['playlistId'] as String?) ?? ''),
+        )
+        .toList();
+    final playlists = pins.sortByPin(visibleMyPlaylists);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1380,7 +1392,12 @@ class _HomeState extends State<Home> {
             onSeek: (duration) => playback.seekTo(duration),
             onPlayPauseToggle: _handlePlayPauseToggle,
             isShuffled: remote?.shuffle ?? playback.isShuffled,
-            isLooped: remote?.loop ?? playback.isLooped,
+            repeatMode: remote != null
+                ? PlayerRepeatMode.values.firstWhere(
+                    (mode) => mode.name == remote.repeatMode,
+                    orElse: () => PlayerRepeatMode.off,
+                  )
+                : playback.repeatMode,
             onPrevious: playback.playPrevious,
             onForward: playback.playNext,
             onVolumeChange: (value) => playback.applyVolume(value),
@@ -1391,8 +1408,7 @@ class _HomeState extends State<Home> {
                 : playback.duration,
             onShuffle: playback.toggleShuffle,
             onUnshuffle: playback.toggleShuffle,
-            onLoop: playback.toggleLoop,
-            onUnloop: playback.toggleLoop,
+            onCycleRepeat: playback.cycleRepeatMode,
             queue: remote != null ? remote.queue : playback.queue,
             onQueuePressed: () => _openQueueSheet(
               context,

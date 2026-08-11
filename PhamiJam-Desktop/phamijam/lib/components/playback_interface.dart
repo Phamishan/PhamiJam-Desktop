@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:marquee/marquee.dart';
 import 'package:audio_video_progress_bar/audio_video_progress_bar.dart';
+import 'package:phamijam/components/playback_model.dart';
 
 class PlaybackInterface extends StatefulWidget {
   final Duration progress;
@@ -9,15 +10,14 @@ class PlaybackInterface extends StatefulWidget {
   final bool isPlaying;
   final bool isMuted;
   final bool isShuffled;
-  final bool isLooped;
+  final PlayerRepeatMode repeatMode;
   final double currentSliderValue;
   final ValueChanged<Duration> onSeek;
   final VoidCallback onPlayPauseToggle;
   final VoidCallback onPrevious;
   final VoidCallback onForward;
   final ValueChanged<double> onVolumeChange;
-  final VoidCallback onLoop;
-  final VoidCallback onUnloop;
+  final VoidCallback onCycleRepeat;
   final VoidCallback onShuffle;
   final VoidCallback onUnshuffle;
   final String artist;
@@ -37,12 +37,11 @@ class PlaybackInterface extends StatefulWidget {
     required this.onSeek,
     required this.onPlayPauseToggle,
     required this.isShuffled,
-    required this.isLooped,
+    required this.repeatMode,
     required this.onPrevious,
     required this.onForward,
     required this.onVolumeChange,
-    required this.onLoop,
-    required this.onUnloop,
+    required this.onCycleRepeat,
     required this.onShuffle,
     required this.onUnshuffle,
     required this.artist,
@@ -117,14 +116,6 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
     _volumeController.text = value.round().toString();
     widget.onVolumeChange(value);
     if (value > 0) oldVolume = value;
-  }
-
-  void toggleLooped() {
-    if (widget.isLooped) {
-      widget.onUnloop();
-    } else {
-      widget.onLoop();
-    }
   }
 
   void toggleShuffled() {
@@ -290,16 +281,17 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                       ),
                     ),
                     IconButton(
-                      onPressed: toggleLooped,
-                      icon: !widget.isLooped
-                          ? Icon(
-                              Icons.repeat_one_rounded,
-                              color: colorScheme.primary,
-                            )
-                          : Icon(
-                              Icons.repeat_one_on_rounded,
-                              color: colorScheme.primary,
-                            ),
+                      tooltip: switch (widget.repeatMode) {
+                        PlayerRepeatMode.off => 'Repeat off',
+                        PlayerRepeatMode.all => 'Repeat all',
+                        PlayerRepeatMode.one => 'Repeat one',
+                      },
+                      onPressed: widget.onCycleRepeat,
+                      icon: Icon(switch (widget.repeatMode) {
+                        PlayerRepeatMode.off => Icons.repeat_rounded,
+                        PlayerRepeatMode.all => Icons.repeat_on_rounded,
+                        PlayerRepeatMode.one => Icons.repeat_one_on_rounded,
+                      }, color: colorScheme.primary),
                     ),
                   ],
                 ),

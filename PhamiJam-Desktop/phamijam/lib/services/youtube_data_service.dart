@@ -76,6 +76,14 @@ class YoutubeDataService {
         'thumbnailUrl': _bestThumbnail(snippet)?['url'] as String? ?? '',
       });
     }
+
+    final stats = await _fetchVideoStats(
+      results.map((r) => r['videoId'] as String).toList(),
+    );
+    for (final result in results) {
+      final stat = stats[result['videoId']];
+      if (stat != null) result['durationSeconds'] = stat.durationSeconds;
+    }
     return results;
   }
 
@@ -122,20 +130,19 @@ class YoutubeDataService {
 
   static Future<List<Map<String, dynamic>>> fetchChannelVideos(
     String channelId, {
-    int maxItems = 25,
+    int maxItems = 200,
   }) async {
     final uploadsPlaylistId = await _fetchUploadsPlaylistId(channelId);
     if (uploadsPlaylistId == null || uploadsPlaylistId.isEmpty) return [];
 
     final videos = <Map<String, dynamic>>[];
     String? pageToken;
-    while (videos.length < maxItems) {
-      final remaining = maxItems - videos.length;
+    do {
       final data = await _get('playlistItems', {
         'part': 'snippet',
         'playlistId': uploadsPlaylistId,
-        'maxResults': '${remaining > 50 ? 50 : remaining}',
-        if (pageToken != null) 'pageToken': pageToken,
+        'maxResults': '50',
+        'pageToken': ?pageToken,
       });
 
       final items = data['items'] as List? ?? [];
@@ -154,12 +161,69 @@ class YoutubeDataService {
               'Unknown channel',
           'thumbnailUrl': _bestThumbnail(snippet)?['url'] as String? ?? '',
         });
-        if (videos.length >= maxItems) break;
       }
 
       pageToken = data['nextPageToken'] as String?;
-      if (pageToken == null) break;
+    } while (pageToken != null && videos.length < maxItems);
+
+    final bounded = videos.length > maxItems
+        ? videos.sublist(0, maxItems)
+        : videos;
+    final stats = await _fetchVideoStats(
+      bounded.map((v) => v['videoId'] as String).toList(),
+    );
+
+    final result = <Map<String, dynamic>>[];
+    for (final video in bounded) {
+      final stat = stats[video['videoId']];
+      final durationSeconds = stat?.durationSeconds ?? 0;
+      if (durationSeconds > 0 && durationSeconds <= 60) continue;
+      result.add(<String, dynamic>{
+        ...video,
+        'durationSeconds': durationSeconds,
+        'viewCount': stat?.viewCount ?? 0,
+      });
     }
-    return videos;
+    return result;
+  }
+
+  static Future<Map<String, ({int durationSeconds, int viewCount})>>
+  _fetchVideoStats(List<String> videoIds) async {
+    final stats = <String, ({int durationSeconds, int viewCount})>{};
+    for (var i = 0; i < videoIds.length; i += 50) {
+      final batch = videoIds.sublist(i, (i + 50).clamp(0, videoIds.length));
+      if (batch.isEmpty) continue;
+
+      final data = await _get('videos', {
+        'part': 'contentDetails,statistics',
+        'id': batch.join(','),
+      });
+      for (final item in (data['items'] as List? ?? [])) {
+        final map = item as Map<String, dynamic>;
+        final id = map['id'] as String?;
+        if (id == null) continue;
+        final iso =
+            (map['contentDetails'] as Map<String, dynamic>?)?['duration']
+                as String?;
+        final viewCountRaw =
+            (map['statistics'] as Map<String, dynamic>?)?['viewCount'];
+        stats[id] = (
+          durationSeconds: iso == null ? 0 : _parseIso8601Duration(iso),
+          viewCount: int.tryParse('$viewCountRaw') ?? 0,
+        );
+      }
+    }
+    return stats;
+  }
+
+  static int _parseIso8601Duration(String iso) {
+    final match = RegExp(
+      r'^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$',
+    ).firstMatch(iso);
+    if (match == null) return 0;
+    final hours = int.tryParse(match.group(1) ?? '') ?? 0;
+    final minutes = int.tryParse(match.group(2) ?? '') ?? 0;
+    final seconds = int.tryParse(match.group(3) ?? '') ?? 0;
+    return hours * 3600 + minutes * 60 + seconds;
   }
 }

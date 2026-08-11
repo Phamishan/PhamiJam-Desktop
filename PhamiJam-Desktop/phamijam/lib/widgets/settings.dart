@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:phamijam/components/manage_playlist_visibility_dialog.dart';
 import 'package:phamijam/models/app_update_info.dart';
 import 'package:phamijam/providers/edited_songs_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
@@ -439,6 +440,48 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildLibraryCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainer,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => showManagePlaylistVisibilityDialog(context),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Icon(Icons.playlist_play_rounded, color: colorScheme.onSurface),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Playlist Visibility',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose which playlists show on Home and Playlists',
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: colorScheme.onSurface),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmClearDownloads(DownloadsProvider downloads) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -841,6 +884,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildSearchEngineCard(),
         const SizedBox(height: 10),
         _buildPlayerCard(),
+        const SizedBox(height: 10),
+        _buildLibraryCard(),
         const SizedBox(height: 10),
         _buildStorageCard(),
         const SizedBox(height: 10),

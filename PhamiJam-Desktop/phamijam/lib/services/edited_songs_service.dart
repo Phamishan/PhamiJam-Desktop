@@ -14,8 +14,13 @@ class EditedSongsService {
         .collection('editedSongs');
   }
 
-  static String _docId(String videoId) =>
-      videoId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+  static String _sanitize(String value) =>
+      value.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+
+  static String _docId(String videoId, [String? playlistId]) =>
+      playlistId == null
+      ? _sanitize(videoId)
+      : '${_sanitize(videoId)}__${_sanitize(playlistId)}';
 
   static Future<List<EditedSongTrim>> fetchAll() async {
     final collection = _collection;
@@ -29,21 +34,22 @@ class EditedSongsService {
   static Future<void> setTrim(EditedSongTrim trim) async {
     final collection = _collection;
     if (collection == null) return;
-    await collection.doc(_docId(trim.videoId)).set({
+    await collection.doc(_docId(trim.videoId, trim.playlistId)).set({
       'videoId': trim.videoId,
       'startMs': trim.startMs,
       'endMs': trim.endMs,
       'title': trim.title,
       'artist': trim.artist,
       'thumbnailUrl': trim.thumbnailUrl,
+      if (trim.playlistId != null) 'playlistId': trim.playlistId,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
-  static Future<void> removeTrim(String videoId) async {
+  static Future<void> removeTrim(String videoId, [String? playlistId]) async {
     final collection = _collection;
     if (collection == null) return;
-    await collection.doc(_docId(videoId)).delete();
+    await collection.doc(_docId(videoId, playlistId)).delete();
   }
 
   static EditedSongTrim _fromData(Map<String, dynamic> data) {
@@ -54,6 +60,7 @@ class EditedSongsService {
       title: (data['title'] as String?) ?? '',
       artist: (data['artist'] as String?) ?? '',
       thumbnailUrl: (data['thumbnailUrl'] as String?) ?? '',
+      playlistId: data['playlistId'] as String?,
     );
   }
 }
