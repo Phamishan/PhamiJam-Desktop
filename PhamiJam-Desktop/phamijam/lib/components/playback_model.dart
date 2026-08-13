@@ -10,8 +10,10 @@ import 'package:phamijam/models/edited_song_trim.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
 import 'package:phamijam/services/playback_state_service.dart';
+import 'package:phamijam/services/autoplay_service.dart';
 import 'package:phamijam/services/skip_tracking_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
 
 enum PlaybackEngine { local, youtube }
 
@@ -36,6 +38,7 @@ class PlaybackModel extends ChangeNotifier {
   PlaybackEngine _engine = PlaybackEngine.local;
   DiscordRPC? _discordRpc;
   bool _discordRpcReady = false;
+  bool _discordRichPresenceEnabled = false;
   String? _lastDiscordPresenceSignature;
   Future<void>? _discordReconnectFuture;
 
@@ -87,6 +90,9 @@ class PlaybackModel extends ChangeNotifier {
   Timer? _sessionHeartbeat;
   Timer? _positionAutosaveTimer;
   Duration? _restoredResumePosition;
+  Timer? _sleepTimer;
+  DateTime? _sleepTimerEndsAt;
+  bool _pauseAtTrackEndScheduled = false;
 
   PlaybackModel() {
     unawaited(_restoreVolume());
@@ -513,6 +519,11 @@ class PlaybackModel extends ChangeNotifier {
         }
       }
     }
+    if (_pauseAtTrackEndScheduled) {
+      _pauseAtTrackEndScheduled = false;
+      if (isPlaying) await _localTogglePlayPause();
+      return;
+    }
     if (repeatMode == PlayerRepeatMode.one) {
       await _restartCurrentTrack();
       unawaited(
@@ -689,6 +700,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> _initializeDiscordPresence({bool forceReconnect = false}) async {
+    if (!_discordRichPresenceEnabled) return;
     if (!DiscordRPC.isAvailable) return;
 
     final applicationId = dotenv.env['DISCORD_APPLICATION_ID']?.trim();
@@ -735,6 +747,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void _scheduleDiscordPresenceSync({bool allowReconnect = false}) {
+    if (!_discordRichPresenceEnabled) return;
     final discordRpc = _discordRpc;
     final isConnected = discordRpc?.isConnected == true;
 
@@ -881,9 +894,122 @@ class PlaybackModel extends ChangeNotifier {
     _trimLookup = lookup;
   }
 
+  bool Function()? _autoplayEnabledLookup;
+  Future<YTMusic> Function()? _ensureYtMusicLookup;
+  String? _autoplayAttemptedSeedVideoId;
+
+  void setDiscordRichPresenceEnabled(bool enabled) {
+    if (enabled == _discordRichPresenceEnabled) return;
+    _discordRichPresenceEnabled = enabled;
+    if (enabled) {
+      unawaited(_initializeDiscordPresence(forceReconnect: true));
+      return;
+    }
+
+    _discordPresenceTimer?.cancel();
+    _discordReconnectFuture = null;
+    _lastDiscordPresenceSignature = null;
+    final rpc = _discordRpc;
+    _discordRpc = null;
+    _discordRpcReady = false;
+    if (rpc != null) {
+      unawaited(_disconnectDiscordRpc(rpc));
+    }
+  }
+
+  Future<void> _disconnectDiscordRpc(DiscordRPC rpc) async {
+    try {
+      await rpc.clearPresence();
+    } catch (_) {}
+    try {
+      await rpc.dispose();
+    } catch (_) {}
+  }
+
+  void bindAutoplay({
+    required bool Function() isEnabled,
+    required Future<YTMusic> Function() ensureYtMusic,
+  }) {
+    _autoplayEnabledLookup = isEnabled;
+    _ensureYtMusicLookup = ensureYtMusic;
+  }
+
+  Future<bool> _tryAppendAutoplayContinuation() async {
+    if (_autoplayEnabledLookup?.call() != true) return false;
+    if (_currentOrderIndex < 0 || _currentOrderIndex >= _playOrder.length) {
+      return false;
+    }
+    final sourceIndex = _playOrder[_currentOrderIndex];
+    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) return false;
+    final item = _playlistItems[sourceIndex];
+    if (item is! Map<String, dynamic>) return false;
+    final seedVideoId = item['videoId'] as String?;
+    if (seedVideoId == null || seedVideoId.isEmpty) return false;
+    if (_autoplayAttemptedSeedVideoId == seedVideoId) return false;
+    _autoplayAttemptedSeedVideoId = seedVideoId;
+
+    final ensureYtMusic = _ensureYtMusicLookup;
+    if (ensureYtMusic == null) return false;
+    try {
+      final ytmusic = await ensureYtMusic();
+      final excludeIds = _playlistItems
+          .whereType<Map>()
+          .map((m) => m['videoId'] as String?)
+          .whereType<String>()
+          .toSet();
+      final continuation = await AutoplayService.fetchAutoplayContinuation(
+        ytmusic,
+        seedVideoId,
+        excludeVideoIds: excludeIds,
+      );
+      if (continuation.isEmpty) return false;
+      for (final track in continuation) {
+        addToQueue(track);
+      }
+      return true;
+    } catch (error) {
+      debugPrint('PlaybackModel: autoplay continuation failed: $error');
+      return false;
+    }
+  }
+
   Duration? get trimStart => _trimStart;
   Duration? get trimEnd => _trimEnd;
   bool get hasActiveTrim => _trimEnd != null;
+
+  DateTime? get sleepTimerEndsAt => _sleepTimerEndsAt;
+  bool get isSleepTimerEndOfTrackScheduled => _pauseAtTrackEndScheduled;
+  bool get hasSleepTimer =>
+      _sleepTimerEndsAt != null || _pauseAtTrackEndScheduled;
+
+  void startSleepTimer(Duration duration) {
+    _sleepTimer?.cancel();
+    _pauseAtTrackEndScheduled = false;
+    _sleepTimerEndsAt = DateTime.now().add(duration);
+    _sleepTimer = Timer(duration, () {
+      _sleepTimer = null;
+      _sleepTimerEndsAt = null;
+      if (isPlaying) unawaited(_localTogglePlayPause());
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  void startSleepTimerEndOfTrack() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTimerEndsAt = null;
+    _pauseAtTrackEndScheduled = true;
+    notifyListeners();
+  }
+
+  void cancelSleepTimer() {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepTimerEndsAt = null;
+    _pauseAtTrackEndScheduled = false;
+    notifyListeners();
+  }
 
   Duration _clampToTrim(Duration value) {
     var result = value;
@@ -1076,12 +1202,15 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> _localPlayNext() async {
     if (_playOrder.isNotEmpty) {
-      final nextOrderIndex = _normalizeOrderIndex(
+      var nextOrderIndex = _normalizeOrderIndex(
         _currentOrderIndex + 1,
         wrapAround: repeatMode == PlayerRepeatMode.all,
       );
       if (nextOrderIndex == null) {
-        return;
+        final appended = await _tryAppendAutoplayContinuation();
+        if (!appended) return;
+        nextOrderIndex = _normalizeOrderIndex(_currentOrderIndex + 1);
+        if (nextOrderIndex == null) return;
       }
 
       _currentOrderIndex = nextOrderIndex;
@@ -1487,6 +1616,7 @@ class PlaybackModel extends ChangeNotifier {
     _sessionHeartbeat?.cancel();
     _positionAutosaveTimer?.cancel();
     _volumeCommandThrottle?.cancel();
+    _sleepTimer?.cancel();
     unawaited(_discordRpc?.clearPresence());
     unawaited(_discordRpc?.dispose());
     super.dispose();

@@ -10,7 +10,15 @@ import 'package:phamijam/services/update_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 
-enum _UpdateState { idle, checking, upToDate, available, downloading, installing, error }
+enum _UpdateState {
+  idle,
+  checking,
+  upToDate,
+  available,
+  downloading,
+  installing,
+  error,
+}
 
 const List<Color> _accentColorPresets = [
   Color(0xFFE53935),
@@ -440,6 +448,105 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildAutoplayCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Consumer<SettingsProvider>(
+      builder: (context, settings, _) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.autorenew_rounded, color: colorScheme.onSurface),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Autoplay',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Keep playing similar songs when your queue ends',
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: settings.autoplayEnabled,
+                onChanged: settings.setAutoplayEnabled,
+                activeThumbColor: colorScheme.onPrimary,
+                inactiveThumbColor: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDiscordRichPresenceCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Consumer<SettingsProvider>(
+      builder: (context, settings, _) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.online_prediction_rounded,
+                color: colorScheme.onSurface,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Discord Rich Presence',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Show what you\'re listening to on your Discord status',
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: settings.discordRichPresenceEnabled,
+                onChanged: settings.setDiscordRichPresenceEnabled,
+                activeThumbColor: colorScheme.onPrimary,
+                inactiveThumbColor: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildLibraryCard() {
     final colorScheme = Theme.of(context).colorScheme;
     return Material(
@@ -685,7 +792,6 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                         ),
                         IconButton(
-                          tooltip: 'Reset',
                           onPressed: () => editedSongs.removeTrim(trim.videoId),
                           icon: Icon(
                             Icons.restart_alt_rounded,
@@ -884,6 +990,10 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildSearchEngineCard(),
         const SizedBox(height: 10),
         _buildPlayerCard(),
+        const SizedBox(height: 10),
+        _buildAutoplayCard(),
+        const SizedBox(height: 10),
+        _buildDiscordRichPresenceCard(),
         const SizedBox(height: 10),
         _buildLibraryCard(),
         const SizedBox(height: 10),

@@ -1,7 +1,7 @@
 name: phamijam
 description: "A new Flutter project."
 publish_to: "none"
-version: 1.0.6+1
+version: 1.0.7+1
 
 environment:
   sdk: ^3.10.8
@@ -35,6 +35,10 @@ dependencies:
   shared_preferences: ^2.3.3
   path_provider: ^2.1.5
   package_info_plus: ^9.0.1
+  url_launcher: ^6.3.2
+  win32: ^5.15.0
+  ffi: ^2.2.0
+  win32_registry: ^2.1.0
 
 dev_dependencies:
   flutter_test:

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -13,15 +15,19 @@ import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/providers/theme_provider.dart';
+import 'package:phamijam/services/deep_link_service.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/protocol_handler_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await dotenv.load(fileName: '.env');
+  unawaited(ProtocolHandlerService.registerIfNeeded());
+  final pendingDeepLink = DeepLinkService.parseLaunchArgs(args);
   runApp(
     MultiProvider(
       providers: [
@@ -34,13 +40,16 @@ void main() async {
         ChangeNotifierProvider(create: (_) => SavedPlaylistsProvider()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
       ],
-      child: const MyApp(),
+      child: MyApp(pendingDeepLink: pendingDeepLink),
     ),
   );
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({super.key, this.pendingDeepLink});
+
+  final DeepLinkTarget? pendingDeepLink;
+
   @override
   Widget build(BuildContext context) {
     final themeProvider = context.watch<ThemeProvider>();
@@ -60,7 +69,7 @@ class MyApp extends StatelessWidget {
           }
 
           if (snapshot.hasData) {
-            return const Home();
+            return Home(pendingDeepLink: pendingDeepLink);
           }
 
           return const Login();

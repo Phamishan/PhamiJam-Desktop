@@ -268,7 +268,6 @@ class _LyricsSheetState extends State<LyricsSheet> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            tooltip: 'Show lyrics earlier',
             onPressed: () => _adjustOffset(-250),
             icon: Icon(Icons.remove_rounded, color: onSheet),
           ),
@@ -279,7 +278,6 @@ class _LyricsSheetState extends State<LyricsSheet> {
             style: TextStyle(color: onSheet.withValues(alpha: 0.7)),
           ),
           IconButton(
-            tooltip: 'Show lyrics later',
             onPressed: () => _adjustOffset(250),
             icon: Icon(Icons.add_rounded, color: onSheet),
           ),

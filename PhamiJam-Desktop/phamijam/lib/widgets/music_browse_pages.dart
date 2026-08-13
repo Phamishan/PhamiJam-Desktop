@@ -8,6 +8,7 @@ import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/enums.dart';
@@ -55,11 +56,20 @@ Widget _wrapSongTileWithContextMenu({
           icon: const Icon(Icons.content_cut_rounded),
           label: const Text('Edit song'),
         ),
+        MenuItem<String>(
+          value: 'share',
+          icon: const Icon(Icons.share_rounded),
+          label: const Text('Share'),
+        ),
       ],
     ),
     onItemSelected: (value) {
       if (videoId.isEmpty) {
         AppFlushbar.error(context, 'This song is unavailable.');
+        return;
+      }
+      if (value == 'share') {
+        ShareLinkService.shareSong(context, videoId);
         return;
       }
       if (value == 'play_next') {

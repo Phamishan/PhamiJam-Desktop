@@ -26,6 +26,8 @@ class PlaybackInterface extends StatefulWidget {
   final VoidCallback onQueuePressed;
   final VoidCallback? onArtistTap;
   final VoidCallback? onLyricsPressed;
+  final VoidCallback? onSleepTimerPressed;
+  final bool hasSleepTimer;
 
   const PlaybackInterface({
     super.key,
@@ -50,6 +52,8 @@ class PlaybackInterface extends StatefulWidget {
     required this.onQueuePressed,
     this.onArtistTap,
     this.onLyricsPressed,
+    this.onSleepTimerPressed,
+    this.hasSleepTimer = false,
   });
 
   @override
@@ -281,11 +285,6 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                       ),
                     ),
                     IconButton(
-                      tooltip: switch (widget.repeatMode) {
-                        PlayerRepeatMode.off => 'Repeat off',
-                        PlayerRepeatMode.all => 'Repeat all',
-                        PlayerRepeatMode.one => 'Repeat one',
-                      },
                       onPressed: widget.onCycleRepeat,
                       icon: Icon(switch (widget.repeatMode) {
                         PlayerRepeatMode.off => Icons.repeat_rounded,
@@ -293,6 +292,16 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                         PlayerRepeatMode.one => Icons.repeat_one_on_rounded,
                       }, color: colorScheme.primary),
                     ),
+                    if (widget.onSleepTimerPressed != null)
+                      IconButton(
+                        onPressed: widget.onSleepTimerPressed,
+                        icon: Icon(
+                          widget.hasSleepTimer
+                              ? Icons.bedtime_rounded
+                              : Icons.bedtime_outlined,
+                          color: colorScheme.primary,
+                        ),
+                      ),
                   ],
                 ),
                 // Volume controls (right)

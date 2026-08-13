@@ -95,12 +95,16 @@ class YoutubePlaylistService {
     final contentDetails = Map<String, dynamic>.from(
       item['contentDetails'] as Map? ?? const <String, dynamic>{},
     );
+    final status = Map<String, dynamic>.from(
+      item['status'] as Map? ?? const <String, dynamic>{},
+    );
 
     return <String, dynamic>{
       'playlistId': item['id'],
       'title': (snippet['title'] as String?) ?? 'Untitled playlist',
       'itemCount': (contentDetails['itemCount'] as num?)?.toInt() ?? 0,
       'thumbnailUrl': _bestThumbnailUrl(snippet),
+      'privacyStatus': (status['privacyStatus'] as String?) ?? 'public',
     };
   }
 
@@ -112,7 +116,7 @@ class YoutubePlaylistService {
       final uri = Uri.parse('https://www.googleapis.com/youtube/v3/playlists')
           .replace(
             queryParameters: {
-              'part': 'snippet,contentDetails',
+              'part': 'snippet,contentDetails,status',
               'mine': 'true',
               'maxResults': '50',
               'pageToken': ?pageToken,
@@ -139,7 +143,10 @@ class YoutubePlaylistService {
   ) async {
     final uri = Uri.parse('https://www.googleapis.com/youtube/v3/playlists')
         .replace(
-          queryParameters: {'part': 'snippet,contentDetails', 'id': playlistId},
+          queryParameters: {
+            'part': 'snippet,contentDetails,status',
+            'id': playlistId,
+          },
         );
     final response = await _getWithAutoRefresh(uri);
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -230,7 +237,10 @@ class YoutubePlaylistService {
   ) async {
     final metadataUri =
         Uri.parse('https://www.googleapis.com/youtube/v3/playlists').replace(
-          queryParameters: {'part': 'snippet,contentDetails', 'id': playlistId},
+          queryParameters: {
+            'part': 'snippet,contentDetails,status',
+            'id': playlistId,
+          },
         );
     final metadataResponse = await _getWithAutoRefresh(metadataUri);
     if (metadataResponse.statusCode < 200 ||
@@ -253,6 +263,11 @@ class YoutubePlaylistService {
     final playlistContentDetails = firstMetadataItem is Map
         ? Map<String, dynamic>.from(
             firstMetadataItem['contentDetails'] as Map? ?? const {},
+          )
+        : const <String, dynamic>{};
+    final playlistStatus = firstMetadataItem is Map
+        ? Map<String, dynamic>.from(
+            firstMetadataItem['status'] as Map? ?? const {},
           )
         : const <String, dynamic>{};
 
@@ -328,6 +343,7 @@ class YoutubePlaylistService {
           (playlistContentDetails['itemCount'] as num?)?.toInt() ??
           songs.length,
       'durationSeconds': totalDurationSeconds,
+      'privacyStatus': playlistStatus['privacyStatus'] as String?,
       'songs': songs,
     };
   }

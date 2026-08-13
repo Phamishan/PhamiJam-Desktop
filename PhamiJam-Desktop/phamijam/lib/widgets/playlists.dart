@@ -223,6 +223,9 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     final contentDetails = Map<String, dynamic>.from(
       item['contentDetails'] as Map? ?? const <String, dynamic>{},
     );
+    final status = Map<String, dynamic>.from(
+      item['status'] as Map? ?? const <String, dynamic>{},
+    );
     final thumbnailsMap = Map<String, dynamic>.from(
       snippet['thumbnails'] as Map? ?? const <String, dynamic>{},
     );
@@ -241,6 +244,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       'author': (snippet['channelTitle'] as String?) ?? 'Unknown Author',
       'itemCount': '${contentDetails['itemCount'] ?? 0}',
       'playlistId': item['id'],
+      'privacyStatus': (status['privacyStatus'] as String?) ?? 'public',
       'thumbnails': thumbnailList,
     };
   }
@@ -248,7 +252,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   Future<List<Map<String, dynamic>>> _fetchMinePlaylistsViaYouTubeApi() async {
     final response = await _youtubeGetWithAutoRefresh(
       Uri.parse(
-        'https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&mine=true&maxResults=50',
+        'https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails,status&mine=true&maxResults=50',
       ),
     );
 
@@ -520,6 +524,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     required String playlistId,
     required String title,
     required String description,
+    String? privacyStatus,
   }) async {
     final ensuredToken = await _getAccessToken(forceRefresh: false);
     if (ensuredToken.isEmpty) {
@@ -529,10 +534,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     }
 
     final response = await _youtubePutWithAutoRefresh(
-      Uri.parse('https://www.googleapis.com/youtube/v3/playlists?part=snippet'),
+      Uri.parse(
+        'https://www.googleapis.com/youtube/v3/playlists?part=${privacyStatus == null ? 'snippet' : 'snippet,status'}',
+      ),
       body: jsonEncode({
         'id': playlistId,
         'snippet': {'title': title, 'description': description},
+        if (privacyStatus != null) 'status': {'privacyStatus': privacyStatus},
       }),
     );
 
@@ -802,10 +810,12 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     required String playlistId,
     required String initialTitle,
     required String initialDescription,
+    required String initialPrivacyStatus,
   }) {
     final formKey = GlobalKey<FormState>();
     String title = initialTitle;
     String description = initialDescription;
+    String privacyStatus = initialPrivacyStatus;
     bool isSaving = false;
 
     showDialog(
@@ -815,6 +825,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
           title: const Text('Edit Playlist'),
           content: StatefulBuilder(
             builder: (context, setState) {
+              final colorScheme = Theme.of(context).colorScheme;
               return SingleChildScrollView(
                 child: Form(
                   key: formKey,
@@ -836,6 +847,44 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                           labelText: 'Description',
                         ),
                         onChanged: (value) => description = value,
+                      ),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Visibility',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(
+                            value: 'private',
+                            label: Text('Private'),
+                            icon: Icon(Icons.lock_rounded),
+                          ),
+                          ButtonSegment(
+                            value: 'unlisted',
+                            label: Text('Unlisted'),
+                            icon: Icon(Icons.link_rounded),
+                          ),
+                          ButtonSegment(
+                            value: 'public',
+                            label: Text('Public'),
+                            icon: Icon(Icons.public_rounded),
+                          ),
+                        ],
+                        selected: {privacyStatus},
+                        showSelectedIcon: false,
+                        onSelectionChanged: (selection) =>
+                            setState(() => privacyStatus = selection.first),
+                        style: SegmentedButton.styleFrom(
+                          backgroundColor: colorScheme.surfaceContainerHigh,
+                          foregroundColor: colorScheme.onSurfaceVariant,
+                          selectedBackgroundColor: colorScheme.primary,
+                          selectedForegroundColor: colorScheme.onPrimary,
+                        ),
                       ),
                       const SizedBox(height: 10),
                     ],
@@ -868,6 +917,9 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                           playlistId: playlistId,
                           title: title.trim(),
                           description: description.trim(),
+                          privacyStatus: privacyStatus == initialPrivacyStatus
+                              ? null
+                              : privacyStatus,
                         );
                         if (!mounted) return;
 
@@ -880,6 +932,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                 playlistId) {
                               playlist['title'] = title.trim();
                               playlist['description'] = description.trim();
+                              playlist['privacyStatus'] = privacyStatus;
                               break;
                             }
                           }
@@ -1179,6 +1232,10 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                           playlistId: playlistId,
                                           initialTitle: title,
                                           initialDescription: description,
+                                          initialPrivacyStatus:
+                                              (playlist['privacyStatus']
+                                                  as String?) ??
+                                              'public',
                                         );
                                       },
                                     ),
@@ -1315,7 +1372,6 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                   Icons.bookmark_remove_outlined,
                   color: colorScheme.onSurface,
                 ),
-                tooltip: 'Remove from saved',
                 onPressed: playlistId.isEmpty
                     ? null
                     : () => context.read<SavedPlaylistsProvider>().unsave(

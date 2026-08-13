@@ -113,6 +113,27 @@ class YoutubeDataService {
     };
   }
 
+  static Future<Map<String, dynamic>?> fetchVideoById(String videoId) async {
+    if (videoId.isEmpty) return null;
+    final data = await _get('videos', {
+      'part': 'snippet',
+      'id': videoId,
+    });
+    final items = data['items'] as List? ?? [];
+    if (items.isEmpty) return null;
+
+    final map = items.first as Map<String, dynamic>;
+    final snippet = map['snippet'] as Map<String, dynamic>?;
+
+    return <String, dynamic>{
+      'videoId': videoId,
+      'title': snippet?['title'] as String? ?? 'Unknown video',
+      'artist': snippet?['channelTitle'] as String? ?? 'YouTube',
+      'artistId': snippet?['channelId'] as String? ?? '',
+      'thumbnailUrl': _bestThumbnail(snippet)?['url'] as String? ?? '',
+    };
+  }
+
   static Future<String?> _fetchUploadsPlaylistId(String channelId) async {
     final data = await _get('channels', {
       'part': 'contentDetails',

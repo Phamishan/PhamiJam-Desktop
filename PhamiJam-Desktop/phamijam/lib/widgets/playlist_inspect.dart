@@ -10,6 +10,7 @@ import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
@@ -21,6 +22,7 @@ class _PlaylistInspectCacheEntry {
     required this.playlistSongCount,
     required this.playlistDurationSeconds,
     required this.resolvedPlaylistTitle,
+    required this.playlistPrivacyStatus,
     required this.errorMessage,
   });
 
@@ -29,6 +31,7 @@ class _PlaylistInspectCacheEntry {
   final int? playlistSongCount;
   final int playlistDurationSeconds;
   final String? resolvedPlaylistTitle;
+  final String? playlistPrivacyStatus;
   final String? errorMessage;
 }
 
@@ -70,6 +73,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   int? _playlistSongCount;
   int _playlistDurationSeconds = 0;
   String? _resolvedPlaylistTitle;
+  String? _playlistPrivacyStatus;
   String? _currentlyLoadingVideoId;
   String _songSearchQuery = '';
   late final TextEditingController _songSearchController;
@@ -223,6 +227,18 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildShareButton() {
+    if (_playlistPrivacyStatus == 'private') return const SizedBox.shrink();
+    final colorScheme = Theme.of(context).colorScheme;
+    final playlistId = _playlistId;
+    return IconButton(
+      onPressed: playlistId == null
+          ? null
+          : () => ShareLinkService.sharePlaylist(context, playlistId),
+      icon: Icon(Icons.share_rounded, color: colorScheme.onSurface),
     );
   }
 
@@ -407,6 +423,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         _playlistSongCount = cached.playlistSongCount;
         _playlistDurationSeconds = cached.playlistDurationSeconds;
         _resolvedPlaylistTitle = cached.resolvedPlaylistTitle;
+        _playlistPrivacyStatus = cached.playlistPrivacyStatus;
         _errorMessage = cached.errorMessage;
         _isLoadingSongs = false;
       });
@@ -421,6 +438,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       _playlistSongCount = null;
       _playlistDurationSeconds = 0;
       _resolvedPlaylistTitle = null;
+      _playlistPrivacyStatus = null;
     });
 
     try {
@@ -455,6 +473,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         _playlistSongCount =
             (playlistData['songCount'] as int?) ?? songsWithDurations.length;
         _playlistDurationSeconds = totalDurationSeconds;
+        _playlistPrivacyStatus = playlistData['privacyStatus'] as String?;
         final resolvedTitle = playlistData['title'] as String?;
         if (resolvedTitle != null && resolvedTitle.isNotEmpty) {
           _resolvedPlaylistTitle = resolvedTitle;
@@ -474,6 +493,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         playlistSongCount: _playlistSongCount,
         playlistDurationSeconds: _playlistDurationSeconds,
         resolvedPlaylistTitle: _resolvedPlaylistTitle,
+        playlistPrivacyStatus: _playlistPrivacyStatus,
         errorMessage: null,
       );
     } catch (error) {
@@ -488,6 +508,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         playlistSongCount: _playlistSongCount,
         playlistDurationSeconds: _playlistDurationSeconds,
         resolvedPlaylistTitle: _resolvedPlaylistTitle,
+        playlistPrivacyStatus: _playlistPrivacyStatus,
         errorMessage: _errorMessage,
       );
     } finally {
@@ -721,6 +742,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                 ),
               ),
               _buildPinButton(),
+              _buildShareButton(),
               const SizedBox(width: 12),
               ElevatedButton.icon(
                 onPressed: () => _loadSongs(forceRefresh: true),
@@ -775,6 +797,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
               ),
             ),
             _buildPinButton(),
+            _buildShareButton(),
             const SizedBox(width: 12),
             ElevatedButton.icon(
               onPressed: () => _loadSongs(forceRefresh: true),
@@ -916,6 +939,11 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                 icon: const Icon(Icons.content_cut_rounded),
                                 label: const Text('Edit song'),
                               ),
+                              MenuItem<String>(
+                                value: 'share',
+                                icon: const Icon(Icons.share_rounded),
+                                label: const Text('Share'),
+                              ),
                               if (_isOwnedByUser)
                                 MenuItem<String>(
                                   value: 'remove_from_playlist',
@@ -973,6 +1001,15 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                               );
                             } else if (value == 'remove_from_playlist') {
                               _removeSongFromPlaylist(videoId, title);
+                            } else if (value == 'share') {
+                              if (videoId.isEmpty) {
+                                AppFlushbar.error(
+                                  context,
+                                  'This song is unavailable.',
+                                );
+                                return;
+                              }
+                              ShareLinkService.shareSong(context, videoId);
                             }
                           },
                           child: Container(

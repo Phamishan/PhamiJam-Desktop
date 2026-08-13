@@ -47,6 +47,13 @@
   - Redesigned artist page
   - Redesigned home page
   - Added repeat all/one modes for desktop (matching mobile)
+- 1.0.7 - 13/08/2026
+  - Added a setting to change a playlist's visibility
+  - Added shareable link for songs and playlists
+  - Added a sleep timer
+  - Added autoplay
+  - Added a Discord Rich Presence toggle setting
+  - Redesigned home page
 
 ## Screenshots:
 

@@ -11,15 +11,18 @@ import 'package:phamijam/components/playback_interface.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/remote_session_banner.dart';
 import 'package:phamijam/components/sidebar.dart';
+import 'package:phamijam/components/sleep_timer_dialog.dart';
 import 'package:phamijam/models/play_event.dart';
 import 'package:phamijam/providers/edited_songs_provider.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/services/deep_link_service.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/widgets/converter.dart';
 import 'package:phamijam/widgets/home_playlist_card.dart';
@@ -46,7 +49,9 @@ class _YouTubeResolvedStreams {
 }
 
 class Home extends StatefulWidget {
-  const Home({super.key});
+  const Home({super.key, this.pendingDeepLink});
+
+  final DeepLinkTarget? pendingDeepLink;
 
   @override
   State<Home> createState() => _HomeState();
@@ -56,6 +61,7 @@ class _HomeState extends State<Home> {
   late final TextEditingController _searchController;
   late final PlaybackModel _playback;
   late final DownloadsProvider _downloads;
+  late final SettingsProvider _settings;
   late final VideoController _sidebarVideoController;
   Future<YTMusic>? _ytmusicFuture;
   YTMusic? _ytmusic;
@@ -95,6 +101,15 @@ class _HomeState extends State<Home> {
     _playback.bindEditedSongsLookup(
       context.read<EditedSongsProvider>().trimFor,
     );
+    _playback.bindAutoplay(
+      isEnabled: () => context.read<SettingsProvider>().autoplayEnabled,
+      ensureYtMusic: _ensureYtMusic,
+    );
+    _settings = context.read<SettingsProvider>();
+    _playback.setDiscordRichPresenceEnabled(
+      _settings.discordRichPresenceEnabled,
+    );
+    _settings.addListener(_handleSettingsChanged);
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
     unawaited(context.read<LikedSongsProvider>().refresh());
@@ -102,6 +117,10 @@ class _HomeState extends State<Home> {
     unawaited(context.read<EditedSongsProvider>().refresh());
     unawaited(context.read<SavedPlaylistsProvider>().refresh());
     unawaited(context.read<SettingsProvider>().refreshHiddenPlaylists());
+    final pendingDeepLink = widget.pendingDeepLink;
+    if (pendingDeepLink != null && FirebaseAuth.instance.currentUser != null) {
+      unawaited(_handleDeepLink(pendingDeepLink));
+    }
     _playback.addListener(_handlePlaybackChanged);
   }
 
@@ -577,6 +596,40 @@ class _HomeState extends State<Home> {
       _selectedTab = tab;
       _selectedTabExtra = extra;
     });
+  }
+
+  Future<void> _handleDeepLink(DeepLinkTarget target) async {
+    try {
+      if (target.type == DeepLinkType.song) {
+        final video = await YoutubeDataService.fetchVideoById(target.id);
+        if (video == null || !mounted) return;
+        await _playYouTubeSelection(
+          videoId: target.id,
+          title: video['title'] as String? ?? '',
+          artist: video['artist'] as String? ?? '',
+          thumbnailUrl: video['thumbnailUrl'] as String? ?? '',
+          artistId: video['artistId'] as String? ?? '',
+        );
+        return;
+      }
+
+      final playlist = await YoutubePlaylistService.fetchPlaylistMetadata(
+        target.id,
+      );
+      if (playlist == null || !mounted) return;
+      _onSidebarTabSelected(
+        'playlist_inspect',
+        extra: {
+          'playlistId': target.id,
+          'playlistTitle': playlist['title'],
+          'thumbnailUrl': playlist['thumbnailUrl'],
+        },
+      );
+    } catch (error) {
+      if (mounted) {
+        AppFlushbar.error(context, "Couldn't open the shared link.");
+      }
+    }
   }
 
   Widget _buildHomeSectionTitle(String title, {VoidCallback? onSeeAll}) {
@@ -1153,10 +1206,17 @@ class _HomeState extends State<Home> {
   @override
   void dispose() {
     _playback.removeListener(_handlePlaybackChanged);
+    _settings.removeListener(_handleSettingsChanged);
     _youtubeExplode.close();
     _ytmusic?.close();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _handleSettingsChanged() {
+    _playback.setDiscordRichPresenceEnabled(
+      _settings.discordRichPresenceEnabled,
+    );
   }
 
   Future<void> _checkCurrentUser() async {
@@ -1432,6 +1492,10 @@ class _HomeState extends State<Home> {
                       'backExtra': _selectedTabExtra,
                     },
                   ),
+            onSleepTimerPressed: remote != null
+                ? null
+                : () => showSleepTimerDialog(context),
+            hasSleepTimer: playback.hasSleepTimer,
           );
         },
       ),
