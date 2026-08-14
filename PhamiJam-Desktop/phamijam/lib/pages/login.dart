@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in_all_platforms/google_sign_in_all_platforms.dart';
+import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
+import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/widgets/playlists.dart';
 
@@ -114,6 +116,8 @@ class _LoginState extends State<Login> {
 
   Future<void> _signOut() async {
     await GoogleAuthService.signOut();
+    await GoogleDriveAuthService.signOut();
+    await DriveFolderService.clearFolderId();
     await _auth.signOut();
     PlaylistsPage.resetCache();
     if (!mounted) return;

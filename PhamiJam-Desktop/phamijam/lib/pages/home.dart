@@ -21,7 +21,9 @@ import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/deep_link_service.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
+import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
@@ -1240,6 +1242,8 @@ class _HomeState extends State<Home> {
       _playback.clearPlaylistQueue();
 
       await GoogleAuthService.signOut();
+      await GoogleDriveAuthService.signOut();
+      await DriveFolderService.clearFolderId();
       await _auth.signOut();
       PlaylistsPage.resetCache();
       if (!mounted) return;

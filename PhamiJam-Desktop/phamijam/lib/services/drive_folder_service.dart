@@ -18,10 +18,32 @@ class DriveFolderService {
     return folderId is String && folderId.isNotEmpty ? folderId : null;
   }
 
-  static Future<void> setFolderId(String folderId) async {
+  static Future<void> setFolderId(
+    String folderId, {
+    bool requiresAuth = false,
+  }) async {
     final doc = _userDoc;
     if (doc == null || folderId.isEmpty) return;
-    await doc.set({'driveFolderId': folderId}, SetOptions(merge: true));
+    await doc.set({
+      'driveFolderId': folderId,
+      'driveFolderRequiresAuth': requiresAuth,
+    }, SetOptions(merge: true));
+  }
+
+  static Future<bool> getRequiresAuth() async {
+    final doc = _userDoc;
+    if (doc == null) return false;
+    final snapshot = await doc.get();
+    return snapshot.data()?['driveFolderRequiresAuth'] == true;
+  }
+
+  static Future<void> clearFolderId() async {
+    final doc = _userDoc;
+    if (doc == null) return;
+    await doc.set({
+      'driveFolderId': FieldValue.delete(),
+      'driveFolderRequiresAuth': FieldValue.delete(),
+    }, SetOptions(merge: true));
   }
 
   static final RegExp _folderPathPattern = RegExp(r'/folders/([\w-]+)');

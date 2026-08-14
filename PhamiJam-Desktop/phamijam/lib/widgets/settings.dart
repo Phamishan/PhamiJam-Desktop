@@ -96,10 +96,14 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Google Drive folder'),
         content: const Text(
-          'The Google Drive feature allows you to connect a folder in your Google Drive to PhamiJam. \n\n'
-          'Create a folder named "PhamiJam" in your Google Drive and drop '
-          "audio files into it using Drive's own apps. Connect it here once, "
-          'and PhamiJam reads that folder to play your songs.',
+          'Connect a folder in your Google Drive to play your own music in '
+          "PhamiJam. Drop audio files into that folder using Drive's own "
+          'apps, and PhamiJam reads them to build your library.\n\n'
+          'There are two ways to connect:\n\n'
+          '• Create a folder for me - PhamiJam finds or creates a folder '
+          'named "PhamiJam" in your Drive automatically.\n\n'
+          '• Insert a share link - paste a link to a folder you already '
+          'have, shared as "Anyone with the link".',
         ),
         actions: [
           TextButton(

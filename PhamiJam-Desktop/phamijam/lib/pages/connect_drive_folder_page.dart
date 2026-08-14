@@ -2,13 +2,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:webview_windows/webview_windows.dart';
-
-const String _pickerUrl =
-    'https://phamijam-share.phamijam.workers.dev/drive-picker';
 
 enum _ConnectMode { chooser, pastedLink, oauth }
 
@@ -28,11 +26,12 @@ class ConnectDriveFolderPage extends StatefulWidget {
 
 class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
   final WebviewController _controller = WebviewController();
-  StreamSubscription<dynamic>? _webMessageSub;
   StreamSubscription<String>? _urlSub;
   _ConnectMode _mode = _ConnectMode.chooser;
   bool _isWebviewReady = false;
+  bool _webviewInitStarted = false;
   bool _exchangingCode = false;
+  bool _settingUpFolder = false;
   String? _errorMessage;
   String? _lastHandledRedirect;
 
@@ -57,14 +56,10 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
     }
 
     try {
+      _webviewInitStarted = true;
       await _controller.initialize();
       await _controller.setBackgroundColor(Colors.transparent);
       await _controller.setPopupWindowPolicy(WebviewPopupWindowPolicy.deny);
-      _webMessageSub = _controller.webMessage.listen((message) {
-        if (message is String && message.isNotEmpty) {
-          _handleFolderPicked(message);
-        }
-      });
       _urlSub = _controller.url.listen(_handleUrlChanged);
       await _controller.loadUrl(
         GoogleDriveAuthService.buildAuthorizationUrl().toString(),
@@ -111,24 +106,34 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
       return;
     }
 
-    setState(() => _exchangingCode = false);
-    await _controller.loadUrl(
-      '$_pickerUrl#token=${Uri.encodeComponent(token)}',
-    );
-  }
+    setState(() {
+      _exchangingCode = false;
+      _settingUpFolder = true;
+    });
 
-  Future<void> _handleFolderPicked(String folderId) async {
-    await DriveFolderService.setFolderId(folderId);
-    if (!mounted) return;
-    Navigator.of(context).pop(true);
+    try {
+      final folderId = await GoogleDriveService.findOrCreatePhamiJamFolder(
+        token,
+      );
+      await DriveFolderService.setFolderId(folderId, requiresAuth: true);
+      if (!mounted) return;
+      AppFlushbar.success(context, 'Google Drive folder connected.');
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _settingUpFolder = false;
+        _errorMessage = "Couldn't set up your PhamiJam Drive folder: $error";
+      });
+    }
   }
 
   Future<void> _connectByLink() async {
     final folderId = DriveFolderService.extractFolderId(_linkController.text);
     if (folderId == null) {
-      setState(
-        () => _linkError = "That doesn't look like a Drive folder link.",
-      );
+      const message = "That doesn't look like a Drive folder link.";
+      setState(() => _linkError = message);
+      AppFlushbar.error(context, message);
       return;
     }
 
@@ -140,12 +145,14 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
     final accessible = await GoogleDriveService.canAccessFolder(folderId);
     if (!mounted) return;
     if (!accessible) {
+      const message =
+          'Couldn\'t access that folder. Make sure it\'s shared as '
+          '"Anyone with the link".';
       setState(() {
         _connectingByLink = false;
-        _linkError =
-            'Couldn\'t access that folder. Make sure it\'s shared as '
-            '"Anyone with the link".';
+        _linkError = message;
       });
+      AppFlushbar.error(context, message);
       return;
     }
 
@@ -156,9 +163,10 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
 
   @override
   void dispose() {
-    _webMessageSub?.cancel();
     _urlSub?.cancel();
-    _controller.dispose();
+    if (_webviewInitStarted) {
+      _controller.dispose();
+    }
     _linkController.dispose();
     super.dispose();
   }
@@ -186,20 +194,25 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
                 fontSize: 18,
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Pick a folder from your Drive, or paste a share link if '
-              "you've already connected one on another device.",
-              textAlign: TextAlign.center,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
             const SizedBox(height: 24),
             SizedBox(
               width: 280,
               child: FilledButton.icon(
                 onPressed: _startOAuthFlow,
                 icon: const Icon(Icons.add_to_drive_rounded),
-                label: const Text('Choose a folder'),
+                label: const Text('Create a folder for me'),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6, bottom: 6),
+              child: Text(
+                'Let PhamiJam create a folder in your Drive for you, that '
+                'you can use to store and play music.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -209,7 +222,19 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
                 onPressed: () =>
                     setState(() => _mode = _ConnectMode.pastedLink),
                 icon: const Icon(Icons.link_rounded),
-                label: const Text('I already have a share link'),
+                label: const Text('Insert a share link'),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Insert a share link from Google Drive, which lets the app '
+                'see the contents of that folder.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
               ),
             ),
           ],
@@ -277,26 +302,45 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
 
   Widget _buildOAuthFlow() {
     final colorScheme = Theme.of(context).colorScheme;
-    return Stack(
-      children: [
-        if (_errorMessage != null)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(
-                _errorMessage!,
+    if (_errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            _errorMessage!,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: colorScheme.error),
+          ),
+        ),
+      );
+    }
+
+    if (_exchangingCode || _settingUpFolder) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(
+                _settingUpFolder
+                    ? 'Setting up your PhamiJam folder…'
+                    : 'Finishing sign-in…',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: colorScheme.error),
               ),
-            ),
-          )
-        else if (!_isWebviewReady)
-          const Center(child: CircularProgressIndicator())
-        else
-          Webview(_controller),
-        if (_exchangingCode) const Center(child: CircularProgressIndicator()),
-      ],
-    );
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_isWebviewReady) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Webview(_controller);
   }
 
   @override
