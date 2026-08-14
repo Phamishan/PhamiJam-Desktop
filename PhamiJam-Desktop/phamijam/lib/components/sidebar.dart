@@ -3,13 +3,20 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/remote_control_badge.dart';
+import 'package:phamijam/widgets/scrim_icon_button.dart';
 import 'package:provider/provider.dart';
 
 class Sidebar extends StatelessWidget {
-  const Sidebar({super.key, required this.onTabSelected, this.videoCover});
+  const Sidebar({
+    super.key,
+    required this.onTabSelected,
+    this.videoCover,
+    this.onOpenFullscreenVideo,
+  });
 
   final ValueChanged<String> onTabSelected;
   final Widget? videoCover;
+  final VoidCallback? onOpenFullscreenVideo;
 
   @override
   Widget build(BuildContext context) {
@@ -122,6 +129,12 @@ class Sidebar extends StatelessWidget {
               final engine = data.$2;
               final isRemoteControlling = data.$3;
               final remoteDeviceName = data.$4;
+              final showingVideo =
+                  engine == PlaybackEngine.youtube && videoCover != null;
+              final canOpenFullscreen =
+                  showingVideo &&
+                  !isRemoteControlling &&
+                  onOpenFullscreenVideo != null;
               return Container(
                 margin: EdgeInsets.only(bottom: 10),
                 width: 160,
@@ -134,9 +147,7 @@ class Sidebar extends StatelessWidget {
                       child: SizedBox(
                         width: 160,
                         height: 160,
-                        child:
-                            engine == PlaybackEngine.youtube &&
-                                videoCover != null
+                        child: showingVideo
                             ? FittedBox(
                                 fit: BoxFit.cover,
                                 child: SizedBox(
@@ -168,6 +179,15 @@ class Sidebar extends StatelessWidget {
                         child: RemoteControlBadge(
                           deviceName: remoteDeviceName ?? 'device',
                           size: 28,
+                        ),
+                      ),
+                    if (canOpenFullscreen)
+                      Positioned(
+                        right: 6,
+                        top: 6,
+                        child: ScrimIconButton(
+                          icon: Icons.fullscreen_rounded,
+                          onTap: onOpenFullscreenVideo!,
                         ),
                       ),
                   ],

@@ -11,6 +11,31 @@ import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:provider/provider.dart';
 
+enum _LikedSort {
+  custom,
+  dateAddedNewest,
+  dateAddedOldest,
+  durationShort,
+  durationLong,
+}
+
+extension on _LikedSort {
+  String get label {
+    switch (this) {
+      case _LikedSort.custom:
+        return 'Default order';
+      case _LikedSort.dateAddedNewest:
+        return 'Recently added';
+      case _LikedSort.dateAddedOldest:
+        return 'Oldest added';
+      case _LikedSort.durationShort:
+        return 'Duration (shortest first)';
+      case _LikedSort.durationLong:
+        return 'Duration (longest first)';
+    }
+  }
+}
+
 class LikedPage extends StatefulWidget {
   final void Function(String artistId, String artistName)? onOpenArtist;
 
@@ -23,6 +48,9 @@ class LikedPage extends StatefulWidget {
 class _LikedPageState extends State<LikedPage> {
   String? _currentlyLoadingVideoId;
   late final PlaybackModel _playback;
+  bool _selectionMode = false;
+  final Set<String> _selectedVideoIds = {};
+  _LikedSort _sort = _LikedSort.custom;
 
   @override
   void initState() {
@@ -32,6 +60,90 @@ class _LikedPageState extends State<LikedPage> {
     if (!liked.hasLoadedOnce && !liked.isLoading) {
       liked.refresh();
     }
+  }
+
+  DateTime? _parseAddedAt(Object? value) {
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  int _compareAddedAt(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b, {
+    required bool newestFirst,
+  }) {
+    final da = _parseAddedAt(a['addedAt']);
+    final db = _parseAddedAt(b['addedAt']);
+    if (da == null && db == null) return 0;
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return newestFirst ? db.compareTo(da) : da.compareTo(db);
+  }
+
+  List<Map<String, dynamic>> _applySort(List<Map<String, dynamic>> songs) {
+    if (_sort == _LikedSort.custom) return songs;
+    final sorted = List<Map<String, dynamic>>.from(songs);
+    switch (_sort) {
+      case _LikedSort.custom:
+        break;
+      case _LikedSort.dateAddedNewest:
+        sorted.sort((a, b) => _compareAddedAt(a, b, newestFirst: true));
+      case _LikedSort.dateAddedOldest:
+        sorted.sort((a, b) => _compareAddedAt(a, b, newestFirst: false));
+      case _LikedSort.durationShort:
+        sorted.sort(
+          (a, b) => ((a['durationSeconds'] as int?) ?? 0).compareTo(
+            (b['durationSeconds'] as int?) ?? 0,
+          ),
+        );
+      case _LikedSort.durationLong:
+        sorted.sort(
+          (a, b) => ((b['durationSeconds'] as int?) ?? 0).compareTo(
+            (a['durationSeconds'] as int?) ?? 0,
+          ),
+        );
+    }
+    return sorted;
+  }
+
+  void _enterSelectionMode(String videoId) {
+    if (videoId.isEmpty) return;
+    setState(() {
+      _selectionMode = true;
+      _selectedVideoIds
+        ..clear()
+        ..add(videoId);
+    });
+  }
+
+  void _toggleSongSelection(String videoId) {
+    if (videoId.isEmpty) return;
+    setState(() {
+      if (!_selectedVideoIds.remove(videoId)) {
+        _selectedVideoIds.add(videoId);
+      }
+      if (_selectedVideoIds.isEmpty) _selectionMode = false;
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedVideoIds.clear();
+    });
+  }
+
+  Future<void> _addSelectedToPlaylist(List<Map<String, dynamic>> songs) async {
+    final selectedSongs = songs
+        .where(
+          (s) => _selectedVideoIds.contains((s['videoId'] as String?) ?? ''),
+        )
+        .toList();
+    if (selectedSongs.isEmpty) return;
+    await showAddSongsToPlaylistDialog(context, songs: selectedSongs);
+    if (!mounted) return;
+    _exitSelectionMode();
   }
 
   String _formatDuration(int totalSeconds) {
@@ -178,13 +290,20 @@ class _LikedPageState extends State<LikedPage> {
     }
 
     final songs = liked.songs;
+    final displaySongs = _applySort(songs);
     final downloads = context.watch<DownloadsProvider>();
 
     return ListView.separated(
-      itemCount: songs.length,
+      itemCount: displaySongs.length,
       separatorBuilder: (_, _) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final song = songs[index];
+      itemBuilder: (context, displayIndex) {
+        final song = displaySongs[displayIndex];
+        final videoIdForIndex = (song['videoId'] as String?) ?? '';
+        final index = videoIdForIndex.isEmpty
+            ? displayIndex
+            : songs.indexWhere(
+                (s) => (s['videoId'] as String?) == videoIdForIndex,
+              );
         final title = (song['title'] as String?) ?? 'Unknown song';
         final artist = (song['artist'] as String?) ?? 'Unknown artist';
         final artistId = (song['artistId'] as String?) ?? '';
@@ -207,6 +326,12 @@ class _LikedPageState extends State<LikedPage> {
               contextMenu: ContextMenu(
                 borderRadius: BorderRadius.circular(12),
                 entries: [
+                  if (!_selectionMode)
+                    MenuItem<String>(
+                      value: 'select',
+                      icon: const Icon(Icons.check_box_outlined),
+                      label: const Text('Select'),
+                    ),
                   MenuItem<String>(
                     value: 'play_next',
                     icon: const Icon(Icons.playlist_play_rounded),
@@ -234,9 +359,15 @@ class _LikedPageState extends State<LikedPage> {
                 ],
               ),
               onItemSelected: (value) {
-                if (value == 'play_next') {
+                if (value == 'select') {
+                  _enterSelectionMode(videoId);
+                } else if (value == 'play_next') {
                   _addToQueue(song);
                 } else if (value == 'add_to_playlist') {
+                  if (_selectionMode && _selectedVideoIds.isNotEmpty) {
+                    _addSelectedToPlaylist(songs);
+                    return;
+                  }
                   if (videoId.isEmpty) {
                     AppFlushbar.error(
                       context,
@@ -285,27 +416,44 @@ class _LikedPageState extends State<LikedPage> {
                 child: Material(
                   type: MaterialType.transparency,
                   child: ListTile(
-                    leading: thumbnailUrl.isNotEmpty
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: Image.network(
-                              thumbnailUrl,
-                              width: 56,
-                              height: 56,
-                              cacheWidth: 112,
-                              cacheHeight: 112,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  Icon(
-                                    Icons.music_note_rounded,
-                                    color: colorScheme.onSurface,
-                                  ),
-                            ),
-                          )
-                        : Icon(
-                            Icons.music_note_rounded,
-                            color: colorScheme.onSurface,
+                    leading: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_selectionMode) ...[
+                          Icon(
+                            _selectedVideoIds.contains(videoId)
+                                ? Icons.check_circle_rounded
+                                : Icons.circle_outlined,
+                            color: _selectedVideoIds.contains(videoId)
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                            size: 20,
                           ),
+                          const SizedBox(width: 8),
+                        ],
+                        thumbnailUrl.isNotEmpty
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: Image.network(
+                                  thumbnailUrl,
+                                  width: 56,
+                                  height: 56,
+                                  cacheWidth: 112,
+                                  cacheHeight: 112,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      Icon(
+                                        Icons.music_note_rounded,
+                                        color: colorScheme.onSurface,
+                                      ),
+                                ),
+                              )
+                            : Icon(
+                                Icons.music_note_rounded,
+                                color: colorScheme.onSurface,
+                              ),
+                      ],
+                    ),
                     title: Text(
                       title,
                       maxLines: 1,
@@ -395,7 +543,9 @@ class _LikedPageState extends State<LikedPage> {
                               ),
                       ],
                     ),
-                    onTap: () => _playSongAtIndex(index, songs, song),
+                    onTap: _selectionMode
+                        ? () => _toggleSongSelection(videoId)
+                        : () => _playSongAtIndex(index, songs, song),
                   ),
                 ),
               ),
@@ -417,32 +567,98 @@ class _LikedPageState extends State<LikedPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            children: [
-              Icon(Icons.favorite_rounded, color: colorScheme.onSurface),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Liked Songs',
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (liked.songs.isNotEmpty) ...[
-                Text(
-                  '${liked.songs.length} songs',
-                  style: TextStyle(color: colorScheme.onSurfaceVariant),
-                ),
-                const SizedBox(width: 12),
-              ],
-              IconButton(
-                onPressed: liked.isLoading ? null : () => liked.refresh(),
-                icon: Icon(Icons.refresh_rounded, color: colorScheme.onSurface),
-              ),
-            ],
+            children: _selectionMode
+                ? [
+                    IconButton(
+                      onPressed: _exitSelectionMode,
+                      icon: Icon(
+                        Icons.close_rounded,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        '${_selectedVideoIds.length} selected',
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _selectedVideoIds.isEmpty
+                          ? null
+                          : () => _addSelectedToPlaylist(liked.songs),
+                      icon: Icon(
+                        Icons.playlist_add_rounded,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ]
+                : [
+                    Icon(Icons.favorite_rounded, color: colorScheme.onSurface),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Liked Songs',
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (liked.songs.isNotEmpty) ...[
+                      Text(
+                        '${liked.songs.length} songs',
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    PopupMenuButton<_LikedSort>(
+                      tooltip: 'Sort songs',
+                      initialValue: _sort,
+                      onSelected: (value) => setState(() => _sort = value),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      icon: Icon(
+                        _sort == _LikedSort.custom
+                            ? Icons.sort_rounded
+                            : Icons.filter_list_rounded,
+                        color: _sort == _LikedSort.custom
+                            ? colorScheme.onSurfaceVariant
+                            : colorScheme.primary,
+                      ),
+                      itemBuilder: (context) => [
+                        for (final option in _LikedSort.values)
+                          PopupMenuItem(
+                            value: option,
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: option == _sort
+                                  ? Icon(
+                                      Icons.check_rounded,
+                                      color: colorScheme.primary,
+                                    )
+                                  : const SizedBox(width: 24),
+                              title: Text(option.label),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      onPressed: liked.isLoading ? null : () => liked.refresh(),
+                      icon: Icon(
+                        Icons.refresh_rounded,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ],
           ),
           const SizedBox(height: 12),
           Expanded(child: _buildContent(context, liked)),

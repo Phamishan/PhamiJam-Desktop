@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/playback_interface.dart';
+import 'package:phamijam/pages/fullscreen_video_page.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/remote_session_banner.dart';
 import 'package:phamijam/components/sidebar.dart';
@@ -1240,6 +1241,7 @@ class _HomeState extends State<Home> {
 
       await GoogleAuthService.signOut();
       await _auth.signOut();
+      PlaylistsPage.resetCache();
       if (!mounted) return;
       AppFlushbar.success(context, 'Logged out successfully.');
     } catch (error) {
@@ -1281,7 +1283,7 @@ class _HomeState extends State<Home> {
     );
   }
 
-  void _openQueueSheet(BuildContext context, List<dynamic> queue) {
+  void _openQueueSheet(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final onSheet = colorScheme.onInverseSurface;
     showModalBottomSheet<void>(
@@ -1289,98 +1291,47 @@ class _HomeState extends State<Home> {
       isScrollControlled: true,
       backgroundColor: colorScheme.inverseSurface,
       builder: (context) {
-        return SafeArea(
-          child: SizedBox(
-            height: MediaQuery.of(context).size.height * 0.6,
-            child: queue.isEmpty
-                ? Center(
-                    child: Text(
-                      'Queue is empty',
-                      style: TextStyle(color: onSheet.withValues(alpha: 0.7)),
-                    ),
-                  )
-                : ListView(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        return Consumer<PlaybackModel>(
+          builder: (context, playback, _) {
+            final remote = playback.isRemoteControlling
+                ? playback.remoteSession
+                : null;
+            final queue = remote != null ? remote.queue : playback.queue;
+            final canRemove = remote == null;
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.of(context).size.height * 0.6,
+                child: queue.isEmpty
+                    ? Center(
                         child: Text(
-                          'Now Playing',
+                          'Queue is empty',
                           style: TextStyle(
-                            color: onSheet,
-                            fontWeight: FontWeight.w600,
+                            color: onSheet.withValues(alpha: 0.7),
                           ),
                         ),
-                      ),
-                      Builder(
-                        builder: (context) {
-                          final item = queue.first;
-                          final subtitle = _queueSubtitle(item);
-                          return Material(
-                            type: MaterialType.transparency,
-                            child: ListTile(
-                              leading: Icon(
-                                Icons.graphic_eq_rounded,
-                                color: onSheet.withValues(alpha: 0.7),
+                      )
+                    : ListView(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            child: Text(
+                              'Now Playing',
+                              style: TextStyle(
+                                color: onSheet,
+                                fontWeight: FontWeight.w600,
                               ),
-                              title: Text(
-                                _queueTitle(item),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(color: onSheet),
-                              ),
-                              subtitle: subtitle == null
-                                  ? null
-                                  : Text(
-                                      subtitle,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: onSheet.withValues(alpha: 0.7),
-                                      ),
-                                    ),
-                            ),
-                          );
-                        },
-                      ),
-                      Divider(
-                        color: onSheet.withValues(alpha: 0.12),
-                        height: 1,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                        child: Text(
-                          'Up Next',
-                          style: TextStyle(
-                            color: onSheet,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      if (queue.length <= 1)
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                          child: Text(
-                            'No songs up next.',
-                            style: TextStyle(
-                              color: onSheet.withValues(alpha: 0.7),
                             ),
                           ),
-                        )
-                      else
-                        ...List.generate(queue.length - 1, (offset) {
-                          final index = offset + 1;
-                          final item = queue[index];
-                          final subtitle = _queueSubtitle(item);
-                          return Column(
-                            children: [
-                              Material(
+                          Builder(
+                            builder: (context) {
+                              final item = queue.first;
+                              final subtitle = _queueSubtitle(item);
+                              return Material(
                                 type: MaterialType.transparency,
                                 child: ListTile(
-                                  leading: Text(
-                                    '$index',
-                                    style: TextStyle(
-                                      color: onSheet.withValues(alpha: 0.54),
-                                    ),
+                                  leading: Icon(
+                                    Icons.graphic_eq_rounded,
+                                    color: onSheet.withValues(alpha: 0.7),
                                   ),
                                   title: Text(
                                     _queueTitle(item),
@@ -1400,22 +1351,125 @@ class _HomeState extends State<Home> {
                                             ),
                                           ),
                                         ),
-                                  onTap: () async {
-                                    Navigator.of(context).pop();
-                                    await _onQueueItemTap(index);
-                                  },
+                                ),
+                              );
+                            },
+                          ),
+                          Divider(
+                            color: onSheet.withValues(alpha: 0.12),
+                            height: 1,
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'Up Next',
+                                    style: TextStyle(
+                                      color: onSheet,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                if (canRemove && queue.length > 1)
+                                  TextButton.icon(
+                                    onPressed: () {
+                                      playback.clearUpNextQueue();
+                                      AppFlushbar.success(
+                                        context,
+                                        'Queue cleared',
+                                      );
+                                    },
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: onSheet,
+                                    ),
+                                    icon: const Icon(
+                                      Icons.playlist_remove_rounded,
+                                      size: 18,
+                                    ),
+                                    label: const Text('Clear'),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          if (queue.length <= 1)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                              child: Text(
+                                'No songs up next.',
+                                style: TextStyle(
+                                  color: onSheet.withValues(alpha: 0.7),
                                 ),
                               ),
-                              Divider(
-                                color: onSheet.withValues(alpha: 0.12),
-                                height: 1,
-                              ),
-                            ],
-                          );
-                        }),
-                    ],
-                  ),
-          ),
+                            )
+                          else
+                            ...List.generate(queue.length - 1, (offset) {
+                              final index = offset + 1;
+                              final item = queue[index];
+                              final subtitle = _queueSubtitle(item);
+                              return Column(
+                                children: [
+                                  Material(
+                                    type: MaterialType.transparency,
+                                    child: ListTile(
+                                      leading: Text(
+                                        '$index',
+                                        style: TextStyle(
+                                          color: onSheet.withValues(
+                                            alpha: 0.54,
+                                          ),
+                                        ),
+                                      ),
+                                      title: Text(
+                                        _queueTitle(item),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(color: onSheet),
+                                      ),
+                                      subtitle: subtitle == null
+                                          ? null
+                                          : Text(
+                                              subtitle,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: onSheet.withValues(
+                                                  alpha: 0.7,
+                                                ),
+                                              ),
+                                            ),
+                                      trailing: canRemove
+                                          ? IconButton(
+                                              icon: Icon(
+                                                Icons.close_rounded,
+                                                color: onSheet.withValues(
+                                                  alpha: 0.7,
+                                                ),
+                                              ),
+                                              tooltip: 'Remove from queue',
+                                              onPressed: () => playback
+                                                  .removeFromQueue(index),
+                                            )
+                                          : null,
+                                      onTap: () async {
+                                        Navigator.of(context).pop();
+                                        await _onQueueItemTap(index);
+                                      },
+                                    ),
+                                  ),
+                                  Divider(
+                                    color: onSheet.withValues(alpha: 0.12),
+                                    height: 1,
+                                  ),
+                                ],
+                              );
+                            }),
+                        ],
+                      ),
+              ),
+            );
+          },
         );
       },
     );
@@ -1470,10 +1524,7 @@ class _HomeState extends State<Home> {
             onUnshuffle: playback.toggleShuffle,
             onCycleRepeat: playback.cycleRepeatMode,
             queue: remote != null ? remote.queue : playback.queue,
-            onQueuePressed: () => _openQueueSheet(
-              context,
-              remote != null ? remote.queue : playback.queue,
-            ),
+            onQueuePressed: () => _openQueueSheet(context),
             onLyricsPressed:
                 (remote != null ||
                     (playback.currentYouTubeVideoId ?? '').isEmpty)
@@ -1508,6 +1559,12 @@ class _HomeState extends State<Home> {
               videoCover: Video(
                 controller: _sidebarVideoController,
                 controls: NoVideoControls,
+              ),
+              onOpenFullscreenVideo: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const FullscreenVideoPage(),
+                  fullscreenDialog: true,
+                ),
               ),
             ),
           ),

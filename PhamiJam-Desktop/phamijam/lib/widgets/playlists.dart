@@ -11,8 +11,8 @@ import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
 
 class PlaylistsPage extends StatefulWidget {
   final void Function(String, {Map<String, dynamic>? extra})? onTabSelected;
-
   const PlaylistsPage({super.key, this.onTabSelected});
+  static void resetCache() => _PlaylistsPageState._resetCache();
 
   @override
   State<PlaylistsPage> createState() => _PlaylistsPageState();
@@ -24,6 +24,14 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   static String _cachedPlaylistTitle = 'Playlists';
   static List<Map<String, dynamic>> _cachedUserPlaylists = [];
   static String? _cachedChannelId;
+
+  static void _resetCache() {
+    _hasLoadedOnce = false;
+    _cachedErrorMessage = null;
+    _cachedPlaylistTitle = 'Playlists';
+    _cachedUserPlaylists = [];
+    _cachedChannelId = null;
+  }
 
   bool _didInitialDependencySetup = false;
   bool _isLoadingPlaylists = false;
@@ -313,6 +321,11 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       _isLoadingPlaylists = true;
       _errorMessage = null;
     });
+    if (forceRefresh) {
+      _ytmusic?.close();
+      _ytmusic = null;
+      _channelId = null;
+    }
     try {
       await _getAccessToken();
 

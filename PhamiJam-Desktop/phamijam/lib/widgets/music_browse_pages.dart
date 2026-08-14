@@ -1,7 +1,9 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
+import 'package:http/http.dart' as http;
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/components/edit_song_dialog.dart';
@@ -1393,10 +1395,14 @@ class AlbumDetailsPage extends StatefulWidget {
 
 class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
   late Future<_AlbumDetailsData> _loadFuture;
+  late final PlaybackModel _playback;
+  List<Map<String, dynamic>> _queueSongs = [];
+  String? _currentlyLoadingVideoId;
 
   @override
   void initState() {
     super.initState();
+    _playback = context.read<PlaybackModel>();
     _loadFuture = _loadAlbum();
   }
 
@@ -1601,6 +1607,203 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
     );
   }
 
+  List<Map<String, dynamic>> _buildQueueSongs(
+    List<Map<String, dynamic>> tracks,
+  ) {
+    return tracks.map((track) {
+      final durationSeconds =
+          (track['duration_seconds'] as num?)?.toInt() ??
+          (track['durationSeconds'] as num?)?.toInt() ??
+          0;
+      return <String, dynamic>{
+        'videoId': _readString(track['videoId']),
+        'title': _readString(track['title'], 'Unknown song'),
+        'artist': _artistNameFromTrack(track),
+        'artistId': _artistIdFromTrack(track),
+        'thumbnailUrl': _thumbnailUrl(track),
+        'durationSeconds': durationSeconds,
+      };
+    }).toList();
+  }
+
+  Future<Uint8List?> _downloadImageBytes(String imageUrl) async {
+    if (imageUrl.isEmpty) return null;
+    try {
+      final response = await http.get(Uri.parse(imageUrl));
+      if (response.statusCode == 200) {
+        return response.bodyBytes;
+      }
+    } catch (error) {
+      debugPrint('Failed to download image from $imageUrl: $error');
+    }
+    return null;
+  }
+
+  Future<void> _playAlbumTrackAtIndex(
+    int index, {
+    bool syncQueue = true,
+  }) async {
+    if (_currentlyLoadingVideoId != null) return;
+    if (index < 0 || index >= _queueSongs.length) return;
+    final song = _queueSongs[index];
+    final videoId = song['videoId'] as String? ?? '';
+    if (videoId.isEmpty) {
+      if (!mounted) return;
+      AppFlushbar.error(context, 'This song has no playable video id.');
+      return;
+    }
+
+    setState(() => _currentlyLoadingVideoId = videoId);
+    try {
+      final title = song['title'] as String? ?? 'Unknown song';
+      final artist = song['artist'] as String? ?? 'Unknown artist';
+      final thumbnailUrl = song['thumbnailUrl'] as String? ?? '';
+      final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
+      final coverBytes = await _downloadImageBytes(thumbnailUrl);
+
+      _playback.setSongName(title);
+      _playback.setArtist(artist);
+      _playback.setArtistId(song['artistId'] as String?);
+      _playback.setCurrentSongPath('yt:$videoId');
+      _playback.setCoverImageBytes(coverBytes);
+      _playback.setDuration(
+        durationSeconds > 0
+            ? Duration(seconds: durationSeconds)
+            : Duration.zero,
+      );
+
+      await _playback.playYouTubeVideoById(videoId);
+      await _playback.applyVolume(_playback.currentSliderValue);
+
+      if (syncQueue) {
+        _playback.setPlaylistQueue(_queueSongs, startIndex: index);
+        _registerAlbumQueueHandlers();
+      } else {
+        _playback.markCurrentSourceIndex(index);
+      }
+    } catch (error) {
+      debugPrint('Album playback failed for $videoId: $error');
+      if (!mounted) return;
+      AppFlushbar.error(context, 'Failed to play audio: $error');
+    } finally {
+      if (mounted) setState(() => _currentlyLoadingVideoId = null);
+    }
+  }
+
+  void _registerAlbumQueueHandlers() {
+    final songs = List<Map<String, dynamic>>.from(_queueSongs);
+    _playback.setQueueHandlers(
+      playAtSourceIndex: (sourceIndex) async {
+        if (sourceIndex < 0 || sourceIndex >= songs.length) return;
+        final song = songs[sourceIndex];
+        final videoId = song['videoId'] as String? ?? '';
+        if (videoId.isEmpty) return;
+
+        final title = song['title'] as String? ?? 'Unknown song';
+        final artist = song['artist'] as String? ?? 'Unknown artist';
+        final thumbnailUrl = song['thumbnailUrl'] as String? ?? '';
+        final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
+        final coverBytes = await _downloadImageBytes(thumbnailUrl);
+
+        _playback.setSongName(title);
+        _playback.setArtist(artist);
+        _playback.setArtistId(song['artistId'] as String?);
+        _playback.setCurrentSongPath('yt:$videoId');
+        _playback.setCoverImageBytes(coverBytes);
+        _playback.setDuration(
+          durationSeconds > 0
+              ? Duration(seconds: durationSeconds)
+              : Duration.zero,
+        );
+
+        await _playback.playYouTubeVideoById(videoId);
+        await _playback.applyVolume(_playback.currentSliderValue);
+        _playback.markCurrentSourceIndex(sourceIndex);
+      },
+      prefetchQueueItem: (item) async {
+        if (item is! Map<String, dynamic>) return;
+        final videoId = item['videoId'] as String? ?? '';
+        if (videoId.isEmpty) return;
+        await _playback.prefetchYouTubeVideoById(videoId);
+      },
+    );
+  }
+
+  Widget _buildControlButtons(_AlbumDetailsData data) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final playback = context.watch<PlaybackModel>();
+    final videoIds = data.tracks
+        .map((track) => _readString(track['videoId']))
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    final currentPath = playback.currentSongPath;
+    final currentVideoId = currentPath != null && currentPath.startsWith('yt:')
+        ? currentPath.substring(3)
+        : null;
+    final isThisAlbumPlaying =
+        playback.isPlaying &&
+        currentVideoId != null &&
+        videoIds.contains(currentVideoId);
+    final playableTracks = data.tracks
+        .where((track) => _readString(track['videoId']).isNotEmpty)
+        .toList();
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          onPressed: playableTracks.isEmpty ? null : _playback.toggleShuffle,
+          icon: Icon(
+            playback.isShuffled
+                ? Icons.shuffle_on_rounded
+                : Icons.shuffle_rounded,
+            color: colorScheme.primary,
+          ),
+        ),
+        const SizedBox(width: 12),
+        IconButton(
+          iconSize: 40,
+          onPressed: playableTracks.isEmpty
+              ? null
+              : () {
+                  if (isThisAlbumPlaying) {
+                    _playback.togglePlayPause();
+                    return;
+                  }
+                  final playableIndices = <int>[
+                    for (var i = 0; i < _queueSongs.length; i++)
+                      if ((_queueSongs[i]['videoId'] as String? ?? '')
+                          .isNotEmpty)
+                        i,
+                  ];
+                  if (playableIndices.isEmpty) return;
+                  final startIndex = playback.isShuffled
+                      ? playableIndices[Random().nextInt(
+                          playableIndices.length,
+                        )]
+                      : playableIndices.first;
+                  _playAlbumTrackAtIndex(startIndex);
+                },
+          icon: Icon(
+            isThisAlbumPlaying
+                ? Icons.pause_circle_rounded
+                : Icons.play_circle_rounded,
+            color: colorScheme.primary,
+          ),
+        ),
+        const SizedBox(width: 12),
+        IconButton(
+          onPressed: _playback.cycleRepeatMode,
+          icon: Icon(switch (playback.repeatMode) {
+            PlayerRepeatMode.off => Icons.repeat_rounded,
+            PlayerRepeatMode.all => Icons.repeat_on_rounded,
+            PlayerRepeatMode.one => Icons.repeat_one_on_rounded,
+          }, color: colorScheme.primary),
+        ),
+      ],
+    );
+  }
+
   Widget _buildTrackTile(Map<String, dynamic> item, int index) {
     final colorScheme = Theme.of(context).colorScheme;
     final title = _readString(item['title'], 'Unknown song');
@@ -1701,13 +1904,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
           ),
           onTap: videoId.isEmpty
               ? null
-              : () => widget.onPlaySong(
-                  videoId: videoId,
-                  title: title,
-                  artist: artistName,
-                  thumbnailUrl: thumbnailUrl,
-                  artistId: artistId,
-                ),
+              : () => _playAlbumTrackAtIndex(index),
         ),
       ),
     );
@@ -1749,6 +1946,8 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
           );
         }
 
+        _queueSongs = _buildQueueSongs(data.tracks);
+
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -1778,6 +1977,8 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
               ),
               const SizedBox(height: 14),
               _buildHeader(data),
+              const SizedBox(height: 10),
+              _buildControlButtons(data),
               if (data.tracks.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),

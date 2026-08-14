@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
@@ -7,7 +8,11 @@ import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/pages/connect_drive_folder_page.dart';
+import 'package:phamijam/services/google_drive_service.dart';
 import 'package:provider/provider.dart';
+
+enum _LocalFilesSource { thisComputer, googleDrive }
 
 class LocalFilesPage extends StatefulWidget {
   const LocalFilesPage({super.key});
@@ -39,6 +44,12 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
   late final TextEditingController _songSearchController;
   late final PlaybackModel _playback;
 
+  _LocalFilesSource _source = _LocalFilesSource.thisComputer;
+  List<Map<String, dynamic>> _driveSongs = [];
+  bool _isLoadingDriveSongs = false;
+  bool _hasConnectedDriveFolder = false;
+  String? _driveError;
+
   List<int> get _filteredSongIndices {
     final query = _songSearchQuery.trim().toLowerCase();
     if (query.isEmpty) {
@@ -52,6 +63,25 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
           ? artistName[index].toLowerCase()
           : '';
       if (song.contains(query) || artist.contains(query)) {
+        filtered.add(index);
+      }
+    }
+    return filtered;
+  }
+
+  List<int> get _filteredDriveSongIndices {
+    final query = _songSearchQuery.trim().toLowerCase();
+    if (query.isEmpty) {
+      return List<int>.generate(_driveSongs.length, (index) => index);
+    }
+
+    final filtered = <int>[];
+    for (var index = 0; index < _driveSongs.length; index++) {
+      final title = ((_driveSongs[index]['title'] as String?) ?? '')
+          .toLowerCase();
+      final artist = ((_driveSongs[index]['artist'] as String?) ?? '')
+          .toLowerCase();
+      if (title.contains(query) || artist.contains(query)) {
         filtered.add(index);
       }
     }
@@ -352,11 +382,95 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
     AppFlushbar.info(context, '"${queueItem['songName']}" will play next.');
   }
 
+  Future<void> _refreshDriveSongs() async {
+    setState(() => _isLoadingDriveSongs = true);
+    try {
+      final songs = await GoogleDriveService.listAudioFiles();
+      if (!mounted) return;
+      setState(() {
+        _hasConnectedDriveFolder = songs != null;
+        _driveSongs = songs ?? [];
+        _isLoadingDriveSongs = false;
+        _driveError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingDriveSongs = false;
+        _driveError = "Couldn't load your Google Drive folder: $error";
+      });
+    }
+  }
+
+  Future<void> _connectDriveFolder() async {
+    final connected = await showConnectDriveFolderDialog(context);
+    if (connected == true) {
+      await _refreshDriveSongs();
+    }
+  }
+
+  Future<void> _playDriveSong({int? index, bool syncQueue = true}) async {
+    final playback = _playback;
+    final playIndex = index ?? 0;
+    if (_driveSongs.isEmpty || playIndex >= _driveSongs.length) return;
+
+    final song = _driveSongs[playIndex];
+    final videoId = (song['videoId'] as String?) ?? '';
+    final fileId = videoId.startsWith(driveTrackIdPrefix)
+        ? videoId.substring(driveTrackIdPrefix.length)
+        : '';
+    if (fileId.isEmpty) return;
+
+    await playback.switchToLocalEngine();
+    playback.setDuration(Duration.zero);
+    final headers = await GoogleDriveService.streamHeaders(fileId);
+    await player.setUrl(
+      GoogleDriveService.streamUri(fileId).toString(),
+      headers: headers,
+    );
+    await player.seek(Duration.zero);
+    await player.play();
+
+    playback.setArtist((song['artist'] as String?) ?? '');
+    playback.setArtistId(null);
+    playback.setSongName((song['title'] as String?) ?? '');
+    playback.setCurrentSongPath(videoId);
+    playback.setCoverImageBytes(null);
+    final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
+    playback.setDuration(
+      durationSeconds > 0 ? Duration(seconds: durationSeconds) : Duration.zero,
+    );
+    playback.setIsPlaying(true);
+    playback.setIsMuted(false);
+
+    if (syncQueue) {
+      playback.setPlaylistQueue(_driveSongs, startIndex: playIndex);
+      playback.setQueueHandlers(
+        playAtSourceIndex: (sourceIndex) async {
+          await _playDriveSong(index: sourceIndex, syncQueue: false);
+        },
+      );
+    } else {
+      playback.markCurrentSourceIndex(playIndex);
+    }
+  }
+
+  void _addDriveSongToQueue(int index) {
+    if (index < 0 || index >= _driveSongs.length) return;
+    _playback.addToQueue(_driveSongs[index]);
+    if (!mounted) return;
+    AppFlushbar.info(
+      context,
+      '"${_driveSongs[index]['title']}" will play next.',
+    );
+  }
+
   @override
   void initState() {
     super.initState();
     _songSearchController = TextEditingController();
     _playback = context.read<PlaybackModel>();
+    unawaited(_refreshDriveSongs());
   }
 
   @override
@@ -390,8 +504,28 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
               ),
             ),
             const SizedBox(width: 16),
+            SegmentedButton<_LocalFilesSource>(
+              segments: const [
+                ButtonSegment(
+                  value: _LocalFilesSource.thisComputer,
+                  label: Text('This computer'),
+                  icon: Icon(Icons.computer_rounded),
+                ),
+                ButtonSegment(
+                  value: _LocalFilesSource.googleDrive,
+                  label: Text('Google Drive'),
+                  icon: Icon(Icons.add_to_drive_rounded),
+                ),
+              ],
+              selected: {_source},
+              onSelectionChanged: (selection) =>
+                  setState(() => _source = selection.first),
+            ),
+            const SizedBox(width: 16),
             ElevatedButton.icon(
-              onPressed: _refreshSongs,
+              onPressed: _source == _LocalFilesSource.thisComputer
+                  ? _refreshSongs
+                  : _refreshDriveSongs,
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Refresh'),
               style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
@@ -399,25 +533,51 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
           ],
         ),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            ElevatedButton.icon(
-              onPressed: _chooseLocation,
-              icon: const Icon(Icons.folder_open_rounded),
-              label: const Text('Choose Location'),
-              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                _selectedFolderPath ?? 'No folder selected',
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
-                overflow: TextOverflow.ellipsis,
+        if (_source == _LocalFilesSource.thisComputer)
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _chooseLocation,
+                icon: const Icon(Icons.folder_open_rounded),
+                label: const Text('Choose Location'),
+                style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
               ),
-            ),
-            _buildMetadataRow(),
-          ],
-        ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  _selectedFolderPath ?? 'No folder selected',
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              _buildMetadataRow(),
+            ],
+          )
+        else
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _connectDriveFolder,
+                icon: const Icon(Icons.add_to_drive_rounded),
+                label: Text(
+                  _hasConnectedDriveFolder
+                      ? 'Reconnect folder'
+                      : 'Connect "PhamiJam" folder',
+                ),
+                style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  _hasConnectedDriveFolder
+                      ? '${_driveSongs.length} songs in your Drive folder'
+                      : 'Not connected yet',
+                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         const SizedBox(height: 10),
         TextField(
           controller: _songSearchController,
@@ -465,109 +625,219 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
         ),
         const SizedBox(height: 10),
         Expanded(
-          child: songName.isEmpty
-              ? Center(
-                  child: Text(
-                    'No local .mp3 files found',
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                )
-              : _filteredSongIndices.isEmpty
-              ? Center(
-                  child: Text(
-                    'No songs match your search.',
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                )
-              : ListView.builder(
-                  itemCount: _filteredSongIndices.length,
-                  itemBuilder: (context, index) {
-                    final sourceIndex = _filteredSongIndices[index];
-                    final artist = artistName[sourceIndex];
-                    final song = songName[sourceIndex];
-                    final coverBytes = sourceIndex < coverImages.length
-                        ? coverImages[sourceIndex]
-                        : null;
-                    final durationSeconds = sourceIndex < songDurations.length
-                        ? songDurations[sourceIndex]
-                        : 0;
-                    final songDurationLabel = _formatDuration(durationSeconds);
-
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: ContextMenuRegion<String>(
-                        contextMenu: ContextMenu(
-                          borderRadius: BorderRadius.circular(12),
-                          entries: [
-                            MenuItem<String>(
-                              value: 'play_next',
-                              icon: const Icon(Icons.playlist_play_rounded),
-                              label: const Text('Add to play next'),
-                            ),
-                          ],
-                        ),
-                        onItemSelected: (value) {
-                          if (value == 'play_next') {
-                            _addLocalSongToQueue(sourceIndex);
-                          }
-                        },
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: currentSongPath == songPaths[sourceIndex]
-                                ? colorScheme.surfaceContainerHigh
-                                : colorScheme.surface,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Material(
-                            type: MaterialType.transparency,
-                            child: ListTile(
-                              leading:
-                                  coverBytes != null && coverBytes.isNotEmpty
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: Image.memory(
-                                        coverBytes,
-                                        width: 56,
-                                        height: 56,
-                                        cacheWidth: 112,
-                                        cacheHeight: 112,
-                                        fit: BoxFit.cover,
-                                        errorBuilder: (_, _, _) => Icon(
-                                          Icons.music_note_rounded,
-                                          color: colorScheme.onSurface,
-                                        ),
-                                      ),
-                                    )
-                                  : Icon(
-                                      Icons.music_note_rounded,
-                                      color: colorScheme.onSurface,
-                                    ),
-                              title: Text(
-                                song,
-                                style: TextStyle(color: colorScheme.onSurface),
-                              ),
-                              subtitle: Text(
-                                artist,
-                                style: TextStyle(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              trailing: Text(
-                                songDurationLabel,
-                                style: TextStyle(
-                                  color: colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              onTap: () => _play(index: sourceIndex),
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+          child: _source == _LocalFilesSource.thisComputer
+              ? _buildThisComputerList(colorScheme, currentSongPath)
+              : _buildDriveList(colorScheme, currentSongPath),
         ),
       ],
+    );
+  }
+
+  Widget _buildThisComputerList(
+    ColorScheme colorScheme,
+    String? currentSongPath,
+  ) {
+    if (songName.isEmpty) {
+      return Center(
+        child: Text(
+          'No local .mp3 files found',
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    if (_filteredSongIndices.isEmpty) {
+      return Center(
+        child: Text(
+          'No songs match your search.',
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: _filteredSongIndices.length,
+      itemBuilder: (context, index) {
+        final sourceIndex = _filteredSongIndices[index];
+        final artist = artistName[sourceIndex];
+        final song = songName[sourceIndex];
+        final coverBytes = sourceIndex < coverImages.length
+            ? coverImages[sourceIndex]
+            : null;
+        final durationSeconds = sourceIndex < songDurations.length
+            ? songDurations[sourceIndex]
+            : 0;
+        final songDurationLabel = _formatDuration(durationSeconds);
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: ContextMenuRegion<String>(
+            contextMenu: ContextMenu(
+              borderRadius: BorderRadius.circular(12),
+              entries: [
+                MenuItem<String>(
+                  value: 'play_next',
+                  icon: const Icon(Icons.playlist_play_rounded),
+                  label: const Text('Add to play next'),
+                ),
+              ],
+            ),
+            onItemSelected: (value) {
+              if (value == 'play_next') {
+                _addLocalSongToQueue(sourceIndex);
+              }
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: currentSongPath == songPaths[sourceIndex]
+                    ? colorScheme.surfaceContainerHigh
+                    : colorScheme.surface,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: ListTile(
+                  leading: coverBytes != null && coverBytes.isNotEmpty
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Image.memory(
+                            coverBytes,
+                            width: 56,
+                            height: 56,
+                            cacheWidth: 112,
+                            cacheHeight: 112,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => Icon(
+                              Icons.music_note_rounded,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          Icons.music_note_rounded,
+                          color: colorScheme.onSurface,
+                        ),
+                  title: Text(
+                    song,
+                    style: TextStyle(color: colorScheme.onSurface),
+                  ),
+                  subtitle: Text(
+                    artist,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                  trailing: Text(
+                    songDurationLabel,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                  onTap: () => _play(index: sourceIndex),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDriveList(ColorScheme colorScheme, String? currentSongPath) {
+    if (_isLoadingDriveSongs) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_driveError != null) {
+      return Center(
+        child: Text(
+          _driveError!,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    if (!_hasConnectedDriveFolder) {
+      return Center(
+        child: Text(
+          'Connect a Google Drive folder named "PhamiJam" to play songs '
+          'you keep there.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    if (_driveSongs.isEmpty) {
+      return Center(
+        child: Text(
+          'No songs found in your "PhamiJam" Drive folder yet.',
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    if (_filteredDriveSongIndices.isEmpty) {
+      return Center(
+        child: Text(
+          'No songs match your search.',
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: _filteredDriveSongIndices.length,
+      itemBuilder: (context, index) {
+        final sourceIndex = _filteredDriveSongIndices[index];
+        final song = _driveSongs[sourceIndex];
+        final title = (song['title'] as String?) ?? 'Unknown song';
+        final artist = (song['artist'] as String?) ?? 'Unknown artist';
+        final videoId = (song['videoId'] as String?) ?? '';
+        final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
+        final songDurationLabel = _formatDuration(durationSeconds);
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: ContextMenuRegion<String>(
+            contextMenu: ContextMenu(
+              borderRadius: BorderRadius.circular(12),
+              entries: [
+                MenuItem<String>(
+                  value: 'play_next',
+                  icon: const Icon(Icons.playlist_play_rounded),
+                  label: const Text('Add to play next'),
+                ),
+              ],
+            ),
+            onItemSelected: (value) {
+              if (value == 'play_next') {
+                _addDriveSongToQueue(sourceIndex);
+              }
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: currentSongPath == videoId
+                    ? colorScheme.surfaceContainerHigh
+                    : colorScheme.surface,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                child: ListTile(
+                  leading: Icon(
+                    Icons.music_note_rounded,
+                    color: colorScheme.onSurface,
+                  ),
+                  title: Text(
+                    title,
+                    style: TextStyle(color: colorScheme.onSurface),
+                  ),
+                  subtitle: Text(
+                    artist,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                  trailing: Text(
+                    songDurationLabel,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                  onTap: () => _playDriveSong(index: sourceIndex),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

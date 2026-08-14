@@ -35,6 +35,31 @@ class _PlaylistInspectCacheEntry {
   final String? errorMessage;
 }
 
+enum _PlaylistSort {
+  custom,
+  dateAddedNewest,
+  dateAddedOldest,
+  durationShort,
+  durationLong,
+}
+
+extension on _PlaylistSort {
+  String get label {
+    switch (this) {
+      case _PlaylistSort.custom:
+        return 'Playlist order';
+      case _PlaylistSort.dateAddedNewest:
+        return 'Recently added';
+      case _PlaylistSort.dateAddedOldest:
+        return 'Oldest added';
+      case _PlaylistSort.durationShort:
+        return 'Duration (shortest first)';
+      case _PlaylistSort.durationLong:
+        return 'Duration (longest first)';
+    }
+  }
+}
+
 class PlaylistInspectPage extends StatefulWidget {
   final Map<String, dynamic>? extra;
   final VoidCallback? onBack;
@@ -82,19 +107,105 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   Map<String, String>? _itemIdsCache;
   String? _itemIdsCachePlaylistId;
   String? _removingVideoId;
+  bool _selectionMode = false;
+  final Set<String> _selectedVideoIds = {};
+  _PlaylistSort _sort = _PlaylistSort.custom;
 
   List<Map<String, dynamic>> get _filteredSongs {
     final query = _songSearchQuery.trim().toLowerCase();
-    if (query.isEmpty) {
-      return _songs;
-    }
+    final base = query.isEmpty
+        ? _songs
+        : _songs.where((song) {
+            final title = (song['title'] as String?) ?? '';
+            final artist = (song['artist'] as String?) ?? '';
+            return title.toLowerCase().contains(query) ||
+                artist.toLowerCase().contains(query);
+          }).toList();
+    return _applySort(base);
+  }
 
-    return _songs.where((song) {
-      final title = (song['title'] as String?) ?? '';
-      final artist = (song['artist'] as String?) ?? '';
-      return title.toLowerCase().contains(query) ||
-          artist.toLowerCase().contains(query);
-    }).toList();
+  DateTime? _parseAddedAt(Object? value) {
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
+  }
+
+  int _compareAddedAt(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b, {
+    required bool newestFirst,
+  }) {
+    final da = _parseAddedAt(a['addedAt']);
+    final db = _parseAddedAt(b['addedAt']);
+    if (da == null && db == null) return 0;
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return newestFirst ? db.compareTo(da) : da.compareTo(db);
+  }
+
+  List<Map<String, dynamic>> _applySort(List<Map<String, dynamic>> songs) {
+    if (_sort == _PlaylistSort.custom) return songs;
+    final sorted = List<Map<String, dynamic>>.from(songs);
+    switch (_sort) {
+      case _PlaylistSort.custom:
+        break;
+      case _PlaylistSort.dateAddedNewest:
+        sorted.sort((a, b) => _compareAddedAt(a, b, newestFirst: true));
+      case _PlaylistSort.dateAddedOldest:
+        sorted.sort((a, b) => _compareAddedAt(a, b, newestFirst: false));
+      case _PlaylistSort.durationShort:
+        sorted.sort(
+          (a, b) => ((a['durationSeconds'] as int?) ?? 0).compareTo(
+            (b['durationSeconds'] as int?) ?? 0,
+          ),
+        );
+      case _PlaylistSort.durationLong:
+        sorted.sort(
+          (a, b) => ((b['durationSeconds'] as int?) ?? 0).compareTo(
+            (a['durationSeconds'] as int?) ?? 0,
+          ),
+        );
+    }
+    return sorted;
+  }
+
+  void _enterSelectionMode(String videoId) {
+    if (videoId.isEmpty) return;
+    setState(() {
+      _selectionMode = true;
+      _selectedVideoIds
+        ..clear()
+        ..add(videoId);
+    });
+  }
+
+  void _toggleSongSelection(String videoId) {
+    if (videoId.isEmpty) return;
+    setState(() {
+      if (!_selectedVideoIds.remove(videoId)) {
+        _selectedVideoIds.add(videoId);
+      }
+      if (_selectedVideoIds.isEmpty) _selectionMode = false;
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedVideoIds.clear();
+    });
+  }
+
+  Future<void> _addSelectedToPlaylist() async {
+    final selectedSongs = _songs
+        .where(
+          (s) => _selectedVideoIds.contains((s['videoId'] as String?) ?? ''),
+        )
+        .toList();
+    if (selectedSongs.isEmpty) return;
+    await showAddSongsToPlaylistDialog(context, songs: selectedSongs);
+    if (!mounted) return;
+    _exitSelectionMode();
   }
 
   int _sourceSongIndex(Map<String, dynamic> song) {
@@ -700,6 +811,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       _songSearchController.clear();
       setState(() {
         _songSearchQuery = '';
+        _selectionMode = false;
+        _selectedVideoIds.clear();
       });
       _loadSongs();
     }
@@ -777,84 +890,156 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          children: [
-            IconButton(
-              onPressed: _handleBack,
-              icon: Icon(
-                Icons.arrow_back_rounded,
-                color: colorScheme.onSurface,
-              ),
-            ),
-            Expanded(
-              child: Text(
-                _displayPlaylistTitle,
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            _buildPinButton(),
-            _buildShareButton(),
-            const SizedBox(width: 12),
-            ElevatedButton.icon(
-              onPressed: () => _loadSongs(forceRefresh: true),
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Refresh'),
-              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
-            ),
-          ],
+          children: _selectionMode
+              ? [
+                  IconButton(
+                    onPressed: _exitSelectionMode,
+                    icon: Icon(
+                      Icons.close_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      '${_selectedVideoIds.length} selected',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _selectedVideoIds.isEmpty
+                        ? null
+                        : _addSelectedToPlaylist,
+                    icon: Icon(
+                      Icons.playlist_add_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ]
+              : [
+                  IconButton(
+                    onPressed: _handleBack,
+                    icon: Icon(
+                      Icons.arrow_back_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _displayPlaylistTitle,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  _buildPinButton(),
+                  _buildShareButton(),
+                  const SizedBox(width: 12),
+                  ElevatedButton.icon(
+                    onPressed: () => _loadSongs(forceRefresh: true),
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Refresh'),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
         ),
         const SizedBox(height: 8),
         _buildMetadataRow(),
         const SizedBox(height: 8),
         _buildControlButtons(),
         const SizedBox(height: 8),
-        TextField(
-          controller: _songSearchController,
-          onChanged: (value) {
-            setState(() {
-              _songSearchQuery = value;
-            });
-          },
-          style: TextStyle(color: colorScheme.onSurface),
-          decoration: InputDecoration(
-            hintText: 'Search songs...',
-            hintStyle: TextStyle(
-              color: colorScheme.onSurface.withValues(alpha: 0.6),
-              fontSize: 14,
-            ),
-            prefixIcon: Icon(
-              Icons.search_rounded,
-              color: colorScheme.onSurfaceVariant,
-            ),
-            suffixIcon: _songSearchQuery.isEmpty
-                ? null
-                : IconButton(
-                    icon: Icon(
-                      Icons.close_rounded,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    onPressed: () {
-                      _songSearchController.clear();
-                      setState(() {
-                        _songSearchQuery = '';
-                      });
-                    },
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _songSearchController,
+                onChanged: (value) {
+                  setState(() {
+                    _songSearchQuery = value;
+                  });
+                },
+                style: TextStyle(color: colorScheme.onSurface),
+                decoration: InputDecoration(
+                  hintText: 'Search songs...',
+                  hintStyle: TextStyle(
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                    fontSize: 14,
                   ),
-            filled: true,
-            fillColor: colorScheme.onSurface.withValues(alpha: 0.26),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide.none,
+                  prefixIcon: Icon(
+                    Icons.search_rounded,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  suffixIcon: _songSearchQuery.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: Icon(
+                            Icons.close_rounded,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                          onPressed: () {
+                            _songSearchController.clear();
+                            setState(() {
+                              _songSearchQuery = '';
+                            });
+                          },
+                        ),
+                  filled: true,
+                  fillColor: colorScheme.onSurface.withValues(alpha: 0.26),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 0,
+                  ),
+                ),
+              ),
             ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 0,
+            const SizedBox(width: 8),
+            PopupMenuButton<_PlaylistSort>(
+              tooltip: 'Sort songs',
+              initialValue: _sort,
+              onSelected: (value) => setState(() => _sort = value),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              icon: Icon(
+                _sort == _PlaylistSort.custom
+                    ? Icons.sort_rounded
+                    : Icons.filter_list_rounded,
+                color: _sort == _PlaylistSort.custom
+                    ? colorScheme.onSurfaceVariant
+                    : colorScheme.primary,
+              ),
+              itemBuilder: (context) => [
+                for (final option in _PlaylistSort.values)
+                  PopupMenuItem(
+                    value: option,
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: option == _sort
+                          ? Icon(
+                              Icons.check_rounded,
+                              color: colorScheme.primary,
+                            )
+                          : const SizedBox(width: 24),
+                      title: Text(option.label),
+                    ),
+                  ),
+              ],
             ),
-          ),
+          ],
         ),
 
         const SizedBox(height: 12),
@@ -911,6 +1096,12 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                           contextMenu: ContextMenu(
                             borderRadius: BorderRadius.circular(12),
                             entries: [
+                              if (!_selectionMode)
+                                MenuItem<String>(
+                                  value: 'select',
+                                  icon: const Icon(Icons.check_box_outlined),
+                                  label: const Text('Select'),
+                                ),
                               MenuItem<String>(
                                 value: 'play_next',
                                 icon: const Icon(Icons.playlist_play_rounded),
@@ -955,9 +1146,16 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                             ],
                           ),
                           onItemSelected: (value) {
-                            if (value == 'play_next') {
+                            if (value == 'select') {
+                              _enterSelectionMode(videoId);
+                            } else if (value == 'play_next') {
                               _addYouTubeSongToQueue(song);
                             } else if (value == 'add_to_playlist') {
+                              if (_selectionMode &&
+                                  _selectedVideoIds.isNotEmpty) {
+                                _addSelectedToPlaylist();
+                                return;
+                              }
                               if (videoId.isEmpty) {
                                 AppFlushbar.error(
                                   context,
@@ -1022,29 +1220,52 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                             child: Material(
                               type: MaterialType.transparency,
                               child: ListTile(
-                                leading: thumbnailUrl.isNotEmpty
-                                    ? ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Image.network(
-                                          thumbnailUrl,
-                                          width: 56,
-                                          height: 56,
-                                          cacheWidth: 112,
-                                          cacheHeight: 112,
-                                          fit: BoxFit.cover,
-                                          errorBuilder:
-                                              (context, error, stackTrace) =>
-                                                  Icon(
+                                leading: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (_selectionMode) ...[
+                                      Icon(
+                                        _selectedVideoIds.contains(videoId)
+                                            ? Icons.check_circle_rounded
+                                            : Icons.circle_outlined,
+                                        color:
+                                            _selectedVideoIds.contains(videoId)
+                                            ? colorScheme.primary
+                                            : colorScheme.onSurfaceVariant,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    thumbnailUrl.isNotEmpty
+                                        ? ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                            child: Image.network(
+                                              thumbnailUrl,
+                                              width: 56,
+                                              height: 56,
+                                              cacheWidth: 112,
+                                              cacheHeight: 112,
+                                              fit: BoxFit.cover,
+                                              errorBuilder:
+                                                  (
+                                                    context,
+                                                    error,
+                                                    stackTrace,
+                                                  ) => Icon(
                                                     Icons.music_note_rounded,
                                                     color:
                                                         colorScheme.onSurface,
                                                   ),
-                                        ),
-                                      )
-                                    : Icon(
-                                        Icons.music_note_rounded,
-                                        color: colorScheme.onSurface,
-                                      ),
+                                            ),
+                                          )
+                                        : Icon(
+                                            Icons.music_note_rounded,
+                                            color: colorScheme.onSurface,
+                                          ),
+                                  ],
+                                ),
                                 title: Text(
                                   title,
                                   maxLines: 1,
@@ -1157,8 +1378,12 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                           ),
                                   ],
                                 ),
-                                onTap: () =>
-                                    _playYouTubeSongAtIndex(sourceIndex, song),
+                                onTap: _selectionMode
+                                    ? () => _toggleSongSelection(videoId)
+                                    : () => _playYouTubeSongAtIndex(
+                                        sourceIndex,
+                                        song,
+                                      ),
                               ),
                             ),
                           ),

@@ -321,6 +321,7 @@ class YoutubePlaylistService {
           'artistId': artistId,
           'videoId': videoId,
           'thumbnailUrl': _bestThumbnailUrl(snippet),
+          'addedAt': snippet['publishedAt'] as String?,
         });
       }
       pageToken = payload['nextPageToken'] as String?;

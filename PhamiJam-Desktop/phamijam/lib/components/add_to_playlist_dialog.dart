@@ -7,18 +7,28 @@ Future<void> showAddToPlaylistDialog(
   required String videoId,
   required String songTitle,
 }) {
+  return showAddSongsToPlaylistDialog(
+    context,
+    songs: [
+      {'videoId': videoId, 'title': songTitle},
+    ],
+  );
+}
+
+Future<void> showAddSongsToPlaylistDialog(
+  BuildContext context, {
+  required List<Map<String, dynamic>> songs,
+}) {
   return showDialog<void>(
     context: context,
-    builder: (dialogContext) =>
-        _AddToPlaylistDialog(videoId: videoId, songTitle: songTitle),
+    builder: (dialogContext) => _AddToPlaylistDialog(songs: songs),
   );
 }
 
 class _AddToPlaylistDialog extends StatefulWidget {
-  const _AddToPlaylistDialog({required this.videoId, required this.songTitle});
+  const _AddToPlaylistDialog({required this.songs});
 
-  final String videoId;
-  final String songTitle;
+  final List<Map<String, dynamic>> songs;
 
   @override
   State<_AddToPlaylistDialog> createState() => _AddToPlaylistDialogState();
@@ -46,10 +56,14 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
     final failures = <String>[];
     for (final playlist in targets) {
       try {
-        await YoutubePlaylistService.addVideoToPlaylist(
-          playlistId: playlist['playlistId'] as String,
-          videoId: widget.videoId,
-        );
+        for (final song in widget.songs) {
+          final videoId = song['videoId'] as String? ?? '';
+          if (videoId.isEmpty) continue;
+          await YoutubePlaylistService.addVideoToPlaylist(
+            playlistId: playlist['playlistId'] as String,
+            videoId: videoId,
+          );
+        }
       } catch (_) {
         failures.add((playlist['title'] as String?) ?? 'playlist');
       }
@@ -59,11 +73,14 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
     Navigator.of(context).pop();
 
     if (failures.isEmpty) {
+      final destination = targets.length == 1
+          ? 'to ${targets.first['title']}'
+          : 'to ${targets.length} playlists';
       AppFlushbar.success(
         context,
-        targets.length == 1
-            ? 'Added to ${targets.first['title']}'
-            : 'Added to ${targets.length} playlists',
+        widget.songs.length == 1
+            ? 'Added $destination'
+            : 'Added ${widget.songs.length} songs $destination',
       );
     } else if (failures.length == targets.length) {
       AppFlushbar.error(context, "Couldn't add to any playlist.");
@@ -89,7 +106,9 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              widget.songTitle,
+              widget.songs.length == 1
+                  ? ((widget.songs.first['title'] as String?) ?? 'Song')
+                  : '${widget.songs.length} songs selected',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: colorScheme.onSurfaceVariant),

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:phamijam/pages/wrapphamied_page.dart';
+import 'package:phamijam/pages/jamstats_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -11,7 +11,7 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final String _title = 'Profile';
 
-  Widget _buildWrapphamiedCard() {
+  Widget _buildJamstatsCard() {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
@@ -24,7 +24,7 @@ class _ProfilePageState extends State<ProfilePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Wrapphamied',
+            'Jamstats ✨',
             style: TextStyle(
               color: colorScheme.onSurface,
               fontWeight: FontWeight.w600,
@@ -41,9 +41,9 @@ class _ProfilePageState extends State<ProfilePage> {
           ElevatedButton.icon(
             onPressed: () => Navigator.of(
               context,
-            ).push(MaterialPageRoute(builder: (_) => const WrapphamiedPage())),
+            ).push(MaterialPageRoute(builder: (_) => const JamstatsPage())),
             icon: const Icon(Icons.auto_awesome_rounded),
-            label: const Text('Open Wrapphamied'),
+            label: const Text('Open Jamstats ✨'),
             style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
           ),
         ],
@@ -70,7 +70,7 @@ class _ProfilePageState extends State<ProfilePage> {
           ],
         ),
         const SizedBox(height: 10),
-        _buildWrapphamiedCard(),
+        _buildJamstatsCard(),
         const SizedBox(height: 10),
       ],
     );

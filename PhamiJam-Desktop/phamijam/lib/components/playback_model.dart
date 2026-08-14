@@ -7,6 +7,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/models/edited_song_trim.dart';
+import 'package:phamijam/services/drive_duration_cache_service.dart';
+import 'package:phamijam/services/google_drive_service.dart'
+    show driveTrackIdPrefix;
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
 import 'package:phamijam/services/playback_state_service.dart';
@@ -51,8 +54,7 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> _engineTransition = Future<void>.value();
   Future<void> Function(int sourceIndex)? _onPlaySourceIndexRequested;
   Future<void> Function(dynamic item)? _onPrefetchQueueItem;
-  EditedSongTrim? Function(String videoId, [String? playlistId])?
-  _trimLookup;
+  EditedSongTrim? Function(String videoId, [String? playlistId])? _trimLookup;
   Duration? _trimStart;
   Duration? _trimEnd;
 
@@ -677,6 +679,7 @@ class PlaybackModel extends ChangeNotifier {
 
     _durationSubscription = player.durationStream.listen((newDuration) {
       setDuration(newDuration);
+      _maybeCacheDriveDuration(newDuration);
     });
 
     _volumeSubscription = player.volumeStream.listen((volume) {
@@ -1128,6 +1131,30 @@ class PlaybackModel extends ChangeNotifier {
     _persistQueueState();
   }
 
+  void clearUpNextQueue() {
+    if (_isRemoteControlling) return;
+    if (_playOrder.isEmpty || _currentOrderIndex < 0) return;
+    final currentSourceIndex = _playOrder[_currentOrderIndex];
+    _playOrder = <int>[currentSourceIndex];
+    _currentOrderIndex = 0;
+    _refreshQueueWindow();
+    notifyListeners();
+    _persistQueueState();
+  }
+
+  void removeFromQueue(int queueIndex) {
+    if (_isRemoteControlling) return;
+    if (queueIndex <= 0) return;
+    if (_playOrder.isEmpty || _currentOrderIndex < 0) return;
+    final orderIndex = _currentOrderIndex + queueIndex;
+    if (orderIndex < 0 || orderIndex >= _playOrder.length) return;
+    _playOrder = List<int>.from(_playOrder)..removeAt(orderIndex);
+    _refreshQueueWindow();
+    unawaited(_prefetchAhead());
+    notifyListeners();
+    _persistQueueState();
+  }
+
   void markCurrentSourceIndex(int sourceIndex) {
     if (_playlistItems.isEmpty || sourceIndex < 0) {
       return;
@@ -1365,9 +1392,8 @@ class PlaybackModel extends ChangeNotifier {
 
   void cycleRepeatMode() {
     if (_isRemoteControlling) return;
-    repeatMode =
-        PlayerRepeatMode.values[(repeatMode.index + 1) %
-            PlayerRepeatMode.values.length];
+    repeatMode = PlayerRepeatMode
+        .values[(repeatMode.index + 1) % PlayerRepeatMode.values.length];
     if (_playlistItems.isNotEmpty) {
       _refreshQueueWindow();
     }
@@ -1583,6 +1609,15 @@ class PlaybackModel extends ChangeNotifier {
     _trackActiveDuration(value);
     notifyListeners();
     _scheduleDiscordPresenceSync();
+  }
+
+  void _maybeCacheDriveDuration(Duration? liveDuration) {
+    if (liveDuration == null || liveDuration <= Duration.zero) return;
+    final path = currentSongPath;
+    if (path == null || !path.startsWith(driveTrackIdPrefix)) return;
+    final fileId = path.substring(driveTrackIdPrefix.length);
+    if (fileId.isEmpty) return;
+    unawaited(DriveDurationCacheService.setDuration(fileId, liveDuration));
   }
 
   void setIsPlaying(bool value) {

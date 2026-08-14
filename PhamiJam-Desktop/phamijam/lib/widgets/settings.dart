@@ -1,11 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:phamijam/components/changelog_dialog.dart';
 import 'package:phamijam/components/manage_playlist_visibility_dialog.dart';
 import 'package:phamijam/models/app_update_info.dart';
+import 'package:phamijam/pages/connect_drive_folder_page.dart';
 import 'package:phamijam/providers/edited_songs_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/providers/theme_provider.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/drive_folder_service.dart';
+import 'package:phamijam/services/google_drive_service.dart';
 import 'package:phamijam/services/update_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
@@ -54,11 +60,55 @@ class _SettingsPageState extends State<SettingsPage> {
   AppUpdateInfo? _pendingUpdate;
   double _downloadProgress = 0;
   String? _updateError;
+  bool _hasConnectedDriveFolder = false;
+  int? _driveSongCount;
 
   @override
   void initState() {
     super.initState();
     _loadAppVersion();
+    _loadDriveFolderStatus();
+  }
+
+  Future<void> _loadDriveFolderStatus() async {
+    final folderId = await DriveFolderService.getFolderId();
+    if (!mounted) return;
+    setState(() => _hasConnectedDriveFolder = folderId != null);
+    if (folderId == null) return;
+
+    try {
+      final songs = await GoogleDriveService.listAudioFiles();
+      if (!mounted) return;
+      setState(() => _driveSongCount = songs?.length);
+    } catch (_) {}
+  }
+
+  Future<void> _connectDriveFolder() async {
+    final connected = await showConnectDriveFolderDialog(context);
+    if (connected == true && mounted) {
+      unawaited(_loadDriveFolderStatus());
+    }
+  }
+
+  void _showDriveInfo() {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Google Drive folder'),
+        content: const Text(
+          'The Google Drive feature allows you to connect a folder in your Google Drive to PhamiJam. \n\n'
+          'Create a folder named "PhamiJam" in your Google Drive and drop '
+          "audio files into it using Drive's own apps. Connect it here once, "
+          'and PhamiJam reads that folder to play your songs.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadAppVersion() async {
@@ -589,6 +639,61 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildDriveCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainer,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: _connectDriveFolder,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Icon(Icons.add_to_drive_rounded, color: colorScheme.onSurface),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Google Drive folder',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _hasConnectedDriveFolder
+                          ? _driveSongCount == null
+                                ? 'Connected'
+                                : 'Connected · $_driveSongCount songs'
+                          : 'Play songs from a "PhamiJam" folder in your '
+                                'Drive',
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: _showDriveInfo,
+                icon: Icon(
+                  Icons.help_outline_rounded,
+                  color: colorScheme.onSurfaceVariant,
+                  size: 20,
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: colorScheme.onSurface),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _confirmClearDownloads(DownloadsProvider downloads) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -834,29 +939,49 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.info_rounded, color: colorScheme.onSurface),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'About PhamiJam',
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
+          Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => showChangelogDialog(context),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_rounded, color: colorScheme.onSurface),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'About PhamiJam',
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _appVersion.isEmpty
+                                ? 'Version...'
+                                : 'Version $_appVersion',
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _appVersion.isEmpty ? 'Version...' : 'Version $_appVersion',
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                ],
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: colorScheme.onSurface,
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
           const SizedBox(height: 12),
           ..._buildUpdateSection(colorScheme),
@@ -1000,6 +1125,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildStorageCard(),
         const SizedBox(height: 10),
         _buildEditedSongsCard(),
+        const SizedBox(height: 10),
+        _buildDriveCard(),
         const SizedBox(height: 10),
         _buildVersionInfoCard(),
       ],
