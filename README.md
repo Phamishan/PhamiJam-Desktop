@@ -54,7 +54,7 @@
   - Added autoplay
   - Added a Discord Rich Presence toggle setting
   - Redesigned home page
-- 1.0.8 - 14/08/2028
+- 1.0.8 - 14/08/2026
   - Added long-press multi-select to add multiple songs to a playlist at once
   - Added playlist song sorting
   - Added Google Drive folder sync as a music source
@@ -63,6 +63,10 @@
   - Added a fullscreen video player view
   - Added a clear queue button
   - Fixed playlists sometimes not showing
+- 1.0.9 - 15/08/2026
+  - Added queue reordering and an "Add to queue" option
+  - Added a like button for songs from a connected Google Drive folder
+  - Fixed Google Drive error
 
 ## Screenshots:
 

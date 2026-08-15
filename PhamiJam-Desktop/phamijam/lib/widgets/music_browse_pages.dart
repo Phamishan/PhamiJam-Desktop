@@ -49,6 +49,11 @@ Widget _wrapSongTileWithContextMenu({
           label: const Text('Add to play next'),
         ),
         MenuItem<String>(
+          value: 'add_to_queue',
+          icon: const Icon(Icons.queue_music_rounded),
+          label: const Text('Add to queue'),
+        ),
+        MenuItem<String>(
           value: 'add_to_playlist',
           icon: const Icon(Icons.playlist_add_rounded),
           label: const Text('Add to playlist'),
@@ -82,6 +87,14 @@ Widget _wrapSongTileWithContextMenu({
           'thumbnailUrl': thumbnailUrl,
         });
         AppFlushbar.info(context, '"$title" will play next.');
+      } else if (value == 'add_to_queue') {
+        context.read<PlaybackModel>().appendToQueue(<String, dynamic>{
+          'title': title,
+          'artist': artist,
+          'videoId': videoId,
+          'thumbnailUrl': thumbnailUrl,
+        });
+        AppFlushbar.info(context, '"$title" added to queue.');
       } else if (value == 'add_to_playlist') {
         showAddToPlaylistDialog(context, videoId: videoId, songTitle: title);
       } else if (value == 'edit_trim') {

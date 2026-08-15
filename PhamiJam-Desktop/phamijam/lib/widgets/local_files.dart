@@ -9,6 +9,7 @@ import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/pages/connect_drive_folder_page.dart';
+import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:provider/provider.dart';
 
@@ -382,6 +383,26 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
     AppFlushbar.info(context, '"${queueItem['songName']}" will play next.');
   }
 
+  void _appendLocalSongToQueue(int index) {
+    if (index < 0 || index >= songPaths.length) {
+      return;
+    }
+
+    final queueItem = <String, dynamic>{
+      'songName': index < songName.length ? songName[index] : '',
+      'artistName': index < artistName.length ? artistName[index] : '',
+      'path': songPaths[index],
+      'coverImageBytes': index < coverImages.length ? coverImages[index] : null,
+      'durationSeconds': index < songDurations.length
+          ? songDurations[index]
+          : 0,
+    };
+
+    _playback.appendToQueue(queueItem);
+    if (!mounted) return;
+    AppFlushbar.info(context, '"${queueItem['songName']}" added to queue.');
+  }
+
   Future<void> _refreshDriveSongs() async {
     setState(() => _isLoadingDriveSongs = true);
     try {
@@ -462,6 +483,16 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
     AppFlushbar.info(
       context,
       '"${_driveSongs[index]['title']}" will play next.',
+    );
+  }
+
+  void _appendDriveSongToQueue(int index) {
+    if (index < 0 || index >= _driveSongs.length) return;
+    _playback.appendToQueue(_driveSongs[index]);
+    if (!mounted) return;
+    AppFlushbar.info(
+      context,
+      '"${_driveSongs[index]['title']}" added to queue.',
     );
   }
 
@@ -678,11 +709,18 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                   icon: const Icon(Icons.playlist_play_rounded),
                   label: const Text('Add to play next'),
                 ),
+                MenuItem<String>(
+                  value: 'add_to_queue',
+                  icon: const Icon(Icons.queue_music_rounded),
+                  label: const Text('Add to queue'),
+                ),
               ],
             ),
             onItemSelected: (value) {
               if (value == 'play_next') {
                 _addLocalSongToQueue(sourceIndex);
+              } else if (value == 'add_to_queue') {
+                _appendLocalSongToQueue(sourceIndex);
               }
             },
             child: Container(
@@ -786,6 +824,9 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
         final videoId = (song['videoId'] as String?) ?? '';
         final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
         final songDurationLabel = _formatDuration(durationSeconds);
+        final isLiked = videoId.isNotEmpty
+            ? context.watch<LikedSongsProvider>().isLiked(videoId)
+            : false;
 
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
@@ -798,11 +839,18 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                   icon: const Icon(Icons.playlist_play_rounded),
                   label: const Text('Add to play next'),
                 ),
+                MenuItem<String>(
+                  value: 'add_to_queue',
+                  icon: const Icon(Icons.queue_music_rounded),
+                  label: const Text('Add to queue'),
+                ),
               ],
             ),
             onItemSelected: (value) {
               if (value == 'play_next') {
                 _addDriveSongToQueue(sourceIndex);
+              } else if (value == 'add_to_queue') {
+                _appendDriveSongToQueue(sourceIndex);
               }
             },
             child: Container(
@@ -827,9 +875,28 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                     artist,
                     style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
-                  trailing: Text(
-                    songDurationLabel,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        songDurationLabel,
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                      if (videoId.isNotEmpty)
+                        IconButton(
+                          onPressed: () => context
+                              .read<LikedSongsProvider>()
+                              .toggleLike(song),
+                          icon: Icon(
+                            isLiked
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                            color: colorScheme.onSurface,
+                            size: 20,
+                          ),
+                          splashRadius: 18,
+                        ),
+                    ],
                   ),
                   onTap: () => _playDriveSong(index: sourceIndex),
                 ),

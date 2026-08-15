@@ -1131,6 +1131,46 @@ class PlaybackModel extends ChangeNotifier {
     _persistQueueState();
   }
 
+  void appendToQueue(dynamic item) {
+    _exitRemoteControl();
+    _playlistItems = List<dynamic>.from(_playlistItems)..add(item);
+    final sourceIndex = _playlistItems.length - 1;
+
+    if (_playOrder.isEmpty) {
+      _playOrder = <int>[sourceIndex];
+      _currentOrderIndex = 0;
+    } else {
+      _playOrder = List<int>.from(_playOrder)..add(sourceIndex);
+      if (_currentOrderIndex < 0) {
+        _currentOrderIndex = 0;
+      }
+    }
+
+    _refreshQueueWindow();
+    unawaited(_prefetchAhead());
+    notifyListeners();
+    _persistQueueState();
+  }
+
+  void reorderQueue(int oldQueueIndex, int newQueueIndex) {
+    if (_isRemoteControlling) return;
+    if (oldQueueIndex <= 0 || newQueueIndex <= 0) return;
+    if (_playOrder.isEmpty || _currentOrderIndex < 0) return;
+    final oldOrderIndex = _currentOrderIndex + oldQueueIndex;
+    final newOrderIndex = _currentOrderIndex + newQueueIndex;
+    if (oldOrderIndex < 0 || oldOrderIndex >= _playOrder.length) return;
+    if (newOrderIndex < 0 || newOrderIndex >= _playOrder.length) return;
+    if (oldOrderIndex == newOrderIndex) return;
+    final updated = List<int>.from(_playOrder);
+    final sourceIndex = updated.removeAt(oldOrderIndex);
+    updated.insert(newOrderIndex, sourceIndex);
+    _playOrder = updated;
+    _refreshQueueWindow();
+    unawaited(_prefetchAhead());
+    notifyListeners();
+    _persistQueueState();
+  }
+
   void clearUpNextQueue() {
     if (_isRemoteControlling) return;
     if (_playOrder.isEmpty || _currentOrderIndex < 0) return;

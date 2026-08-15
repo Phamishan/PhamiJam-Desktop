@@ -1407,6 +1407,99 @@ class _HomeState extends State<Home> {
                                 ),
                               ),
                             )
+                          else if (canRemove)
+                            ReorderableListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              buildDefaultDragHandles: false,
+                              itemCount: queue.length - 1,
+                              onReorderItem: (oldIndex, newIndex) {
+                                playback.reorderQueue(
+                                  oldIndex + 1,
+                                  newIndex + 1,
+                                );
+                              },
+                              itemBuilder: (context, offset) {
+                                final index = offset + 1;
+                                final item = queue[index];
+                                final subtitle = _queueSubtitle(item);
+                                return Column(
+                                  key: ValueKey('queue-item-$index'),
+                                  children: [
+                                    Material(
+                                      type: MaterialType.transparency,
+                                      child: ListTile(
+                                        leading: Text(
+                                          '$index',
+                                          style: TextStyle(
+                                            color: onSheet.withValues(
+                                              alpha: 0.54,
+                                            ),
+                                          ),
+                                        ),
+                                        title: Text(
+                                          _queueTitle(item),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(color: onSheet),
+                                        ),
+                                        subtitle: subtitle == null
+                                            ? null
+                                            : Text(
+                                                subtitle,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: onSheet.withValues(
+                                                    alpha: 0.7,
+                                                  ),
+                                                ),
+                                              ),
+                                        trailing: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              icon: Icon(
+                                                Icons.close_rounded,
+                                                color: onSheet.withValues(
+                                                  alpha: 0.7,
+                                                ),
+                                              ),
+                                              tooltip: 'Remove from queue',
+                                              onPressed: () => playback
+                                                  .removeFromQueue(index),
+                                            ),
+                                            ReorderableDragStartListener(
+                                              index: offset,
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                    ),
+                                                child: Icon(
+                                                  Icons.drag_handle_rounded,
+                                                  color: onSheet.withValues(
+                                                    alpha: 0.7,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        onTap: () async {
+                                          Navigator.of(context).pop();
+                                          await _onQueueItemTap(index);
+                                        },
+                                      ),
+                                    ),
+                                    Divider(
+                                      color: onSheet.withValues(alpha: 0.12),
+                                      height: 1,
+                                    ),
+                                  ],
+                                );
+                              },
+                            )
                           else
                             ...List.generate(queue.length - 1, (offset) {
                               final index = offset + 1;
@@ -1443,19 +1536,6 @@ class _HomeState extends State<Home> {
                                                 ),
                                               ),
                                             ),
-                                      trailing: canRemove
-                                          ? IconButton(
-                                              icon: Icon(
-                                                Icons.close_rounded,
-                                                color: onSheet.withValues(
-                                                  alpha: 0.7,
-                                                ),
-                                              ),
-                                              tooltip: 'Remove from queue',
-                                              onPressed: () => playback
-                                                  .removeFromQueue(index),
-                                            )
-                                          : null,
                                       onTap: () async {
                                         Navigator.of(context).pop();
                                         await _onQueueItemTap(index);

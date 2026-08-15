@@ -713,6 +713,20 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     AppFlushbar.info(context, '"$title" will play next.');
   }
 
+  void _appendYouTubeSongToQueue(Map<String, dynamic> song) {
+    final videoId = (song['videoId'] as String?) ?? '';
+    if (videoId.isEmpty) {
+      if (!mounted) return;
+      AppFlushbar.error(context, 'This song cannot be queued.');
+      return;
+    }
+
+    _playback.appendToQueue(Map<String, dynamic>.from(song));
+    if (!mounted) return;
+    final title = (song['title'] as String?) ?? 'Song';
+    AppFlushbar.info(context, '"$title" added to queue.');
+  }
+
   Future<void> _removeSongFromPlaylist(String videoId, String title) async {
     final playlistId = _playlistId;
     if (playlistId == null || videoId.isEmpty || _removingVideoId != null) {
@@ -1108,6 +1122,11 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                 label: const Text('Add to play next'),
                               ),
                               MenuItem<String>(
+                                value: 'add_to_queue',
+                                icon: const Icon(Icons.queue_music_rounded),
+                                label: const Text('Add to queue'),
+                              ),
+                              MenuItem<String>(
                                 value: 'add_to_playlist',
                                 icon: const Icon(Icons.playlist_add_rounded),
                                 label: const Text('Add to playlist'),
@@ -1150,6 +1169,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                               _enterSelectionMode(videoId);
                             } else if (value == 'play_next') {
                               _addYouTubeSongToQueue(song);
+                            } else if (value == 'add_to_queue') {
+                              _appendYouTubeSongToQueue(song);
                             } else if (value == 'add_to_playlist') {
                               if (_selectionMode &&
                                   _selectedVideoIds.isNotEmpty) {
