@@ -75,6 +75,8 @@
   - Added Edit and Delete playlist options to playlist cards
   - Added a full menu to Recently Played tracks
   - Improved thumbnail quality on search, artist, and album pages
+- 1.1.1 - 17/08/2026
+  - Fixed the app failing to launch after updating (installer was missing a required plugin file)
 
 ## Screenshots:
 
