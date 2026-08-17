@@ -27,6 +27,8 @@ class PlaybackInterface extends StatefulWidget {
   final VoidCallback? onArtistTap;
   final VoidCallback? onLyricsPressed;
   final VoidCallback? onSleepTimerPressed;
+  final VoidCallback? onSharePressed;
+  final VoidCallback? onSharePlaylistPressed;
   final bool hasSleepTimer;
 
   const PlaybackInterface({
@@ -53,6 +55,8 @@ class PlaybackInterface extends StatefulWidget {
     this.onArtistTap,
     this.onLyricsPressed,
     this.onSleepTimerPressed,
+    this.onSharePressed,
+    this.onSharePlaylistPressed,
     this.hasSleepTimer = false,
   });
 
@@ -128,6 +132,53 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
     } else {
       widget.onShuffle();
     }
+  }
+
+  Widget _buildShareButton(ColorScheme colorScheme) {
+    final shareSong = widget.onSharePressed;
+    final sharePlaylist = widget.onSharePlaylistPressed;
+    if (shareSong == null && sharePlaylist == null) {
+      return const SizedBox.shrink();
+    }
+    if (sharePlaylist == null) {
+      return IconButton(
+        onPressed: shareSong,
+        tooltip: 'Share song',
+        icon: Icon(Icons.share_rounded, color: colorScheme.primary),
+      );
+    }
+    return PopupMenuButton<String>(
+      tooltip: 'Share',
+      icon: Icon(Icons.share_rounded, color: colorScheme.primary),
+      splashRadius: 16,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      onSelected: (value) {
+        if (value == 'share_song') {
+          shareSong?.call();
+        } else if (value == 'share_playlist') {
+          sharePlaylist.call();
+        }
+      },
+      itemBuilder: (context) => [
+        if (shareSong != null)
+          const PopupMenuItem(
+            value: 'share_song',
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.music_note_rounded),
+              title: Text('Share song'),
+            ),
+          ),
+        const PopupMenuItem(
+          value: 'share_playlist',
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.queue_music_rounded),
+            title: Text('Share playlist'),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -312,6 +363,7 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        _buildShareButton(colorScheme),
                         if (widget.onLyricsPressed != null)
                           IconButton(
                             onPressed: widget.onLyricsPressed,

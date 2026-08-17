@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
+import 'package:phamijam/components/delete_playlist_dialog.dart';
+import 'package:phamijam/components/edit_playlist_dialog.dart';
+import 'package:phamijam/services/share_link_service.dart';
 
 class HomePlaylistCard extends StatefulWidget {
   final Map<String, dynamic> playlist;
@@ -8,6 +11,9 @@ class HomePlaylistCard extends StatefulWidget {
   final VoidCallback? onPlay;
   final bool isPinned;
   final VoidCallback? onTogglePin;
+  final void Function(String title, String description, String privacyStatus)?
+  onEdited;
+  final VoidCallback? onDeleted;
 
   const HomePlaylistCard({
     super.key,
@@ -16,6 +22,8 @@ class HomePlaylistCard extends StatefulWidget {
     this.onPlay,
     this.isPinned = false,
     this.onTogglePin,
+    this.onEdited,
+    this.onDeleted,
     this.width = 148,
   });
 
@@ -26,8 +34,66 @@ class HomePlaylistCard extends StatefulWidget {
 class _HomePlaylistCardState extends State<HomePlaylistCard> {
   bool _hovering = false;
 
+  String? get _playlistId => widget.playlist['playlistId'] as String?;
+
+  bool get _canShare =>
+      (_playlistId ?? '').isNotEmpty &&
+      (widget.playlist['privacyStatus'] as String?) != 'private';
+
+  List<({String value, IconData icon, String label})> _menuEntries() {
+    return [
+      if (widget.onTogglePin != null)
+        (
+          value: 'toggle_pin',
+          icon: widget.isPinned
+              ? Icons.push_pin_outlined
+              : Icons.push_pin_rounded,
+          label: widget.isPinned ? 'Unpin playlist' : 'Pin playlist',
+        ),
+      if (_canShare)
+        (value: 'share', icon: Icons.share_rounded, label: 'Share playlist'),
+      if (widget.onEdited != null && (_playlistId ?? '').isNotEmpty)
+        (value: 'edit', icon: Icons.edit_rounded, label: 'Edit playlist'),
+      if (widget.onDeleted != null && (_playlistId ?? '').isNotEmpty)
+        (value: 'delete', icon: Icons.delete_rounded, label: 'Delete playlist'),
+    ];
+  }
+
+  void _handleMenuSelection(String? value) {
+    final playlistId = _playlistId;
+    if (value == 'toggle_pin') {
+      widget.onTogglePin?.call();
+    } else if (value == 'share') {
+      if (playlistId != null) {
+        ShareLinkService.sharePlaylist(context, playlistId);
+      }
+    } else if (value == 'edit') {
+      if (playlistId == null) return;
+      showEditPlaylistDialog(
+        context,
+        playlistId: playlistId,
+        initialTitle: (widget.playlist['title'] as String?) ?? '',
+        initialDescription: (widget.playlist['description'] as String?) ?? '',
+        initialPrivacyStatus:
+            (widget.playlist['privacyStatus'] as String?) ?? 'public',
+        onUpdated: (title, description, privacyStatus) {
+          widget.onEdited?.call(title, description, privacyStatus);
+        },
+      );
+    } else if (value == 'delete') {
+      if (playlistId == null) return;
+      confirmDeletePlaylist(
+        context,
+        playlistId: playlistId,
+        playlistTitle: (widget.playlist['title'] as String?) ?? 'Untitled playlist',
+        onDeleted: () => widget.onDeleted?.call(),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final menuEntries = _menuEntries();
     final colorScheme = Theme.of(context).colorScheme;
     final title = (widget.playlist['title'] as String?) ?? 'Untitled playlist';
     final itemCount = (widget.playlist['itemCount'] as int?) ?? 0;
@@ -105,7 +171,7 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
                         ),
                       ),
                     ),
-                  if (widget.onTogglePin != null)
+                  if (menuEntries.isNotEmpty)
                     Positioned(
                       top: 4,
                       right: 4,
@@ -118,26 +184,17 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),
-                          onSelected: (value) {
-                            if (value == 'toggle_pin') widget.onTogglePin?.call();
-                          },
+                          onSelected: _handleMenuSelection,
                           itemBuilder: (context) => [
-                            PopupMenuItem(
-                              value: 'toggle_pin',
-                              child: ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                leading: Icon(
-                                  widget.isPinned
-                                      ? Icons.push_pin_outlined
-                                      : Icons.push_pin_rounded,
-                                ),
-                                title: Text(
-                                  widget.isPinned
-                                      ? 'Unpin playlist'
-                                      : 'Pin playlist',
+                            for (final entry in menuEntries)
+                              PopupMenuItem(
+                                value: entry.value,
+                                child: ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(entry.icon),
+                                  title: Text(entry.label),
                                 ),
                               ),
-                            ),
                           ],
                           child: const Padding(
                             padding: EdgeInsets.all(7),
@@ -210,27 +267,21 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
       ),
     );
 
-    final onTogglePin = widget.onTogglePin;
-    if (onTogglePin == null) return card;
+    if (menuEntries.isEmpty) return card;
 
     return ContextMenuRegion<String>(
       contextMenu: ContextMenu(
         borderRadius: BorderRadius.circular(12),
         entries: [
-          MenuItem<String>(
-            value: 'toggle_pin',
-            icon: Icon(
-              widget.isPinned
-                  ? Icons.push_pin_outlined
-                  : Icons.push_pin_rounded,
+          for (final entry in menuEntries)
+            MenuItem<String>(
+              value: entry.value,
+              icon: Icon(entry.icon),
+              label: Text(entry.label),
             ),
-            label: Text(widget.isPinned ? 'Unpin playlist' : 'Pin playlist'),
-          ),
         ],
       ),
-      onItemSelected: (value) {
-        if (value == 'toggle_pin') onTogglePin();
-      },
+      onItemSelected: _handleMenuSelection,
       child: card,
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:phamijam/models/play_event.dart';
 import 'package:phamijam/widgets/scrim_icon_button.dart';
 
@@ -7,22 +8,24 @@ class RecentTrackCard extends StatefulWidget {
   final bool isActive;
   final double width;
   final VoidCallback onTap;
-  final VoidCallback? onMore;
   final bool isLiked;
   final VoidCallback? onToggleLike;
   final bool isDownloaded;
   final VoidCallback? onToggleDownload;
+  final List<({String value, IconData icon, String label})> menuEntries;
+  final ValueChanged<String>? onMenuSelected;
 
   const RecentTrackCard({
     super.key,
     required this.event,
     required this.onTap,
     this.isActive = false,
-    this.onMore,
     this.isLiked = false,
     this.onToggleLike,
     this.isDownloaded = false,
     this.onToggleDownload,
+    this.menuEntries = const [],
+    this.onMenuSelected,
     this.width = 140,
   });
 
@@ -40,13 +43,12 @@ class _RecentTrackCardState extends State<RecentTrackCard> {
         ? colorScheme.primary
         : colorScheme.onSurface;
 
-    return MouseRegion(
+    final card = MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
-        onSecondaryTap: widget.onMore,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           width: widget.width,
@@ -103,13 +105,40 @@ class _RecentTrackCardState extends State<RecentTrackCard> {
                         onTap: widget.onToggleLike!,
                       ),
                     ),
-                  if (widget.onMore != null)
+                  if (widget.menuEntries.isNotEmpty)
                     Positioned(
                       top: 4,
                       right: 4,
-                      child: ScrimIconButton(
-                        icon: Icons.playlist_add_rounded,
-                        onTap: widget.onMore!,
+                      child: Material(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        shape: const CircleBorder(),
+                        child: PopupMenuButton<String>(
+                          splashRadius: 16,
+                          borderRadius: BorderRadius.circular(16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          onSelected: widget.onMenuSelected,
+                          itemBuilder: (context) => [
+                            for (final entry in widget.menuEntries)
+                              PopupMenuItem(
+                                value: entry.value,
+                                child: ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(entry.icon),
+                                  title: Text(entry.label),
+                                ),
+                              ),
+                          ],
+                          child: const Padding(
+                            padding: EdgeInsets.all(7),
+                            child: Icon(
+                              Icons.more_vert_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   if (widget.onToggleDownload != null)
@@ -171,6 +200,26 @@ class _RecentTrackCardState extends State<RecentTrackCard> {
           ),
         ),
       ),
+    );
+
+    if (widget.menuEntries.isEmpty) return card;
+
+    return ContextMenuRegion<String>(
+      contextMenu: ContextMenu(
+        borderRadius: BorderRadius.circular(12),
+        entries: [
+          for (final entry in widget.menuEntries)
+            MenuItem<String>(
+              value: entry.value,
+              icon: Icon(entry.icon),
+              label: Text(entry.label),
+            ),
+        ],
+      ),
+      onItemSelected: (value) {
+        if (value != null) widget.onMenuSelected?.call(value);
+      },
+      child: card,
     );
   }
 }

@@ -81,6 +81,9 @@ class PlaybackModel extends ChangeNotifier {
   int _currentOrderIndex = -1;
   String? _sourcePlaylistId;
   String? _sourcePlaylistTitle;
+  String? _sourcePlaylistPrivacyStatus;
+  String? get sourcePlaylistId => _sourcePlaylistId;
+  bool get isSourcePlaylistPrivate => _sourcePlaylistPrivacyStatus == 'private';
   Map<String, dynamic>? suggestedRemovalSong;
   String? suggestedRemovalPlaylistId;
   String? suggestedRemovalPlaylistTitle;
@@ -1030,6 +1033,7 @@ class PlaybackModel extends ChangeNotifier {
     _currentOrderIndex = -1;
     _sourcePlaylistId = null;
     _sourcePlaylistTitle = null;
+    _sourcePlaylistPrivacyStatus = null;
     suggestedRemovalSong = null;
     suggestedRemovalPlaylistId = null;
     suggestedRemovalPlaylistTitle = null;
@@ -1038,15 +1042,22 @@ class PlaybackModel extends ChangeNotifier {
     _persistQueueState();
   }
 
-  void setSourcePlaylist({required String? id, String? title}) {
+  void setSourcePlaylist({
+    required String? id,
+    String? title,
+    String? privacyStatus,
+  }) {
     _sourcePlaylistId = id;
     _sourcePlaylistTitle = title;
+    _sourcePlaylistPrivacyStatus = privacyStatus;
+    notifyListeners();
   }
 
   void setPlaylistQueue(List<dynamic> items, {required int startIndex}) {
     unawaited(_recordPotentialSkip());
     _sourcePlaylistId = null;
     _sourcePlaylistTitle = null;
+    _sourcePlaylistPrivacyStatus = null;
     _exitRemoteControl();
     if (items.isEmpty || startIndex < 0 || startIndex >= items.length) {
       _playlistItems = [];

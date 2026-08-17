@@ -67,6 +67,14 @@
   - Added queue reordering and an "Add to queue" option
   - Added a like button for songs from a connected Google Drive folder
   - Fixed Google Drive error
+- 1.1.0 - 17/08/2026
+  - Fixed missing profile picture and name after signing in with Google
+  - Added playback controls to the Windows taskbar preview
+  - Added sharing for songs and playlists to the now playing bar, playlist cards, and recently played tracks
+  - Added right-click menus to playlist cards on the Home and Library pages
+  - Added Edit and Delete playlist options to playlist cards
+  - Added a full menu to Recently Played tracks
+  - Improved thumbnail quality on search, artist, and album pages
 
 ## Screenshots:
 

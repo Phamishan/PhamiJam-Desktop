@@ -242,12 +242,21 @@ class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
 
     final thumbnails = item['thumbnails'];
     if (thumbnails is List) {
+      var bestUrl = '';
+      var bestArea = -1;
       for (final thumbnail in thumbnails) {
-        if (thumbnail is Map) {
-          final url = _readString(thumbnail['url']);
-          if (url.isNotEmpty) return url;
+        if (thumbnail is! Map) continue;
+        final url = _readString(thumbnail['url']);
+        if (url.isEmpty) continue;
+        final width = (thumbnail['width'] as num?)?.toInt() ?? 0;
+        final height = (thumbnail['height'] as num?)?.toInt() ?? 0;
+        final area = width * height;
+        if (area >= bestArea) {
+          bestArea = area;
+          bestUrl = url;
         }
       }
+      if (bestUrl.isNotEmpty) return bestUrl;
     }
 
     return '';
@@ -763,12 +772,21 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
 
     final thumbnails = item['thumbnails'];
     if (thumbnails is List) {
+      var bestUrl = '';
+      var bestArea = -1;
       for (final thumbnail in thumbnails) {
-        if (thumbnail is Map) {
-          final url = _readString(thumbnail['url']);
-          if (url.isNotEmpty) return url;
+        if (thumbnail is! Map) continue;
+        final url = _readString(thumbnail['url']);
+        if (url.isEmpty) continue;
+        final width = (thumbnail['width'] as num?)?.toInt() ?? 0;
+        final height = (thumbnail['height'] as num?)?.toInt() ?? 0;
+        final area = width * height;
+        if (area >= bestArea) {
+          bestArea = area;
+          bestUrl = url;
         }
       }
+      if (bestUrl.isNotEmpty) return bestUrl;
     }
 
     return '';
@@ -1447,12 +1465,21 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
 
     final thumbnails = item['thumbnails'];
     if (thumbnails is List) {
+      var bestUrl = '';
+      var bestArea = -1;
       for (final thumbnail in thumbnails) {
-        if (thumbnail is Map) {
-          final url = _readString(thumbnail['url']);
-          if (url.isNotEmpty) return url;
+        if (thumbnail is! Map) continue;
+        final url = _readString(thumbnail['url']);
+        if (url.isEmpty) continue;
+        final width = (thumbnail['width'] as num?)?.toInt() ?? 0;
+        final height = (thumbnail['height'] as num?)?.toInt() ?? 0;
+        final area = width * height;
+        if (area >= bestArea) {
+          bestArea = area;
+          bestUrl = url;
         }
       }
+      if (bestUrl.isNotEmpty) return bestUrl;
     }
 
     return '';
@@ -1915,9 +1942,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
               Icon(Icons.play_arrow_rounded, color: colorScheme.onSurface),
             ],
           ),
-          onTap: videoId.isEmpty
-              ? null
-              : () => _playAlbumTrackAtIndex(index),
+          onTap: videoId.isEmpty ? null : () => _playAlbumTrackAtIndex(index),
         ),
       ),
     );

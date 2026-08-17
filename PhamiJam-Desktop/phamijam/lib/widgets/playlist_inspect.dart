@@ -678,6 +678,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
           playback.setSourcePlaylist(
             id: _playlistId,
             title: _displayPlaylistTitle,
+            privacyStatus: _playlistPrivacyStatus,
           );
           _registerQueueHandlersForSongs(
             List<Map<String, dynamic>>.from(_songs),

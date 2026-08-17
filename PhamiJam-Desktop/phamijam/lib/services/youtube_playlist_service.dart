@@ -102,6 +102,7 @@ class YoutubePlaylistService {
     return <String, dynamic>{
       'playlistId': item['id'],
       'title': (snippet['title'] as String?) ?? 'Untitled playlist',
+      'description': (snippet['description'] as String?) ?? '',
       'itemCount': (contentDetails['itemCount'] as num?)?.toInt() ?? 0,
       'thumbnailUrl': _bestThumbnailUrl(snippet),
       'privacyStatus': (status['privacyStatus'] as String?) ?? 'public',
@@ -410,6 +411,85 @@ class YoutubePlaylistService {
       } catch (_) {}
       throw Exception(
         'Failed to remove from playlist (${response.statusCode})$detail.',
+      );
+    }
+  }
+
+  static Future<http.Response> _putWithAutoRefresh(
+    Uri uri, {
+    required Object body,
+  }) async {
+    var accessToken = await _getAccessToken();
+    var response = await http.put(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+        'Content-Type': 'application/json',
+      },
+      body: body,
+    );
+
+    if (response.statusCode == 401) {
+      accessToken = await _getAccessToken(forceRefresh: true);
+      response = await http.put(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'Content-Type': 'application/json',
+        },
+        body: body,
+      );
+    }
+    return response;
+  }
+
+  static Future<void> updatePlaylist({
+    required String playlistId,
+    required String title,
+    required String description,
+    String? privacyStatus,
+  }) async {
+    final response = await _putWithAutoRefresh(
+      Uri.parse(
+        'https://www.googleapis.com/youtube/v3/playlists?part=${privacyStatus == null ? 'snippet' : 'snippet,status'}',
+      ),
+      body: jsonEncode({
+        'id': playlistId,
+        'snippet': {'title': title, 'description': description},
+        if (privacyStatus != null) 'status': {'privacyStatus': privacyStatus},
+      }),
+    );
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      String detail = '';
+      try {
+        final payload = jsonDecode(response.body) as Map<String, dynamic>;
+        final message =
+            (payload['error'] as Map<String, dynamic>?)?['message'] as String?;
+        if (message != null && message.isNotEmpty) detail = ' - $message';
+      } catch (_) {}
+      throw Exception(
+        'Failed to update playlist (${response.statusCode})$detail.',
+      );
+    }
+  }
+
+  static Future<void> deletePlaylist(String playlistId) async {
+    final uri = Uri.parse(
+      'https://www.googleapis.com/youtube/v3/playlists',
+    ).replace(queryParameters: {'id': playlistId});
+
+    final response = await _deleteWithAutoRefresh(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      String detail = '';
+      try {
+        final payload = jsonDecode(response.body) as Map<String, dynamic>;
+        final message =
+            (payload['error'] as Map<String, dynamic>?)?['message'] as String?;
+        if (message != null && message.isNotEmpty) detail = ' - $message';
+      } catch (_) {}
+      throw Exception(
+        'Failed to delete playlist (${response.statusCode})$detail.',
       );
     }
   }

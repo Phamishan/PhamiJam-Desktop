@@ -1,11 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/delete_playlist_dialog.dart';
+import 'package:phamijam/components/edit_playlist_dialog.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/services/share_link_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
 
@@ -112,52 +117,6 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       );
     }
 
-    return response;
-  }
-
-  Future<http.Response> _youtubePutWithAutoRefresh(
-    Uri uri, {
-    required Object body,
-  }) async {
-    var accessToken = await _getAccessToken(forceRefresh: false);
-    var response = await http.put(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $accessToken',
-        'Content-Type': 'application/json',
-      },
-      body: body,
-    );
-
-    if (response.statusCode == 401) {
-      accessToken = await _getAccessToken(forceRefresh: true);
-      response = await http.put(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: body,
-      );
-    }
-
-    return response;
-  }
-
-  Future<http.Response> _youtubeDeleteWithAutoRefresh(Uri uri) async {
-    var accessToken = await _getAccessToken(forceRefresh: false);
-    var response = await http.delete(
-      uri,
-      headers: {'Authorization': 'Bearer $accessToken'},
-    );
-
-    if (response.statusCode == 401) {
-      accessToken = await _getAccessToken(forceRefresh: true);
-      response = await http.delete(
-        uri,
-        headers: {'Authorization': 'Bearer $accessToken'},
-      );
-    }
     return response;
   }
 
@@ -502,132 +461,26 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     }
   }
 
-  Future<void> _deletePlaylist(String playlistId) async {
-    final ensuredToken = await _getAccessToken(forceRefresh: false);
-    if (ensuredToken.isEmpty) {
-      throw Exception(
-        'Unable to authorize playlist deletion. Please sign in again.',
-      );
-    }
-
-    final response = await _youtubeDeleteWithAutoRefresh(
-      Uri.parse(
-        'https://www.googleapis.com/youtube/v3/playlists?id=$playlistId',
-      ),
-    );
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      String detail = '';
-      try {
-        final payload = jsonDecode(response.body) as Map<String, dynamic>;
-        final error = payload['error'] as Map<String, dynamic>?;
-        final message = error?['message'] as String?;
-        if (message != null && message.isNotEmpty) {
-          detail = ': $message';
-        }
-      } catch (_) {}
-
-      throw Exception(
-        'Failed to delete playlist (${response.statusCode})$detail',
-      );
-    }
-  }
-
-  Future<void> _updatePlaylist({
-    required String playlistId,
-    required String title,
-    required String description,
-    String? privacyStatus,
-  }) async {
-    final ensuredToken = await _getAccessToken(forceRefresh: false);
-    if (ensuredToken.isEmpty) {
-      throw Exception(
-        'Unable to authorize playlist update. Please sign in again.',
-      );
-    }
-
-    final response = await _youtubePutWithAutoRefresh(
-      Uri.parse(
-        'https://www.googleapis.com/youtube/v3/playlists?part=${privacyStatus == null ? 'snippet' : 'snippet,status'}',
-      ),
-      body: jsonEncode({
-        'id': playlistId,
-        'snippet': {'title': title, 'description': description},
-        if (privacyStatus != null) 'status': {'privacyStatus': privacyStatus},
-      }),
-    );
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      String detail = '';
-      try {
-        final payload = jsonDecode(response.body) as Map<String, dynamic>;
-        final error = payload['error'] as Map<String, dynamic>?;
-        final message = error?['message'] as String?;
-        if (message != null && message.isNotEmpty) {
-          detail = ': $message';
-        }
-      } catch (_) {}
-
-      throw Exception(
-        'Failed to update playlist (${response.statusCode})$detail',
-      );
-    }
-  }
-
   Future<void> _confirmDeletePlaylist({
     required String playlistId,
     required String playlistTitle,
-  }) async {
-    final colorScheme = Theme.of(context).colorScheme;
-    final shouldDelete = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Delete Playlist'),
-          content: Text(
-            'Delete "$playlistTitle"? This WILL delete the playlist on YouTube as well and cannot be undone.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: colorScheme.error,
-                foregroundColor: colorScheme.onError,
-              ),
-              child: const Text('Delete'),
-            ),
-          ],
-        );
+  }) {
+    return confirmDeletePlaylist(
+      context,
+      playlistId: playlistId,
+      playlistTitle: playlistTitle,
+      onDeleted: () {
+        if (!mounted) return;
+        setState(() {
+          _userPlaylists.removeWhere(
+            (playlist) => (playlist['playlistId'] as String?) == playlistId,
+          );
+        });
+        _cachedUserPlaylists = List<Map<String, dynamic>>.from(_userPlaylists);
+        _cachedErrorMessage = null;
+        unawaited(_fetchUserPlaylists(forceRefresh: true));
       },
     );
-
-    if (shouldDelete != true || !mounted) {
-      return;
-    }
-
-    try {
-      await _deletePlaylist(playlistId);
-      if (!mounted) return;
-
-      setState(() {
-        _userPlaylists.removeWhere(
-          (playlist) => (playlist['playlistId'] as String?) == playlistId,
-        );
-      });
-      _cachedUserPlaylists = List<Map<String, dynamic>>.from(_userPlaylists);
-      _cachedErrorMessage = null;
-
-      AppFlushbar.success(context, 'Playlist deleted successfully.');
-
-      await _fetchUserPlaylists(forceRefresh: true);
-    } catch (e) {
-      if (!mounted) return;
-      AppFlushbar.error(context, '$e');
-    }
   }
 
   void _showCreatePlaylistDialog() {
@@ -825,158 +678,28 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     required String initialDescription,
     required String initialPrivacyStatus,
   }) {
-    final formKey = GlobalKey<FormState>();
-    String title = initialTitle;
-    String description = initialDescription;
-    String privacyStatus = initialPrivacyStatus;
-    bool isSaving = false;
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Edit Playlist'),
-          content: StatefulBuilder(
-            builder: (context, setState) {
-              final colorScheme = Theme.of(context).colorScheme;
-              return SingleChildScrollView(
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextFormField(
-                        initialValue: initialTitle,
-                        decoration: const InputDecoration(labelText: 'Title'),
-                        onChanged: (value) => title = value,
-                        validator: (value) =>
-                            value == null || value.trim().isEmpty
-                            ? 'Enter a title'
-                            : null,
-                      ),
-                      TextFormField(
-                        initialValue: initialDescription,
-                        decoration: const InputDecoration(
-                          labelText: 'Description',
-                        ),
-                        onChanged: (value) => description = value,
-                      ),
-                      const SizedBox(height: 16),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Visibility',
-                          style: Theme.of(context).textTheme.labelLarge,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SegmentedButton<String>(
-                        segments: const [
-                          ButtonSegment(
-                            value: 'private',
-                            label: Text('Private'),
-                            icon: Icon(Icons.lock_rounded),
-                          ),
-                          ButtonSegment(
-                            value: 'unlisted',
-                            label: Text('Unlisted'),
-                            icon: Icon(Icons.link_rounded),
-                          ),
-                          ButtonSegment(
-                            value: 'public',
-                            label: Text('Public'),
-                            icon: Icon(Icons.public_rounded),
-                          ),
-                        ],
-                        selected: {privacyStatus},
-                        showSelectedIcon: false,
-                        onSelectionChanged: (selection) =>
-                            setState(() => privacyStatus = selection.first),
-                        style: SegmentedButton.styleFrom(
-                          backgroundColor: colorScheme.surfaceContainerHigh,
-                          foregroundColor: colorScheme.onSurfaceVariant,
-                          selectedBackgroundColor: colorScheme.primary,
-                          selectedForegroundColor: colorScheme.onPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: isSaving
-                  ? null
-                  : () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: isSaving
-                  ? null
-                  : () async {
-                      if (!formKey.currentState!.validate()) {
-                        return;
-                      }
-
-                      setState(() {
-                        isSaving = true;
-                      });
-
-                      try {
-                        await _updatePlaylist(
-                          playlistId: playlistId,
-                          title: title.trim(),
-                          description: description.trim(),
-                          privacyStatus: privacyStatus == initialPrivacyStatus
-                              ? null
-                              : privacyStatus,
-                        );
-                        if (!mounted) return;
-
-                        if (!dialogContext.mounted) return;
-                        Navigator.of(dialogContext).pop();
-
-                        setState(() {
-                          for (final playlist in _userPlaylists) {
-                            if ((playlist['playlistId'] as String?) ==
-                                playlistId) {
-                              playlist['title'] = title.trim();
-                              playlist['description'] = description.trim();
-                              playlist['privacyStatus'] = privacyStatus;
-                              break;
-                            }
-                          }
-                        });
-                        _cachedUserPlaylists = List<Map<String, dynamic>>.from(
-                          _userPlaylists,
-                        );
-
-                        AppFlushbar.success(
-                          context,
-                          'Playlist updated successfully.',
-                        );
-                        await _fetchUserPlaylists(forceRefresh: true);
-                      } catch (e) {
-                        if (!mounted) return;
-                        AppFlushbar.error(context, '$e');
-                        setState(() {
-                          isSaving = false;
-                        });
-                      }
-                    },
-              child: isSaving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Save'),
-            ),
-          ],
+    showEditPlaylistDialog(
+      context,
+      playlistId: playlistId,
+      initialTitle: initialTitle,
+      initialDescription: initialDescription,
+      initialPrivacyStatus: initialPrivacyStatus,
+      onUpdated: (title, description, privacyStatus) {
+        if (!mounted) return;
+        setState(() {
+          for (final playlist in _userPlaylists) {
+            if ((playlist['playlistId'] as String?) == playlistId) {
+              playlist['title'] = title;
+              playlist['description'] = description;
+              playlist['privacyStatus'] = privacyStatus;
+              break;
+            }
+          }
+        });
+        _cachedUserPlaylists = List<Map<String, dynamic>>.from(
+          _userPlaylists,
         );
+        unawaited(_fetchUserPlaylists(forceRefresh: true));
       },
     );
   }
@@ -1137,62 +860,173 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                         }
                       }
 
+                      final playlistId =
+                          (playlist['playlistId'] as String?) ?? '';
+                      final isPinned =
+                          playlistId.isNotEmpty && pins.isPinned(playlistId);
+                      final privacyStatus =
+                          (playlist['privacyStatus'] as String?) ?? 'public';
+                      final canShare =
+                          playlistId.isNotEmpty && privacyStatus != 'private';
+
+                      void handleTogglePin() {
+                        if (playlistId.isEmpty) return;
+                        pins.togglePin(playlistId);
+                      }
+
+                      void handleShare() {
+                        if (!canShare) return;
+                        ShareLinkService.sharePlaylist(context, playlistId);
+                      }
+
+                      void handleEdit() {
+                        if (playlistId.isEmpty) {
+                          AppFlushbar.error(
+                            context,
+                            'This playlist cannot be edited.',
+                          );
+                          return;
+                        }
+                        _showEditPlaylistDialog(
+                          playlistId: playlistId,
+                          initialTitle: title,
+                          initialDescription: description,
+                          initialPrivacyStatus: privacyStatus,
+                        );
+                      }
+
+                      void handleDelete() {
+                        if (playlistId.isEmpty) {
+                          AppFlushbar.error(
+                            context,
+                            'This playlist cannot be deleted.',
+                          );
+                          return;
+                        }
+                        _confirmDeletePlaylist(
+                          playlistId: playlistId,
+                          playlistTitle: title,
+                        );
+                      }
+
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 5),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: colorScheme.surface,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Material(
-                            type: MaterialType.transparency,
-                            child: ListTile(
-                              leading:
-                                  thumbnailUrl != null &&
-                                      thumbnailUrl.isNotEmpty
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(6),
-                                      child: Image.network(
-                                        thumbnailUrl,
-                                        width: 56,
-                                        height: 56,
-                                        cacheWidth: 112,
-                                        cacheHeight: 112,
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (context, error, stackTrace) =>
-                                                Icon(
-                                                  Icons.playlist_play_rounded,
-                                                  color: colorScheme.onSurface,
-                                                ),
-                                      ),
-                                    )
-                                  : Icon(
-                                      Icons.playlist_play_rounded,
-                                      color: colorScheme.onSurface,
-                                    ),
-                              title: Text(
-                                title,
-                                style: TextStyle(color: colorScheme.onSurface),
-                              ),
-                              subtitle: Text(
-                                subtitle,
-                                style: TextStyle(
-                                  color: colorScheme.onSurfaceVariant,
+                        child: ContextMenuRegion<String>(
+                          contextMenu: ContextMenu(
+                            borderRadius: BorderRadius.circular(12),
+                            entries: [
+                              MenuItem<String>(
+                                value: 'toggle_pin',
+                                icon: Icon(
+                                  isPinned
+                                      ? Icons.push_pin_outlined
+                                      : Icons.push_pin_rounded,
+                                ),
+                                label: Text(
+                                  isPinned ? 'Unpin playlist' : 'Pin playlist',
                                 ),
                               ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Builder(
-                                    builder: (context) {
-                                      final playlistId =
-                                          (playlist['playlistId'] as String?) ??
-                                          '';
-                                      final isPinned =
-                                          playlistId.isNotEmpty &&
-                                          pins.isPinned(playlistId);
-                                      return Container(
+                              if (canShare)
+                                MenuItem<String>(
+                                  value: 'share',
+                                  icon: const Icon(Icons.share_rounded),
+                                  label: const Text('Share playlist'),
+                                ),
+                              MenuItem<String>(
+                                value: 'edit',
+                                icon: const Icon(Icons.edit_rounded),
+                                label: const Text('Edit playlist'),
+                              ),
+                              MenuItem<String>(
+                                value: 'delete',
+                                icon: const Icon(Icons.delete_rounded),
+                                label: const Text('Delete playlist'),
+                              ),
+                            ],
+                          ),
+                          onItemSelected: (value) {
+                            if (value == 'toggle_pin') {
+                              handleTogglePin();
+                            } else if (value == 'share') {
+                              handleShare();
+                            } else if (value == 'edit') {
+                              handleEdit();
+                            } else if (value == 'delete') {
+                              handleDelete();
+                            }
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: colorScheme.surface,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: ListTile(
+                                leading:
+                                    thumbnailUrl != null &&
+                                        thumbnailUrl.isNotEmpty
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.network(
+                                          thumbnailUrl,
+                                          width: 56,
+                                          height: 56,
+                                          cacheWidth: 112,
+                                          cacheHeight: 112,
+                                          fit: BoxFit.cover,
+                                          errorBuilder:
+                                              (context, error, stackTrace) =>
+                                                  Icon(
+                                                    Icons
+                                                        .playlist_play_rounded,
+                                                    color:
+                                                        colorScheme.onSurface,
+                                                  ),
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.playlist_play_rounded,
+                                        color: colorScheme.onSurface,
+                                      ),
+                                title: Text(
+                                  title,
+                                  style: TextStyle(
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  subtitle,
+                                  style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.onSurface
+                                            .withValues(alpha: 0.38),
+                                        borderRadius: BorderRadius.circular(
+                                          6,
+                                        ),
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          isPinned
+                                              ? Icons.push_pin_rounded
+                                              : Icons.push_pin_outlined,
+                                          color: colorScheme.onSurface,
+                                        ),
+                                        onPressed: playlistId.isEmpty
+                                            ? null
+                                            : handleTogglePin,
+                                      ),
+                                    ),
+                                    if (canShare) ...[
+                                      const SizedBox(width: 8),
+                                      Container(
                                         decoration: BoxDecoration(
                                           color: colorScheme.onSurface
                                               .withValues(alpha: 0.38),
@@ -1202,100 +1036,55 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                         ),
                                         child: IconButton(
                                           icon: Icon(
-                                            isPinned
-                                                ? Icons.push_pin_rounded
-                                                : Icons.push_pin_outlined,
+                                            Icons.share_rounded,
                                             color: colorScheme.onSurface,
                                           ),
-                                          onPressed: playlistId.isEmpty
-                                              ? null
-                                              : () =>
-                                                    pins.togglePin(playlistId),
+                                          onPressed: handleShare,
                                         ),
-                                      );
+                                      ),
+                                    ],
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.onSurface
+                                            .withValues(alpha: 0.38),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.edit_rounded,
+                                          color: colorScheme.onSurface,
+                                        ),
+                                        onPressed: handleEdit,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.error,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.delete_rounded,
+                                          color: colorScheme.onError,
+                                        ),
+                                        onPressed: handleDelete,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                onTap: () {
+                                  widget.onTabSelected?.call(
+                                    'playlist_inspect',
+                                    extra: {
+                                      'playlistId': playlist['playlistId'],
+                                      'playlistTitle': title,
+                                      'thumbnailUrl': thumbnailUrl,
                                     },
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.onSurface.withValues(
-                                        alpha: 0.38,
-                                      ),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: IconButton(
-                                      icon: Icon(
-                                        Icons.edit_rounded,
-                                        color: colorScheme.onSurface,
-                                      ),
-                                      onPressed: () {
-                                        final playlistId =
-                                            (playlist['playlistId']
-                                                as String?) ??
-                                            '';
-                                        if (playlistId.isEmpty) {
-                                          AppFlushbar.error(
-                                            context,
-                                            'This playlist cannot be edited.',
-                                          );
-                                          return;
-                                        }
-
-                                        _showEditPlaylistDialog(
-                                          playlistId: playlistId,
-                                          initialTitle: title,
-                                          initialDescription: description,
-                                          initialPrivacyStatus:
-                                              (playlist['privacyStatus']
-                                                  as String?) ??
-                                              'public',
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.error,
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: IconButton(
-                                      icon: Icon(
-                                        Icons.delete_rounded,
-                                        color: colorScheme.onError,
-                                      ),
-                                      onPressed: () {
-                                        final playlistId =
-                                            (playlist['playlistId']
-                                                as String?) ??
-                                            '';
-                                        if (playlistId.isEmpty) {
-                                          AppFlushbar.error(
-                                            context,
-                                            'This playlist cannot be deleted.',
-                                          );
-                                          return;
-                                        }
-
-                                        _confirmDeletePlaylist(
-                                          playlistId: playlistId,
-                                          playlistTitle: title,
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
+                                  );
+                                },
                               ),
-                              onTap: () {
-                                widget.onTabSelected?.call(
-                                  'playlist_inspect',
-                                  extra: {
-                                    'playlistId': playlist['playlistId'],
-                                    'playlistTitle': title,
-                                    'thumbnailUrl': thumbnailUrl,
-                                  },
-                                );
-                              },
                             ),
                           ),
                         ),
@@ -1339,70 +1128,127 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     final title = (playlist['title'] as String?) ?? 'Unknown Playlist';
     final itemCount = (playlist['itemCount'] as int?) ?? 0;
     final thumbnailUrl = (playlist['thumbnailUrl'] as String?) ?? '';
+    final privacyStatus = (playlist['privacyStatus'] as String?) ?? 'public';
+    final canShare = playlistId.isNotEmpty && privacyStatus != 'private';
+
+    void handleUnsave() {
+      if (playlistId.isEmpty) return;
+      context.read<SavedPlaylistsProvider>().unsave(playlistId);
+    }
+
+    void handleShare() {
+      if (!canShare) return;
+      ShareLinkService.sharePlaylist(context, playlistId);
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Container(
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(8),
+      child: ContextMenuRegion<String>(
+        contextMenu: ContextMenu(
+          borderRadius: BorderRadius.circular(12),
+          entries: [
+            if (canShare)
+              MenuItem<String>(
+                value: 'share',
+                icon: const Icon(Icons.share_rounded),
+                label: const Text('Share playlist'),
+              ),
+            MenuItem<String>(
+              value: 'unsave',
+              icon: const Icon(Icons.bookmark_remove_outlined),
+              label: const Text('Remove from saved'),
+            ),
+          ],
         ),
-        child: Material(
-          type: MaterialType.transparency,
-          child: ListTile(
-            leading: thumbnailUrl.isEmpty
-                ? Icon(
-                    Icons.playlist_play_rounded,
-                    color: colorScheme.onSurface,
-                  )
-                : ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.network(
-                      thumbnailUrl,
-                      width: 56,
-                      height: 56,
-                      cacheWidth: 112,
-                      cacheHeight: 112,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Icon(
-                        Icons.playlist_play_rounded,
-                        color: colorScheme.onSurface,
+        onItemSelected: (value) {
+          if (value == 'share') {
+            handleShare();
+          } else if (value == 'unsave') {
+            handleUnsave();
+          }
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: ListTile(
+              leading: thumbnailUrl.isEmpty
+                  ? Icon(
+                      Icons.playlist_play_rounded,
+                      color: colorScheme.onSurface,
+                    )
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.network(
+                        thumbnailUrl,
+                        width: 56,
+                        height: 56,
+                        cacheWidth: 112,
+                        cacheHeight: 112,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => Icon(
+                          Icons.playlist_play_rounded,
+                          color: colorScheme.onSurface,
+                        ),
                       ),
                     ),
-                  ),
-            title: Text(title, style: TextStyle(color: colorScheme.onSurface)),
-            subtitle: Text(
-              '$itemCount videos',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-            trailing: Container(
-              decoration: BoxDecoration(
-                color: colorScheme.onSurface.withValues(alpha: 0.38),
-                borderRadius: BorderRadius.circular(6),
+              title: Text(
+                title,
+                style: TextStyle(color: colorScheme.onSurface),
               ),
-              child: IconButton(
-                icon: Icon(
-                  Icons.bookmark_remove_outlined,
-                  color: colorScheme.onSurface,
-                ),
-                onPressed: playlistId.isEmpty
-                    ? null
-                    : () => context.read<SavedPlaylistsProvider>().unsave(
-                        playlistId,
+              subtitle: Text(
+                '$itemCount videos',
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (canShare) ...[
+                    Container(
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurface.withValues(alpha: 0.38),
+                        borderRadius: BorderRadius.circular(6),
                       ),
-              ),
-            ),
-            onTap: playlistId.isEmpty
-                ? null
-                : () => widget.onTabSelected?.call(
-                    'playlist_inspect',
-                    extra: {
-                      'playlistId': playlistId,
-                      'playlistTitle': title,
-                      'thumbnailUrl': thumbnailUrl,
-                      'isOwnedByUser': false,
-                    },
+                      child: IconButton(
+                        icon: Icon(
+                          Icons.share_rounded,
+                          color: colorScheme.onSurface,
+                        ),
+                        onPressed: handleShare,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Container(
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurface.withValues(alpha: 0.38),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.bookmark_remove_outlined,
+                        color: colorScheme.onSurface,
+                      ),
+                      onPressed: playlistId.isEmpty ? null : handleUnsave,
+                    ),
                   ),
+                ],
+              ),
+              onTap: playlistId.isEmpty
+                  ? null
+                  : () => widget.onTabSelected?.call(
+                      'playlist_inspect',
+                      extra: {
+                        'playlistId': playlistId,
+                        'playlistTitle': title,
+                        'thumbnailUrl': thumbnailUrl,
+                        'isOwnedByUser': false,
+                      },
+                    ),
+            ),
           ),
         ),
       ),

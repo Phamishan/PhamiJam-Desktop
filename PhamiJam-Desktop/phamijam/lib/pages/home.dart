@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
+import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_interface.dart';
 import 'package:phamijam/pages/fullscreen_video_page.dart';
 import 'package:phamijam/components/playback_model.dart';
@@ -25,6 +27,7 @@ import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/widgets/converter.dart';
@@ -41,6 +44,7 @@ import 'package:phamijam/widgets/local_files.dart';
 import 'package:phamijam/widgets/lyrics_sheet.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:provider/provider.dart';
+import 'package:windows_taskbar/windows_taskbar.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt;
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
 
@@ -73,6 +77,7 @@ class _HomeState extends State<Home> {
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   String? userDisplayName;
+  bool _avatarLoadFailed = false;
   String _selectedTab = 'home';
   Map<String, dynamic>? _selectedTabExtra;
   final Map<String, _YouTubeResolvedStreams> _resolvedStreamsCache =
@@ -85,6 +90,8 @@ class _HomeState extends State<Home> {
   bool _showingSkipSuggestion = false;
   String? _homeDashboardError;
   String? _currentlyLoadingRecentVideoId;
+  bool? _taskbarHasTrack;
+  bool? _taskbarIsPlaying;
   static const Duration _resolvedStreamsTtl = Duration(minutes: 20);
   static const Map<String, String> _youtubeHttpHeaders = {
     'User-Agent':
@@ -125,6 +132,10 @@ class _HomeState extends State<Home> {
       unawaited(_handleDeepLink(pendingDeepLink));
     }
     _playback.addListener(_handlePlaybackChanged);
+    if (Platform.isWindows) {
+      _playback.addListener(_updateTaskbarThumbnailToolbar);
+      _updateTaskbarThumbnailToolbar();
+    }
   }
 
   void _handlePlaybackChanged() {
@@ -143,6 +154,43 @@ class _HomeState extends State<Home> {
     ).whenComplete(() {
       _showingSkipSuggestion = false;
     });
+  }
+
+  void _updateTaskbarThumbnailToolbar() {
+    final hasTrack = (_playback.currentSongPath ?? '').isNotEmpty;
+    final isPlaying = _playback.isPlaying;
+    if (_taskbarHasTrack == hasTrack && _taskbarIsPlaying == isPlaying) {
+      return;
+    }
+    _taskbarHasTrack = hasTrack;
+    _taskbarIsPlaying = isPlaying;
+
+    if (!hasTrack) {
+      WindowsTaskbar.resetThumbnailToolbar();
+      return;
+    }
+
+    WindowsTaskbar.setThumbnailToolbar([
+      ThumbnailToolbarButton(
+        ThumbnailToolbarAssetIcon('assets/icons/taskbar/previous.ico'),
+        'Previous',
+        () => _playback.playPrevious(),
+      ),
+      ThumbnailToolbarButton(
+        ThumbnailToolbarAssetIcon(
+          isPlaying
+              ? 'assets/icons/taskbar/pause.ico'
+              : 'assets/icons/taskbar/play.ico',
+        ),
+        isPlaying ? 'Pause' : 'Play',
+        () => _handlePlayPauseToggle(),
+      ),
+      ThumbnailToolbarButton(
+        ThumbnailToolbarAssetIcon('assets/icons/taskbar/next.ico'),
+        'Next',
+        () => _playback.playNext(),
+      ),
+    ]);
   }
 
   Future<void> _showSkipSuggestionDialog(
@@ -271,6 +319,46 @@ class _HomeState extends State<Home> {
     'thumbnailUrl': event.thumbnailUrl,
     'durationSeconds': 0,
   };
+
+  void _handleRecentTrackMenuSelection(String value, PlayEvent event) {
+    if (event.videoId.isEmpty) {
+      AppFlushbar.error(context, 'This song is unavailable.');
+      return;
+    }
+    switch (value) {
+      case 'play_next':
+        _playback.addToQueue(_playEventToSongMap(event));
+        AppFlushbar.info(context, '"${event.title}" will play next.');
+      case 'add_to_queue':
+        _playback.appendToQueue(_playEventToSongMap(event));
+        AppFlushbar.info(context, '"${event.title}" added to queue.');
+      case 'add_to_playlist':
+        showAddToPlaylistDialog(
+          context,
+          videoId: event.videoId,
+          songTitle: event.title,
+        );
+      case 'download':
+        _downloads.download(
+          videoId: event.videoId,
+          songName: event.title,
+          artistName: event.artist,
+          artistId: event.channelId,
+        );
+      case 'remove_download':
+        _downloads.remove(event.videoId);
+      case 'edit_trim':
+        showEditSongDialog(
+          context,
+          videoId: event.videoId,
+          title: event.title,
+          artist: event.artist,
+          thumbnailUrl: event.thumbnailUrl,
+        );
+      case 'share':
+        ShareLinkService.shareSong(context, event.videoId);
+    }
+  }
 
   void _registerRecentlyPlayedQueueHandlers() {
     final songs = [
@@ -728,6 +816,24 @@ class _HomeState extends State<Home> {
                   onTogglePin: playlistId == null
                       ? null
                       : () => pins.togglePin(playlistId),
+                  onEdited: playlistId == null
+                      ? null
+                      : (title, description, privacyStatus) {
+                          setState(() {
+                            playlist['title'] = title;
+                            playlist['description'] = description;
+                            playlist['privacyStatus'] = privacyStatus;
+                          });
+                        },
+                  onDeleted: playlistId == null
+                      ? null
+                      : () {
+                          setState(() {
+                            _myPlaylists.removeWhere(
+                              (p) => (p['playlistId'] as String?) == playlistId,
+                            );
+                          });
+                        },
                   onTap: () => _onSidebarTabSelected(
                     'playlist_inspect',
                     extra: {
@@ -765,21 +871,49 @@ class _HomeState extends State<Home> {
                     (playback) =>
                         playback.currentSongPath == 'yt:${event.videoId}',
                   );
+                  final isDownloaded = downloads.isDownloaded(event.videoId);
                   return RecentTrackCard(
                     event: event,
                     isActive: isCurrentSong,
                     onTap: () => _playRecentlyPlayedTrack(index),
-                    onMore: () => showAddToPlaylistDialog(
-                      context,
-                      videoId: event.videoId,
-                      songTitle: event.title,
-                    ),
+                    menuEntries: [
+                      (
+                        value: 'play_next',
+                        icon: Icons.playlist_play_rounded,
+                        label: 'Add to play next',
+                      ),
+                      (
+                        value: 'add_to_queue',
+                        icon: Icons.queue_music_rounded,
+                        label: 'Add to queue',
+                      ),
+                      (
+                        value: 'add_to_playlist',
+                        icon: Icons.playlist_add_rounded,
+                        label: 'Add to playlist',
+                      ),
+                      (
+                        value: isDownloaded ? 'remove_download' : 'download',
+                        icon: isDownloaded
+                            ? Icons.download_done_rounded
+                            : Icons.download_rounded,
+                        label: isDownloaded ? 'Remove download' : 'Download',
+                      ),
+                      (
+                        value: 'edit_trim',
+                        icon: Icons.content_cut_rounded,
+                        label: 'Edit song',
+                      ),
+                      (value: 'share', icon: Icons.share_rounded, label: 'Share'),
+                    ],
+                    onMenuSelected: (value) =>
+                        _handleRecentTrackMenuSelection(value, event),
                     isLiked: likedSongs.isLiked(event.videoId),
                     onToggleLike: () =>
                         likedSongs.toggleLike(_playEventToSongMap(event)),
-                    isDownloaded: downloads.isDownloaded(event.videoId),
+                    isDownloaded: isDownloaded,
                     onToggleDownload: () {
-                      if (downloads.isDownloaded(event.videoId)) {
+                      if (isDownloaded) {
                         downloads.remove(event.videoId);
                       } else {
                         downloads.download(
@@ -1209,6 +1343,10 @@ class _HomeState extends State<Home> {
   @override
   void dispose() {
     _playback.removeListener(_handlePlaybackChanged);
+    if (Platform.isWindows) {
+      _playback.removeListener(_updateTaskbarThumbnailToolbar);
+      WindowsTaskbar.resetThumbnailToolbar();
+    }
     _settings.removeListener(_handleSettingsChanged);
     _youtubeExplode.close();
     _ytmusic?.close();
@@ -1227,6 +1365,7 @@ class _HomeState extends State<Home> {
     if (user != null && mounted) {
       setState(() {
         userDisplayName = user.displayName ?? user.email;
+        _avatarLoadFailed = false;
       });
     }
   }
@@ -1630,6 +1769,23 @@ class _HomeState extends State<Home> {
             onSleepTimerPressed: remote != null
                 ? null
                 : () => showSleepTimerDialog(context),
+            onSharePressed:
+                (remote != null ||
+                    (playback.currentYouTubeVideoId ?? '').isEmpty)
+                ? null
+                : () => ShareLinkService.shareSong(
+                    context,
+                    playback.currentYouTubeVideoId!,
+                  ),
+            onSharePlaylistPressed:
+                (remote != null ||
+                    playback.sourcePlaylistId == null ||
+                    playback.isSourcePlaylistPrivate)
+                ? null
+                : () => ShareLinkService.sharePlaylist(
+                    context,
+                    playback.sourcePlaylistId!,
+                  ),
             hasSleepTimer: playback.hasSleepTimer,
           );
         },
@@ -1738,11 +1894,35 @@ class _HomeState extends State<Home> {
                             onPressed: () => setState(() {
                               _selectedTab = 'profile';
                             }),
-                            icon: CircleAvatar(
-                              backgroundImage: NetworkImage(
-                                _auth.currentUser?.photoURL ?? '',
-                              ),
-                              radius: 20,
+                            icon: Builder(
+                              builder: (context) {
+                                final photoUrl =
+                                    _auth.currentUser?.photoURL;
+                                final showPhoto =
+                                    photoUrl != null &&
+                                    photoUrl.isNotEmpty &&
+                                    !_avatarLoadFailed;
+                                return CircleAvatar(
+                                  radius: 20,
+                                  backgroundImage: showPhoto
+                                      ? NetworkImage(photoUrl)
+                                      : null,
+                                  onBackgroundImageError: showPhoto
+                                      ? (error, stackTrace) {
+                                          if (!mounted) return;
+                                          setState(
+                                            () => _avatarLoadFailed = true,
+                                          );
+                                        }
+                                      : null,
+                                  child: showPhoto
+                                      ? null
+                                      : Icon(
+                                          Icons.person_rounded,
+                                          color: colorScheme.onSurface,
+                                        ),
+                                );
+                              },
                             ),
                           ),
                           IconButton(
