@@ -84,6 +84,10 @@
   - Fixed share link "Listen on PhamiJam" redirect (needs testing)
   - Added social feature
   - Added customizable profile pages
+- 1.1.2.1 - 19/08/2026
+  - Signout button fix
+  - Profile widget fixes
+  - Lyrics fixes
 
 ## Screenshots:
 

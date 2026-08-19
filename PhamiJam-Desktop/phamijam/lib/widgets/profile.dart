@@ -93,7 +93,10 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                 ),
                 if (editing) ...[
-                  TextButton(onPressed: _cancelEdit, child: const Text('Cancel')),
+                  TextButton(
+                    onPressed: _cancelEdit,
+                    child: const Text('Cancel'),
+                  ),
                   const SizedBox(width: 4),
                   FilledButton(
                     onPressed: _saving ? null : _saveEdit,
@@ -108,12 +111,12 @@ class _ProfilePageState extends State<ProfilePage> {
                 ] else
                   IconButton(
                     icon: const Icon(Icons.ios_share_rounded),
-                    tooltip: 'Share profile',
                     onPressed: () => ShareLinkService.shareProfile(
                       context,
                       uid,
                       username: profileProvider.profile.username,
-                      subject: '${profileProvider.effectiveDisplayName} on PhamiJam',
+                      subject:
+                          '${profileProvider.effectiveDisplayName} on PhamiJam',
                     ),
                   ),
               ],
@@ -190,7 +193,11 @@ class _ProfileHeader extends StatelessWidget {
                 ? NetworkImage(profileProvider.effectivePhotoUrl!)
                 : null,
             child: profileProvider.effectivePhotoUrl == null
-                ? Icon(Icons.person_rounded, color: colorScheme.onPrimary, size: 28)
+                ? Icon(
+                    Icons.person_rounded,
+                    color: colorScheme.onPrimary,
+                    size: 28,
+                  )
                 : null,
           ),
           const SizedBox(width: 16),
@@ -211,7 +218,10 @@ class _ProfileHeader extends StatelessWidget {
                 if ((profile.username ?? '').trim().isNotEmpty)
                   Text(
                     '@${profile.username}',
-                    style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
                   ),
                 if ((profile.bio ?? '').trim().isNotEmpty) ...[
                   const SizedBox(height: 4),
@@ -225,11 +235,7 @@ class _ProfileHeader extends StatelessWidget {
               ],
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.edit_rounded),
-            tooltip: 'Edit bio',
-            onPressed: onEdit,
-          ),
+          IconButton(icon: const Icon(Icons.edit_rounded), onPressed: onEdit),
         ],
       ),
     );
@@ -256,7 +262,9 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
   void initState() {
     super.initState();
     final profile = widget.profileProvider.profile;
-    _nameController = TextEditingController(text: profile.displayNameOverride ?? '');
+    _nameController = TextEditingController(
+      text: profile.displayNameOverride ?? '',
+    );
     _usernameController = TextEditingController(text: profile.username ?? '');
     _bioController = TextEditingController(text: profile.bio ?? '');
   }
@@ -438,7 +446,10 @@ class _EmptyGridHint extends StatelessWidget {
         children: [
           Text(
             'Your profile is empty',
-            style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -446,7 +457,10 @@ class _EmptyGridHint extends StatelessWidget {
             style: TextStyle(color: colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 12),
-          FilledButton.tonal(onPressed: onEdit, child: const Text('Edit layout')),
+          FilledButton.tonal(
+            onPressed: onEdit,
+            child: const Text('Edit layout'),
+          ),
         ],
       ),
     );

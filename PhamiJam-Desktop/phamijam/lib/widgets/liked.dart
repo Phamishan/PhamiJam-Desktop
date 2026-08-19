@@ -655,7 +655,6 @@ class _LikedPageState extends State<LikedPage> {
                       const SizedBox(width: 12),
                     ],
                     PopupMenuButton<_LikedSort>(
-                      tooltip: 'Sort songs',
                       initialValue: _sort,
                       onSelected: (value) => setState(() => _sort = value),
                       shape: RoundedRectangleBorder(

@@ -1645,7 +1645,6 @@ class _HomeState extends State<Home> {
                                                   alpha: 0.7,
                                                 ),
                                               ),
-                                              tooltip: 'Remove from queue',
                                               onPressed: () => playback
                                                   .removeFromQueue(index),
                                             ),
@@ -1938,7 +1937,6 @@ class _HomeState extends State<Home> {
                                 color: colorScheme.onSurface,
                               );
                               return IconButton(
-                                tooltip: 'Friends',
                                 onPressed: () => setState(() {
                                   _selectedTab = 'friends';
                                 }),
@@ -1983,6 +1981,7 @@ class _HomeState extends State<Home> {
                               },
                             ),
                           ),
+                          SizedBox(width: 10),
                           IconButton(
                             onPressed: _logout,
                             icon: Icon(

@@ -143,12 +143,10 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
     if (sharePlaylist == null) {
       return IconButton(
         onPressed: shareSong,
-        tooltip: 'Share song',
         icon: Icon(Icons.share_rounded, color: colorScheme.primary),
       );
     }
     return PopupMenuButton<String>(
-      tooltip: 'Share',
       icon: Icon(Icons.share_rounded, color: colorScheme.primary),
       splashRadius: 16,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),

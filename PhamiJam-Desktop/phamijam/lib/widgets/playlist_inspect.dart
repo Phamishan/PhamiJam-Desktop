@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
@@ -10,6 +11,7 @@ import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:provider/provider.dart';
@@ -110,6 +112,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   bool _selectionMode = false;
   final Set<String> _selectedVideoIds = {};
   _PlaylistSort _sort = _PlaylistSort.custom;
+  bool _isFeaturedOnProfile = false;
 
   List<Map<String, dynamic>> get _filteredSongs {
     final query = _songSearchQuery.trim().toLowerCase();
@@ -338,6 +341,23 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildFeatureButton() {
+    if (!_isOwnedByUser) return const SizedBox.shrink();
+    final colorScheme = Theme.of(context).colorScheme;
+    return IconButton(
+      tooltip: _isFeaturedOnProfile
+          ? 'Remove from profile'
+          : 'Feature on profile',
+      onPressed: _handleToggleFeatured,
+      icon: Icon(
+        _isFeaturedOnProfile ? Icons.star_rounded : Icons.star_border_rounded,
+        color: _isFeaturedOnProfile
+            ? colorScheme.primary
+            : colorScheme.onSurface,
+      ),
     );
   }
 
@@ -808,6 +828,41 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     _songSearchController = TextEditingController();
     _playback = context.read<PlaybackModel>();
     _loadSongs();
+    if (_isOwnedByUser) _loadFeaturedStatus();
+  }
+
+  Future<void> _loadFeaturedStatus() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final playlistId = _playlistId;
+    if (user == null || playlistId == null) return;
+    try {
+      final ids = await ProfileService.fetchProfilePlaylistIds(user.uid);
+      if (!mounted) return;
+      setState(() => _isFeaturedOnProfile = ids.contains(playlistId));
+    } catch (_) {}
+  }
+
+  Future<void> _handleToggleFeatured() async {
+    final playlistId = _playlistId;
+    if (playlistId == null) return;
+    final wasFeatured = _isFeaturedOnProfile;
+    setState(() => _isFeaturedOnProfile = !wasFeatured);
+    try {
+      if (wasFeatured) {
+        await ProfileService.removeProfilePlaylist(playlistId);
+      } else {
+        await ProfileService.addProfilePlaylist(playlistId);
+      }
+      if (!mounted) return;
+      AppFlushbar.success(
+        context,
+        wasFeatured ? 'Removed from your profile' : 'Featured on your profile',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isFeaturedOnProfile = wasFeatured);
+      AppFlushbar.error(context, "Couldn't update your profile: $error");
+    }
   }
 
   @override
@@ -828,8 +883,10 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         _songSearchQuery = '';
         _selectionMode = false;
         _selectedVideoIds.clear();
+        _isFeaturedOnProfile = false;
       });
       _loadSongs();
+      if (_isOwnedByUser) _loadFeaturedStatus();
     }
   }
 
@@ -870,6 +927,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                 ),
               ),
               _buildPinButton(),
+              _buildFeatureButton(),
               _buildShareButton(),
               const SizedBox(width: 12),
               ElevatedButton.icon(
@@ -955,6 +1013,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                     ),
                   ),
                   _buildPinButton(),
+                  _buildFeatureButton(),
                   _buildShareButton(),
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
@@ -1023,7 +1082,6 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             ),
             const SizedBox(width: 8),
             PopupMenuButton<_PlaylistSort>(
-              tooltip: 'Sort songs',
               initialValue: _sort,
               onSelected: (value) => setState(() => _sort = value),
               shape: RoundedRectangleBorder(
