@@ -76,7 +76,14 @@
   - Added a full menu to Recently Played tracks
   - Improved thumbnail quality on search, artist, and album pages
 - 1.1.1 - 17/08/2026
-  - Fixed the app failing to launch after updating (installer was missing a required plugin file)
+  - Added a lyrics fallback for songs YouTube Music doesn't have lyrics for
+  - Fixed share link "Listen on PhamiJam" redirect
+  - Fixed the app failing to launch after updating
+- 1.1.2 - 19/08/2026
+  - Added a lyrics fallback for songs YouTube Music doesn't have lyrics for
+  - Fixed share link "Listen on PhamiJam" redirect (needs testing)
+  - Added social feature
+  - Added customizable profile pages
 
 ## Screenshots:
 
@@ -105,5 +112,5 @@
 
 - [ ] phun mode
 - [ ] Phami Picks (phamis special playlist)
-- [ ] social / friends tab?
-  - [ ] profile
+- [x] social / friends tab?
+  - [x] profile

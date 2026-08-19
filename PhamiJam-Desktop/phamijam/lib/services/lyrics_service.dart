@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ytmusicapi_dart/models/lyrics.dart' as ytm;
 import 'package:ytmusicapi_dart/navigation.dart';
@@ -27,10 +30,19 @@ class LyricsService {
   LyricsService._();
 
   static const String _offsetPrefsPrefix = 'phamijam.lyrics_sync_offset.';
+  static const Map<String, String> _lrclibHeaders = {
+    'User-Agent': 'PhamiJam (https://phamishan.dk)',
+  };
+  static const int _lrclibDurationToleranceSeconds = 10;
 
   static final Map<String, SongLyrics?> _cache = {};
 
-  static Future<SongLyrics?> fetchFor(String videoId) async {
+  static Future<SongLyrics?> fetchFor(
+    String videoId, {
+    String? title,
+    String? artist,
+    int? durationSeconds,
+  }) async {
     if (_cache.containsKey(videoId)) return _cache[videoId];
 
     SongLyrics? result;
@@ -75,6 +87,18 @@ class LyricsService {
       result = null;
     }
 
+    if ((result == null || !result.hasAny) &&
+        title != null &&
+        title.trim().isNotEmpty) {
+      try {
+        result = await _fetchFromLrclib(
+          title: title,
+          artist: artist ?? '',
+          durationSeconds: durationSeconds,
+        );
+      } catch (_) {}
+    }
+
     _cache[videoId] = result;
     return result;
   }
@@ -113,6 +137,111 @@ class LyricsService {
     final endpoint = tabRenderer['endpoint'] as Map?;
     final browseEndpoint = endpoint?['browseEndpoint'] as Map?;
     return browseEndpoint?['browseId'] as String?;
+  }
+
+  static final RegExp _bracketedNoise = RegExp(
+    r'[\(\[][^\)\]]*(official|video|audio|lyrics?|hd|4k|remaster\w*|visualizer|mv)[^\)\]]*[\)\]]',
+    caseSensitive: false,
+  );
+
+  static String _cleanTitle(String title) {
+    return title
+        .replaceAll(_bracketedNoise, '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  static Future<SongLyrics?> _fetchFromLrclib({
+    required String title,
+    required String artist,
+    int? durationSeconds,
+  }) async {
+    final cleanedTitle = _cleanTitle(title);
+    if (cleanedTitle.isEmpty) return null;
+
+    final uri = Uri.https('lrclib.net', '/api/search', {
+      'track_name': cleanedTitle,
+      if (artist.trim().isNotEmpty) 'artist_name': artist,
+    });
+    final response = await http
+        .get(uri, headers: _lrclibHeaders)
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode != 200) return null;
+
+    final results = jsonDecode(response.body);
+    if (results is! List || results.isEmpty) return null;
+
+    final candidates = results
+        .whereType<Map<String, dynamic>>()
+        .where((r) => r['syncedLyrics'] != null || r['plainLyrics'] != null)
+        .toList();
+    if (candidates.isEmpty) return null;
+
+    Map<String, dynamic> best = candidates.first;
+    if (durationSeconds != null && durationSeconds > 0) {
+      candidates.sort((a, b) {
+        final da = ((a['duration'] as num?)?.toInt() ?? 0) - durationSeconds;
+        final db = ((b['duration'] as num?)?.toInt() ?? 0) - durationSeconds;
+        return da.abs().compareTo(db.abs());
+      });
+      best = candidates.first;
+      final bestDuration = (best['duration'] as num?)?.toInt() ?? 0;
+      if ((bestDuration - durationSeconds).abs() >
+          _lrclibDurationToleranceSeconds) {
+        return null;
+      }
+    }
+
+    final syncedLyricsRaw = best['syncedLyrics'] as String?;
+    final plainLyrics = best['plainLyrics'] as String?;
+    final synced = syncedLyricsRaw == null ? null : _parseLrc(syncedLyricsRaw);
+
+    if ((synced == null || synced.isEmpty) &&
+        (plainLyrics == null || plainLyrics.trim().isEmpty)) {
+      return null;
+    }
+
+    return SongLyrics(synced: synced, plainText: plainLyrics, source: 'LRCLIB');
+  }
+
+  static final RegExp _lrcLineRegExp = RegExp(
+    r'^\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\](.*)$',
+  );
+
+  static List<LyricLine>? _parseLrc(String lrc) {
+    final rawLines = <({Duration start, String text})>[];
+    for (final line in lrc.split('\n')) {
+      final match = _lrcLineRegExp.firstMatch(line.trim());
+      if (match == null) continue;
+      final text = match.group(4)!.trim();
+      if (text.isEmpty) continue;
+      final minutes = int.parse(match.group(1)!);
+      final seconds = int.parse(match.group(2)!);
+      final fraction = match.group(3);
+      final millis = fraction == null
+          ? 0
+          : int.parse(fraction.padRight(3, '0').substring(0, 3));
+      rawLines.add((
+        start: Duration(
+          minutes: minutes,
+          seconds: seconds,
+          milliseconds: millis,
+        ),
+        text: text,
+      ));
+    }
+    if (rawLines.isEmpty) return null;
+
+    final lines = <LyricLine>[];
+    for (var i = 0; i < rawLines.length; i++) {
+      final end = i + 1 < rawLines.length
+          ? rawLines[i + 1].start
+          : rawLines[i].start + const Duration(seconds: 6);
+      lines.add(
+        LyricLine(text: rawLines[i].text, start: rawLines[i].start, end: end),
+      );
+    }
+    return lines;
   }
 
   static Future<int> getSyncOffsetMs(String videoId) async {

@@ -13,9 +13,24 @@ class ShareLinkService {
   static Uri buildPlaylistUrl(String playlistId) =>
       Uri.https(shareBaseHost, '/p/$playlistId');
 
+  static Uri buildProfileUrl(String uid, {String? username}) => Uri.https(
+    shareBaseHost,
+    '/u/${(username != null && username.isNotEmpty) ? username : uid}',
+  );
+
   static Future<void> shareSong(BuildContext context, String videoId) async {
     if (videoId.isEmpty) return;
     await _copyToClipboard(context, buildSongUrl(videoId));
+  }
+
+  static Future<void> shareProfile(
+    BuildContext context,
+    String uid, {
+    String? username,
+    required String subject,
+  }) async {
+    if (uid.isEmpty) return;
+    await _copyToClipboard(context, buildProfileUrl(uid, username: username));
   }
 
   static Future<void> sharePlaylist(

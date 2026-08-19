@@ -5,10 +5,12 @@ import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/google_drive_service.dart';
 import 'package:provider/provider.dart';
 
 enum _LikedSort {
@@ -179,35 +181,61 @@ class _LikedPageState extends State<LikedPage> {
         final videoId = (song['videoId'] as String?) ?? '';
         if (videoId.isEmpty) return;
 
-        final title = (song['title'] as String?) ?? 'Unknown song';
-        final artist = (song['artist'] as String?) ?? 'Unknown artist';
-        final thumbnailUrl = (song['thumbnailUrl'] as String?) ?? '';
-        final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
-        final coverBytes = await _downloadImageBytes(thumbnailUrl);
-
-        _playback.setSongName(title);
-        _playback.setArtist(artist);
-        _playback.setArtistId(song['artistId'] as String?);
-        _playback.setCurrentSongPath('yt:$videoId');
-        _playback.setCoverImageBytes(coverBytes);
-
-        if (durationSeconds > 0) {
-          _playback.setDuration(Duration(seconds: durationSeconds));
-        } else {
-          _playback.setDuration(Duration.zero);
-        }
-
-        await _playback.playYouTubeVideoById(videoId);
-        await _playback.applyVolume(_playback.currentSliderValue);
+        await _startPlayback(song, videoId);
         _playback.markCurrentSourceIndex(sourceIndex);
       },
       prefetchQueueItem: (item) async {
         if (item is! Map<String, dynamic>) return;
         final videoId = (item['videoId'] as String?) ?? '';
-        if (videoId.isEmpty) return;
+        if (videoId.isEmpty || videoId.startsWith(driveTrackIdPrefix)) return;
         await _playback.prefetchYouTubeVideoById(videoId);
       },
     );
+  }
+
+  Future<void> _startPlayback(Map<String, dynamic> song, String videoId) async {
+    final title = (song['title'] as String?) ?? 'Unknown song';
+    final artist = (song['artist'] as String?) ?? 'Unknown artist';
+    final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
+    final effectiveDuration = durationSeconds > 0
+        ? Duration(seconds: durationSeconds)
+        : Duration.zero;
+
+    if (videoId.startsWith(driveTrackIdPrefix)) {
+      final fileId = videoId.substring(driveTrackIdPrefix.length);
+      await _playback.switchToLocalEngine();
+      _playback.setDuration(Duration.zero);
+      final headers = await GoogleDriveService.streamHeaders(fileId);
+      await player.setUrl(
+        GoogleDriveService.streamUri(fileId).toString(),
+        headers: headers,
+      );
+      await player.seek(Duration.zero);
+      await player.play();
+
+      _playback.setArtist(artist);
+      _playback.setArtistId(null);
+      _playback.setSongName(title);
+      _playback.setCurrentSongPath(videoId);
+      _playback.setCoverImageBytes(null);
+      _playback.setDuration(effectiveDuration);
+      _playback.setIsPlaying(true);
+      _playback.setIsMuted(false);
+      return;
+    }
+
+    final thumbnailUrl = (song['thumbnailUrl'] as String?) ?? '';
+    final coverBytes = await _downloadImageBytes(thumbnailUrl);
+
+    _playback.setSongName(title);
+    _playback.setArtist(artist);
+    _playback.setArtistId(song['artistId'] as String?);
+    _playback.setCurrentSongPath('yt:$videoId');
+    _playback.setCoverImageBytes(coverBytes);
+    _playback.setDuration(effectiveDuration);
+
+    await _playback.playYouTubeVideoById(videoId);
+    await _playback.applyVolume(_playback.currentSliderValue);
   }
 
   Future<void> _playSongAtIndex(
@@ -227,31 +255,11 @@ class _LikedPageState extends State<LikedPage> {
     setState(() => _currentlyLoadingVideoId = videoId);
 
     try {
-      final title = (song['title'] as String?) ?? 'Unknown song';
-      final artist = (song['artist'] as String?) ?? 'Unknown artist';
-      final thumbnailUrl = (song['thumbnailUrl'] as String?) ?? '';
-      final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
-      final coverBytes = await _downloadImageBytes(thumbnailUrl);
-
-      _playback.setSongName(title);
-      _playback.setArtist(artist);
-      _playback.setArtistId(song['artistId'] as String?);
-      _playback.setCurrentSongPath('yt:$videoId');
-      _playback.setCoverImageBytes(coverBytes);
-
-      if (durationSeconds > 0) {
-        _playback.setDuration(Duration(seconds: durationSeconds));
-      } else {
-        _playback.setDuration(Duration.zero);
-      }
-
-      await _playback.playYouTubeVideoById(videoId);
-      await _playback.applyVolume(_playback.currentSliderValue);
-
+      await _startPlayback(song, videoId);
       _playback.setPlaylistQueue(songs, startIndex: index);
       _registerQueueHandlers(List<Map<String, dynamic>>.from(songs));
     } catch (error) {
-      debugPrint('YouTube audio playback failed for $videoId: $error');
+      debugPrint('Playback failed for $videoId: $error');
       if (!mounted) return;
       AppFlushbar.error(context, 'Failed to play audio: $error');
     } finally {
@@ -325,6 +333,7 @@ class _LikedPageState extends State<LikedPage> {
         final durationSeconds = (song['durationSeconds'] as int?) ?? 0;
         final songDurationLabel = _formatDuration(durationSeconds);
         final videoId = (song['videoId'] as String?) ?? '';
+        final isDriveSong = videoId.startsWith(driveTrackIdPrefix);
         final isLoadingThisSong =
             videoId.isNotEmpty && _currentlyLoadingVideoId == videoId;
         final isDownloaded = downloads.isDownloaded(videoId);
@@ -333,7 +342,9 @@ class _LikedPageState extends State<LikedPage> {
         return Builder(
           builder: (context) {
             final isCurrentSong = context.select<PlaybackModel, bool>(
-              (playback) => playback.currentSongPath == 'yt:$videoId',
+              (playback) =>
+                  playback.currentSongPath ==
+                  (isDriveSong ? videoId : 'yt:$videoId'),
             );
 
             return ContextMenuRegion<String>(
@@ -356,25 +367,29 @@ class _LikedPageState extends State<LikedPage> {
                     icon: const Icon(Icons.queue_music_rounded),
                     label: const Text('Add to queue'),
                   ),
-                  MenuItem<String>(
-                    value: 'add_to_playlist',
-                    icon: const Icon(Icons.playlist_add_rounded),
-                    label: const Text('Add to playlist'),
-                  ),
-                  MenuItem<String>(
-                    value: isDownloaded ? 'remove_download' : 'download',
-                    icon: Icon(
-                      isDownloaded
-                          ? Icons.download_done_rounded
-                          : Icons.download_rounded,
+                  if (!isDriveSong) ...[
+                    MenuItem<String>(
+                      value: 'add_to_playlist',
+                      icon: const Icon(Icons.playlist_add_rounded),
+                      label: const Text('Add to playlist'),
                     ),
-                    label: Text(isDownloaded ? 'Remove download' : 'Download'),
-                  ),
-                  MenuItem<String>(
-                    value: 'edit_trim',
-                    icon: const Icon(Icons.content_cut_rounded),
-                    label: const Text('Edit song'),
-                  ),
+                    MenuItem<String>(
+                      value: isDownloaded ? 'remove_download' : 'download',
+                      icon: Icon(
+                        isDownloaded
+                            ? Icons.download_done_rounded
+                            : Icons.download_rounded,
+                      ),
+                      label: Text(
+                        isDownloaded ? 'Remove download' : 'Download',
+                      ),
+                    ),
+                    MenuItem<String>(
+                      value: 'edit_trim',
+                      icon: const Icon(Icons.content_cut_rounded),
+                      label: const Text('Edit song'),
+                    ),
+                  ],
                 ],
               ),
               onItemSelected: (value) {

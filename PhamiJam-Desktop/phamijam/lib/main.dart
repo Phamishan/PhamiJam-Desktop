@@ -10,8 +10,10 @@ import 'package:phamijam/firebase_options.dart';
 import 'package:phamijam/pages/login.dart';
 import 'package:phamijam/pages/home.dart';
 import 'package:phamijam/providers/edited_songs_provider.dart';
+import 'package:phamijam/providers/friends_provider.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
+import 'package:phamijam/providers/profile_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/providers/theme_provider.dart';
@@ -38,6 +40,8 @@ void main(List<String> args) async {
         ChangeNotifierProvider(create: (_) => PlaylistPinProvider()),
         ChangeNotifierProvider(create: (_) => EditedSongsProvider()),
         ChangeNotifierProvider(create: (_) => SavedPlaylistsProvider()),
+        ChangeNotifierProvider(create: (_) => ProfileProvider()),
+        ChangeNotifierProvider(create: (_) => FriendsProvider()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
       ],
       child: MyApp(pendingDeepLink: pendingDeepLink),

@@ -2,6 +2,9 @@
 #define RUNNER_FLUTTER_WINDOW_H_
 
 #include <flutter/dart_project.h>
+#include <flutter/event_channel.h>
+#include <flutter/event_sink.h>
+#include <flutter/event_stream_handler_functions.h>
 #include <flutter/flutter_view_controller.h>
 
 #include <memory>
@@ -28,6 +31,13 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  // Delivers deep links (forwarded via WM_COPYDATA from a second instance)
+  // to Dart while this window is already running.
+  std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>>
+      deep_link_channel_;
+  std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>
+      deep_link_event_sink_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

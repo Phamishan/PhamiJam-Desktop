@@ -10,6 +10,8 @@ import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_interface.dart';
+import 'package:phamijam/pages/friend_profile_page.dart';
+import 'package:phamijam/pages/friends_page.dart';
 import 'package:phamijam/pages/fullscreen_video_page.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/remote_session_banner.dart';
@@ -17,8 +19,10 @@ import 'package:phamijam/components/sidebar.dart';
 import 'package:phamijam/components/sleep_timer_dialog.dart';
 import 'package:phamijam/models/play_event.dart';
 import 'package:phamijam/providers/edited_songs_provider.dart';
+import 'package:phamijam/providers/friends_provider.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
+import 'package:phamijam/providers/profile_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/deep_link_service.dart';
@@ -27,6 +31,7 @@ import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
@@ -92,6 +97,7 @@ class _HomeState extends State<Home> {
   String? _currentlyLoadingRecentVideoId;
   bool? _taskbarHasTrack;
   bool? _taskbarIsPlaying;
+  StreamSubscription<DeepLinkTarget>? _deepLinkSubscription;
   static const Duration _resolvedStreamsTtl = Duration(minutes: 20);
   static const Map<String, String> _youtubeHttpHeaders = {
     'User-Agent':
@@ -126,11 +132,18 @@ class _HomeState extends State<Home> {
     unawaited(context.read<PlaylistPinProvider>().refresh());
     unawaited(context.read<EditedSongsProvider>().refresh());
     unawaited(context.read<SavedPlaylistsProvider>().refresh());
+    unawaited(context.read<ProfileProvider>().refresh());
+    context.read<FriendsProvider>().start();
     unawaited(context.read<SettingsProvider>().refreshHiddenPlaylists());
     final pendingDeepLink = widget.pendingDeepLink;
     if (pendingDeepLink != null && FirebaseAuth.instance.currentUser != null) {
       unawaited(_handleDeepLink(pendingDeepLink));
     }
+    _deepLinkSubscription = DeepLinkService.incomingLinks.listen((target) {
+      if (FirebaseAuth.instance.currentUser != null) {
+        unawaited(_handleDeepLink(target));
+      }
+    });
     _playback.addListener(_handlePlaybackChanged);
     if (Platform.isWindows) {
       _playback.addListener(_updateTaskbarThumbnailToolbar);
@@ -704,6 +717,19 @@ class _HomeState extends State<Home> {
         return;
       }
 
+      if (target.type == DeepLinkType.profile) {
+        final resolvedUid = await ProfileService.resolveProfileLinkId(
+          target.id,
+        );
+        if (!mounted) return;
+        final ownUid = FirebaseAuth.instance.currentUser?.uid;
+        _onSidebarTabSelected(
+          resolvedUid == ownUid ? 'profile' : 'friend_profile',
+          extra: resolvedUid == ownUid ? null : {'uid': resolvedUid},
+        );
+        return;
+      }
+
       final playlist = await YoutubePlaylistService.fetchPlaylistMetadata(
         target.id,
       );
@@ -904,7 +930,11 @@ class _HomeState extends State<Home> {
                         icon: Icons.content_cut_rounded,
                         label: 'Edit song',
                       ),
-                      (value: 'share', icon: Icons.share_rounded, label: 'Share'),
+                      (
+                        value: 'share',
+                        icon: Icons.share_rounded,
+                        label: 'Share',
+                      ),
                     ],
                     onMenuSelected: (value) =>
                         _handleRecentTrackMenuSelection(value, event),
@@ -1319,6 +1349,15 @@ class _HomeState extends State<Home> {
       return const ProfilePage();
     }
 
+    if (_selectedTab == 'friends') {
+      return FriendsPage(onTabSelected: _onSidebarTabSelected);
+    }
+
+    if (_selectedTab == 'friend_profile') {
+      final uid = (_selectedTabExtra?['uid'] as String?) ?? '';
+      return FriendProfilePage(uid: uid);
+    }
+
     if (_selectedTab == 'playlist_inspect') {
       return PlaylistInspectPage(
         extra: _selectedTabExtra,
@@ -1342,6 +1381,7 @@ class _HomeState extends State<Home> {
 
   @override
   void dispose() {
+    _deepLinkSubscription?.cancel();
     _playback.removeListener(_handlePlaybackChanged);
     if (Platform.isWindows) {
       _playback.removeListener(_updateTaskbarThumbnailToolbar);
@@ -1351,6 +1391,7 @@ class _HomeState extends State<Home> {
     _youtubeExplode.close();
     _ytmusic?.close();
     _searchController.dispose();
+    context.read<FriendsProvider>().stop();
     super.dispose();
   }
 
@@ -1890,14 +1931,31 @@ class _HomeState extends State<Home> {
                             ),
                           ),
                           SizedBox(width: 10),
+                          Consumer<FriendsProvider>(
+                            builder: (context, friendsProvider, _) {
+                              final icon = Icon(
+                                Icons.people_alt_rounded,
+                                color: colorScheme.onSurface,
+                              );
+                              return IconButton(
+                                tooltip: 'Friends',
+                                onPressed: () => setState(() {
+                                  _selectedTab = 'friends';
+                                }),
+                                icon: friendsProvider.received.isNotEmpty
+                                    ? Badge(child: icon)
+                                    : icon,
+                              );
+                            },
+                          ),
+                          SizedBox(width: 10),
                           IconButton(
                             onPressed: () => setState(() {
                               _selectedTab = 'profile';
                             }),
                             icon: Builder(
                               builder: (context) {
-                                final photoUrl =
-                                    _auth.currentUser?.photoURL;
+                                final photoUrl = _auth.currentUser?.photoURL;
                                 final showPhoto =
                                     photoUrl != null &&
                                     photoUrl.isNotEmpty &&

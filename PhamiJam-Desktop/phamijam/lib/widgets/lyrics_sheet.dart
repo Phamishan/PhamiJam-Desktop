@@ -68,7 +68,12 @@ class _LyricsSheetState extends State<LyricsSheet> {
     }
 
     try {
-      final lyrics = await LyricsService.fetchFor(videoId);
+      final lyrics = await LyricsService.fetchFor(
+        videoId,
+        title: _playback.songName,
+        artist: _playback.artistName,
+        durationSeconds: _playback.duration?.inSeconds,
+      );
       final offset = await LyricsService.getSyncOffsetMs(videoId);
       if (!mounted || _currentVideoId != videoId) return;
       setState(() {
@@ -165,6 +170,14 @@ class _LyricsSheetState extends State<LyricsSheet> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: onSheet.withValues(alpha: 0.7)),
                       ),
+                      if ((_lyrics?.source ?? '').isNotEmpty)
+                        Text(
+                          'Lyrics via ${_lyrics!.source}',
+                          style: TextStyle(
+                            color: onSheet.withValues(alpha: 0.5),
+                            fontSize: 12,
+                          ),
+                        ),
                     ],
                   ),
                 ),

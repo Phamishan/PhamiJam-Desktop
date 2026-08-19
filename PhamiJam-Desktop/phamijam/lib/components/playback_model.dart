@@ -1242,31 +1242,38 @@ class PlaybackModel extends ChangeNotifier {
     unawaited(_prefetchAhead());
   }
 
+  static const Duration _previousRestartThreshold = Duration(seconds: 3);
+
+  bool get _pastPreviousRestartThreshold =>
+      progress > _previousRestartThreshold;
+
   Future<void> playPrevious() async {
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.previous);
       return;
     }
-    await _recordPotentialSkip();
+    if (!_pastPreviousRestartThreshold) {
+      await _recordPotentialSkip();
+    }
     await _localPlayPrevious();
   }
 
   Future<void> _localPlayPrevious() async {
-    if (_playOrder.isNotEmpty) {
-      final previousOrderIndex = _normalizeOrderIndex(_currentOrderIndex - 1);
-      if (previousOrderIndex == null) {
-        return;
-      }
-
-      _currentOrderIndex = previousOrderIndex;
-      _refreshQueueWindow();
-      notifyListeners();
-
-      await _playBySourceIndex(_playOrder[previousOrderIndex]);
-      _forceDiscordPresenceRefreshAfterTrackChange();
-      unawaited(_prefetchAhead());
-      _pushSessionIfHosting();
+    if (_playOrder.isEmpty) return;
+    final previousOrderIndex = _normalizeOrderIndex(_currentOrderIndex - 1);
+    if (_pastPreviousRestartThreshold || previousOrderIndex == null) {
+      await seekTo(Duration.zero);
+      return;
     }
+
+    _currentOrderIndex = previousOrderIndex;
+    _refreshQueueWindow();
+    notifyListeners();
+
+    await _playBySourceIndex(_playOrder[previousOrderIndex]);
+    _forceDiscordPresenceRefreshAfterTrackChange();
+    unawaited(_prefetchAhead());
+    _pushSessionIfHosting();
   }
 
   Future<void> playNext() async {

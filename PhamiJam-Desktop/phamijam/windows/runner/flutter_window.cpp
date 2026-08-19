@@ -1,6 +1,9 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+
 #include <optional>
+#include <string>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -26,6 +29,27 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+
+  deep_link_channel_ =
+      std::make_unique<flutter::EventChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "phamijam/deep_link",
+          &flutter::StandardMethodCodec::GetInstance());
+  deep_link_channel_->SetStreamHandler(
+      std::make_unique<flutter::StreamHandlerFunctions<flutter::EncodableValue>>(
+          [this](const flutter::EncodableValue* arguments,
+                 std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&&
+                     events)
+              -> std::unique_ptr<
+                  flutter::StreamHandlerError<flutter::EncodableValue>> {
+            deep_link_event_sink_ = std::move(events);
+            return nullptr;
+          },
+          [this](const flutter::EncodableValue* arguments)
+              -> std::unique_ptr<
+                  flutter::StreamHandlerError<flutter::EncodableValue>> {
+            deep_link_event_sink_ = nullptr;
+            return nullptr;
+          }));
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -65,6 +89,15 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_COPYDATA: {
+      auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lparam);
+      if (cds && cds->lpData && cds->cbData > 0 && deep_link_event_sink_) {
+        std::string uri(static_cast<const char*>(cds->lpData),
+                        cds->cbData - 1);
+        deep_link_event_sink_->Success(flutter::EncodableValue(uri));
+      }
+      return TRUE;
+    }
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

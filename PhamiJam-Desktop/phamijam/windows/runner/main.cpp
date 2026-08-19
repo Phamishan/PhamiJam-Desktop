@@ -17,10 +17,31 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
-  flutter::DartProject project(L"data");
+  std::vector<std::string> command_line_arguments = GetCommandLineArguments();
 
-  std::vector<std::string> command_line_arguments =
-      GetCommandLineArguments();
+  // If another instance is already running, forward this launch's deep link
+  // (if any) to it and exit before touching Dart/Firebase/media_kit — those
+  // aren't safe to initialize twice in the same session.
+  HANDLE single_instance_mutex =
+      ::CreateMutexW(nullptr, TRUE, L"Local\\PhamiJamDesktop_SingleInstance");
+  if (single_instance_mutex && ::GetLastError() == ERROR_ALREADY_EXISTS) {
+    HWND existing = ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"PhamiJam");
+    if (existing) {
+      if (!command_line_arguments.empty()) {
+        COPYDATASTRUCT cds{};
+        cds.dwData = 1;
+        cds.cbData = static_cast<DWORD>(command_line_arguments[0].size() + 1);
+        cds.lpData = const_cast<char*>(command_line_arguments[0].c_str());
+        ::SendMessageW(existing, WM_COPYDATA, 0,
+                       reinterpret_cast<LPARAM>(&cds));
+      }
+      ::ShowWindow(existing, SW_RESTORE);
+      ::SetForegroundWindow(existing);
+    }
+    return EXIT_SUCCESS;
+  }
+
+  flutter::DartProject project(L"data");
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 

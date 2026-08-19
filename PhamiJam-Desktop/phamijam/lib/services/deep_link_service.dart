@@ -1,4 +1,6 @@
-enum DeepLinkType { song, playlist }
+import 'package:flutter/services.dart';
+
+enum DeepLinkType { song, playlist, profile }
 
 class DeepLinkTarget {
   final DeepLinkType type;
@@ -9,6 +11,14 @@ class DeepLinkTarget {
 
 class DeepLinkService {
   DeepLinkService._();
+
+  static const EventChannel _channel = EventChannel('phamijam/deep_link');
+
+  static Stream<DeepLinkTarget> get incomingLinks => _channel
+      .receiveBroadcastStream()
+      .map((value) => parse(value as String))
+      .where((target) => target != null)
+      .cast<DeepLinkTarget>();
 
   static DeepLinkTarget? parseLaunchArgs(List<String> args) {
     for (final arg in args) {
@@ -31,6 +41,7 @@ class DeepLinkService {
     if (id.isEmpty) return null;
     if (segments[0] == 's') return DeepLinkTarget(DeepLinkType.song, id);
     if (segments[0] == 'p') return DeepLinkTarget(DeepLinkType.playlist, id);
+    if (segments[0] == 'u') return DeepLinkTarget(DeepLinkType.profile, id);
     return null;
   }
 }
