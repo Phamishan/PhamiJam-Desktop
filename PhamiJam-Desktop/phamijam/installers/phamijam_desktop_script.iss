@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "PhamiJam"
-#define MyAppVersion "1.1.2.1"
+#define MyAppVersion "1.1.3"
 #define MyAppPublisher "Phamishan"
 #define MyAppURL "https://phamishan.dk/"
 #define MyAppExeName "PhamiJam.exe"

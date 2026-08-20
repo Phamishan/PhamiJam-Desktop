@@ -5,7 +5,10 @@ import 'package:phamijam/widgets/profile_grid/profile_grid_view.dart';
 import 'package:phamijam/widgets/profile_grid/tiles/bio_header_tile.dart';
 import 'package:phamijam/widgets/profile_grid/tiles/featured_playlists_tile.dart';
 import 'package:phamijam/widgets/profile_grid/tiles/jamstats_highlights_tile.dart';
+import 'package:phamijam/widgets/profile_grid/tiles/liked_songs_tile.dart';
 import 'package:phamijam/widgets/profile_grid/tiles/recently_played_tile.dart';
+import 'package:phamijam/widgets/profile_grid/tiles/top_artists_tile.dart';
+import 'package:phamijam/widgets/profile_grid/tiles/top_tracks_tile.dart';
 
 class GridTileWidget extends StatelessWidget {
   const GridTileWidget({
@@ -18,6 +21,7 @@ class GridTileWidget extends StatelessWidget {
     required this.editable,
     required this.gridProvider,
     this.onTap,
+    this.onOpenPlaylist,
   });
 
   final GridTile tile;
@@ -28,6 +32,8 @@ class GridTileWidget extends StatelessWidget {
   final bool editable;
   final ProfileGridProvider? gridProvider;
   final VoidCallback? onTap;
+  final void Function(String playlistId, String title, String? thumbnailUrl)?
+  onOpenPlaylist;
 
   @override
   Widget build(BuildContext context) {
@@ -35,8 +41,8 @@ class GridTileWidget extends StatelessWidget {
     final isDragging = editable && provider?.draggingTileId == tile.id;
     final isResizing = editable && provider?.resizingTileId == tile.id;
 
-    final col = isDragging ? provider!.previewCol ?? tile.col : tile.col;
-    final row = isDragging ? provider!.previewRow ?? tile.row : tile.row;
+    final col = tile.col;
+    final row = tile.row;
     final (colSpan, rowSpan) = isResizing
         ? provider!.previewSize ?? (tile.colSpan, tile.rowSpan)
         : (tile.colSpan, tile.rowSpan);
@@ -84,6 +90,7 @@ class GridTileWidget extends StatelessWidget {
             ? (_) => provider!.endResize()
             : null,
         onRemove: editable ? () => provider!.removeTile(tile.id) : null,
+        onOpenPlaylist: editable ? null : onOpenPlaylist,
       ),
     );
   }
@@ -103,6 +110,7 @@ class _TileSurface extends StatelessWidget {
     this.onResizePanUpdate,
     this.onResizePanEnd,
     this.onRemove,
+    this.onOpenPlaylist,
   });
 
   final GridTile tile;
@@ -117,6 +125,8 @@ class _TileSurface extends StatelessWidget {
   final GestureDragUpdateCallback? onResizePanUpdate;
   final GestureDragEndCallback? onResizePanEnd;
   final VoidCallback? onRemove;
+  final void Function(String playlistId, String title, String? thumbnailUrl)?
+  onOpenPlaylist;
 
   @override
   Widget build(BuildContext context) {
@@ -131,7 +141,7 @@ class _TileSurface extends StatelessWidget {
               ? Border.all(color: colorScheme.primary, width: 2)
               : null,
         ),
-        child: _buildTileContent(tile, profileUid),
+        child: _buildTileContent(tile, profileUid, onOpenPlaylist),
       ),
     );
 
@@ -212,15 +222,24 @@ class _HandleIcon extends StatelessWidget {
   }
 }
 
-Widget _buildTileContent(GridTile tile, String profileUid) {
+Widget _buildTileContent(
+  GridTile tile,
+  String profileUid,
+  void Function(String playlistId, String title, String? thumbnailUrl)?
+  onOpenPlaylist,
+) {
   return switch (tile.widgetType) {
     GridWidgetType.bioHeader => BioHeaderTile(profileUid: profileUid),
     GridWidgetType.featuredPlaylists => FeaturedPlaylistsTile(
       profileUid: profileUid,
+      onOpenPlaylist: onOpenPlaylist,
     ),
     GridWidgetType.jamstatsHighlights => JamstatsHighlightsTile(
       profileUid: profileUid,
     ),
     GridWidgetType.recentlyPlayed => RecentlyPlayedTile(profileUid: profileUid),
+    GridWidgetType.likedSongs => LikedSongsTile(profileUid: profileUid),
+    GridWidgetType.topArtists => TopArtistsTile(profileUid: profileUid),
+    GridWidgetType.topTracks => TopTracksTile(profileUid: profileUid),
   };
 }

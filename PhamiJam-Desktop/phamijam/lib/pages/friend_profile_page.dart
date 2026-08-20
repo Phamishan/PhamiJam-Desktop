@@ -10,15 +10,27 @@ import 'package:phamijam/widgets/profile_grid/profile_grid_view.dart';
 import 'package:provider/provider.dart';
 
 class FriendProfilePage extends StatelessWidget {
-  const FriendProfilePage({super.key, required this.uid});
+  const FriendProfilePage({super.key, required this.uid, this.onTabSelected});
 
   final String uid;
+  final void Function(String, {Map<String, dynamic>? extra})? onTabSelected;
+
+  void _openPlaylist(String playlistId, String title, String? thumbnailUrl) {
+    onTabSelected?.call(
+      'playlist_inspect',
+      extra: {
+        'playlistId': playlistId,
+        'playlistTitle': title,
+        'thumbnailUrl': thumbnailUrl,
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     if (uid.isEmpty) return const SizedBox.shrink();
     if (uid == FirebaseAuth.instance.currentUser?.uid) {
-      return const ProfilePage();
+      return ProfilePage(onTabSelected: onTabSelected);
     }
 
     return Padding(
@@ -64,6 +76,7 @@ class FriendProfilePage extends StatelessWidget {
                     profileUid: uid,
                     editable: false,
                     tiles: profile.gridLayout,
+                    onOpenPlaylist: _openPlaylist,
                   ),
               ],
             ),

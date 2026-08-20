@@ -5,6 +5,9 @@ enum GridWidgetType {
   featuredPlaylists,
   jamstatsHighlights,
   recentlyPlayed,
+  likedSongs,
+  topArtists,
+  topTracks,
 }
 
 GridWidgetType? gridWidgetTypeFromString(String? value) {
@@ -16,10 +19,13 @@ GridWidgetType? gridWidgetTypeFromString(String? value) {
 
 extension GridWidgetTypeMeta on GridWidgetType {
   List<(int, int)> get sizeVariants => switch (this) {
-    GridWidgetType.bioHeader => const [(4, 2)],
-    GridWidgetType.featuredPlaylists => const [(2, 2), (4, 2)],
+    GridWidgetType.bioHeader => const [(4, 1), (4, 2)],
+    GridWidgetType.featuredPlaylists => const [(2, 1), (2, 2), (4, 2)],
     GridWidgetType.jamstatsHighlights => const [(2, 1), (2, 2)],
-    GridWidgetType.recentlyPlayed => const [(2, 2), (4, 2)],
+    GridWidgetType.recentlyPlayed => const [(2, 1), (2, 2), (4, 2)],
+    GridWidgetType.likedSongs => const [(2, 1), (2, 2), (4, 2)],
+    GridWidgetType.topArtists => const [(2, 1), (2, 2)],
+    GridWidgetType.topTracks => const [(2, 1), (2, 2), (4, 2)],
   };
 
   (int, int) get defaultSize => sizeVariants.first;
@@ -29,6 +35,9 @@ extension GridWidgetTypeMeta on GridWidgetType {
     GridWidgetType.featuredPlaylists => 'Featured playlists',
     GridWidgetType.jamstatsHighlights => 'Jamstats highlights',
     GridWidgetType.recentlyPlayed => 'Recently played',
+    GridWidgetType.likedSongs => 'Liked songs',
+    GridWidgetType.topArtists => 'Top artists',
+    GridWidgetType.topTracks => 'Top tracks',
   };
 
   IconData get icon => switch (this) {
@@ -36,6 +45,9 @@ extension GridWidgetTypeMeta on GridWidgetType {
     GridWidgetType.featuredPlaylists => Icons.queue_music_rounded,
     GridWidgetType.jamstatsHighlights => Icons.auto_graph_rounded,
     GridWidgetType.recentlyPlayed => Icons.history_rounded,
+    GridWidgetType.likedSongs => Icons.favorite_rounded,
+    GridWidgetType.topArtists => Icons.mic_external_on_rounded,
+    GridWidgetType.topTracks => Icons.leaderboard_rounded,
   };
 }
 

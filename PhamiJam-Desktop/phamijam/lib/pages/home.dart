@@ -25,6 +25,7 @@ import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/profile_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/services/charts_service.dart';
 import 'package:phamijam/services/deep_link_service.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/drive_folder_service.dart';
@@ -91,6 +92,7 @@ class _HomeState extends State<Home> {
       <String, Future<List<String>>>{};
   List<PlayEvent> _recentlyPlayedTracks = <PlayEvent>[];
   List<Map<String, dynamic>> _myPlaylists = <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _phamiJamPlaylists = <Map<String, dynamic>>[];
   bool _isLoadingHomeDashboard = false;
   bool _showingSkipSuggestion = false;
   String? _homeDashboardError;
@@ -269,9 +271,21 @@ class _HomeState extends State<Home> {
       final results = await Future.wait([
         ListeningHistoryService.eventsSince(since),
         YoutubePlaylistService.fetchMyPlaylists(),
+        ChartsService.fetchTopPlaylist(
+          countryCode: 'DK',
+          displayTitle: 'Top 10: Denmark',
+          targetSize: 10,
+        ),
+        ChartsService.fetchTopPlaylist(
+          countryCode: 'ZZ',
+          displayTitle: 'Top 50: Global',
+        ),
       ]);
       final events = results[0] as List<PlayEvent>;
       final playlists = results[1] as List<Map<String, dynamic>>;
+      final phamiJamPlaylists = [results[2], results[3]]
+          .whereType<Map<String, dynamic>>()
+          .toList();
 
       final seen = <String>{};
       final recent = <PlayEvent>[];
@@ -285,6 +299,7 @@ class _HomeState extends State<Home> {
       setState(() {
         _recentlyPlayedTracks = recent;
         _myPlaylists = playlists;
+        _phamiJamPlaylists = phamiJamPlaylists;
       });
     } catch (error) {
       if (!mounted) return;
@@ -801,6 +816,39 @@ class _HomeState extends State<Home> {
     );
   }
 
+  Widget _buildPhamiJamPlaylistsSection() {
+    if (_phamiJamPlaylists.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildHomeSectionTitle('PhamiJam Playlists'),
+        SizedBox(
+          height: 240,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _phamiJamPlaylists.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 14),
+            itemBuilder: (context, index) {
+              final playlist = _phamiJamPlaylists[index];
+              return HomePlaylistCard(
+                playlist: playlist,
+                onTap: () => _onSidebarTabSelected(
+                  'playlist_inspect',
+                  extra: {
+                    'playlistId': playlist['playlistId'],
+                    'playlistTitle': playlist['title'],
+                    'songs': playlist['songs'],
+                    'isOwnedByUser': false,
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildYourPlaylistsSection() {
     final colorScheme = Theme.of(context).colorScheme;
     final pins = context.watch<PlaylistPinProvider>();
@@ -1008,6 +1056,8 @@ class _HomeState extends State<Home> {
               ),
             )
           else ...[
+            _buildPhamiJamPlaylistsSection(),
+            if (_phamiJamPlaylists.isNotEmpty) const SizedBox(height: 24),
             _buildRecentArtistsSection(),
             if (_recentlyPlayedTracks.isNotEmpty) const SizedBox(height: 24),
             _buildYourPlaylistsSection(),
@@ -1346,7 +1396,7 @@ class _HomeState extends State<Home> {
     }
 
     if (_selectedTab == 'profile') {
-      return const ProfilePage();
+      return ProfilePage(onTabSelected: _onSidebarTabSelected);
     }
 
     if (_selectedTab == 'friends') {
@@ -1355,7 +1405,7 @@ class _HomeState extends State<Home> {
 
     if (_selectedTab == 'friend_profile') {
       final uid = (_selectedTabExtra?['uid'] as String?) ?? '';
-      return FriendProfilePage(uid: uid);
+      return FriendProfilePage(uid: uid, onTabSelected: _onSidebarTabSelected);
     }
 
     if (_selectedTab == 'playlist_inspect') {
@@ -1854,143 +1904,146 @@ class _HomeState extends State<Home> {
               children: [
                 Row(
                   children: [
-                    Padding(
-                      padding: EdgeInsets.all(10),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            onPressed: () {
-                              setState(() {
-                                _selectedTab = 'home';
-                              });
-                            },
-                            icon: Icon(
-                              Icons.home_rounded,
-                              color: colorScheme.onSurface,
+                    Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.all(10),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _selectedTab = 'home';
+                                });
+                              },
+                              icon: Icon(
+                                Icons.home_rounded,
+                                color: colorScheme.onSurface,
+                              ),
                             ),
-                          ),
-                          SizedBox(width: 10),
-                          SizedBox(
-                            width: MediaQuery.of(context).size.width - 465,
-                            height: 45,
-                            child: TextField(
-                              controller: _searchController,
-                              textInputAction: TextInputAction.search,
-                              onSubmitted: (_) => _submitSearch(),
-                              decoration: InputDecoration(
-                                hintText: 'Search songs, artists or albums',
-                                hintStyle: TextStyle(
-                                  color: colorScheme.onSurface.withValues(
-                                    alpha: 0.78,
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: SizedBox(
+                                height: 45,
+                                child: TextField(
+                                  controller: _searchController,
+                                  textInputAction: TextInputAction.search,
+                                  onSubmitted: (_) => _submitSearch(),
+                                  decoration: InputDecoration(
+                                    hintText: 'Search songs, artists or albums',
+                                    hintStyle: TextStyle(
+                                      color: colorScheme.onSurface.withValues(
+                                        alpha: 0.78,
+                                      ),
+                                      fontSize: 15,
+                                    ),
+                                    filled: true,
+                                    fillColor: colorScheme.onSurface.withValues(
+                                      alpha: 0.08,
+                                    ),
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 18,
+                                      vertical: 14,
+                                    ),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide(
+                                        color: colorScheme.onSurface,
+                                        width: 1.0,
+                                      ),
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide(
+                                        color: colorScheme.onSurfaceVariant,
+                                        width: 1.0,
+                                      ),
+                                    ),
+                                    suffixIcon: IconButton(
+                                      icon: Icon(
+                                        Icons.search_rounded,
+                                        color: colorScheme.onSurface,
+                                      ),
+                                      onPressed: _submitSearch,
+                                    ),
                                   ),
-                                  fontSize: 15,
-                                ),
-                                filled: true,
-                                fillColor: colorScheme.onSurface.withValues(
-                                  alpha: 0.08,
-                                ),
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 18,
-                                  vertical: 14,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(
-                                    color: colorScheme.onSurface,
-                                    width: 1.0,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: BorderSide(
-                                    color: colorScheme.onSurfaceVariant,
-                                    width: 1.0,
-                                  ),
-                                ),
-                                suffixIcon: IconButton(
-                                  icon: Icon(
-                                    Icons.search_rounded,
-                                    color: colorScheme.onSurface,
-                                  ),
-                                  onPressed: _submitSearch,
                                 ),
                               ),
                             ),
-                          ),
-                          SizedBox(width: 10),
-                          IconButton(
-                            onPressed: () {
-                              setState(() {
-                                _selectedTab = 'settings';
-                              });
-                            },
-                            icon: Icon(
-                              Icons.settings_rounded,
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                          SizedBox(width: 10),
-                          Consumer<FriendsProvider>(
-                            builder: (context, friendsProvider, _) {
-                              final icon = Icon(
-                                Icons.people_alt_rounded,
+                            SizedBox(width: 10),
+                            IconButton(
+                              onPressed: () {
+                                setState(() {
+                                  _selectedTab = 'settings';
+                                });
+                              },
+                              icon: Icon(
+                                Icons.settings_rounded,
                                 color: colorScheme.onSurface,
-                              );
-                              return IconButton(
-                                onPressed: () => setState(() {
-                                  _selectedTab = 'friends';
-                                }),
-                                icon: friendsProvider.received.isNotEmpty
-                                    ? Badge(child: icon)
-                                    : icon,
-                              );
-                            },
-                          ),
-                          SizedBox(width: 10),
-                          IconButton(
-                            onPressed: () => setState(() {
-                              _selectedTab = 'profile';
-                            }),
-                            icon: Builder(
-                              builder: (context) {
-                                final photoUrl = _auth.currentUser?.photoURL;
-                                final showPhoto =
-                                    photoUrl != null &&
-                                    photoUrl.isNotEmpty &&
-                                    !_avatarLoadFailed;
-                                return CircleAvatar(
-                                  radius: 20,
-                                  backgroundImage: showPhoto
-                                      ? NetworkImage(photoUrl)
-                                      : null,
-                                  onBackgroundImageError: showPhoto
-                                      ? (error, stackTrace) {
-                                          if (!mounted) return;
-                                          setState(
-                                            () => _avatarLoadFailed = true,
-                                          );
-                                        }
-                                      : null,
-                                  child: showPhoto
-                                      ? null
-                                      : Icon(
-                                          Icons.person_rounded,
-                                          color: colorScheme.onSurface,
-                                        ),
+                              ),
+                            ),
+                            SizedBox(width: 10),
+                            Consumer<FriendsProvider>(
+                              builder: (context, friendsProvider, _) {
+                                final icon = Icon(
+                                  Icons.people_alt_rounded,
+                                  color: colorScheme.onSurface,
+                                );
+                                return IconButton(
+                                  onPressed: () => setState(() {
+                                    _selectedTab = 'friends';
+                                  }),
+                                  icon: friendsProvider.received.isNotEmpty
+                                      ? Badge(child: icon)
+                                      : icon,
                                 );
                               },
                             ),
-                          ),
-                          SizedBox(width: 10),
-                          IconButton(
-                            onPressed: _logout,
-                            icon: Icon(
-                              Icons.logout_rounded,
-                              color: colorScheme.onSurface,
+                            SizedBox(width: 10),
+                            IconButton(
+                              onPressed: () => setState(() {
+                                _selectedTab = 'profile';
+                              }),
+                              icon: Builder(
+                                builder: (context) {
+                                  final photoUrl = _auth.currentUser?.photoURL;
+                                  final showPhoto =
+                                      photoUrl != null &&
+                                      photoUrl.isNotEmpty &&
+                                      !_avatarLoadFailed;
+                                  return CircleAvatar(
+                                    radius: 20,
+                                    backgroundImage: showPhoto
+                                        ? NetworkImage(photoUrl)
+                                        : null,
+                                    onBackgroundImageError: showPhoto
+                                        ? (error, stackTrace) {
+                                            if (!mounted) return;
+                                            setState(
+                                              () => _avatarLoadFailed = true,
+                                            );
+                                          }
+                                        : null,
+                                    child: showPhoto
+                                        ? null
+                                        : Icon(
+                                            Icons.person_rounded,
+                                            color: colorScheme.onSurface,
+                                          ),
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                          SizedBox(width: 10),
-                        ],
+                            SizedBox(width: 10),
+                            IconButton(
+                              onPressed: _logout,
+                              icon: Icon(
+                                Icons.logout_rounded,
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                            SizedBox(width: 10),
+                          ],
+                        ),
                       ),
                     ),
                   ],

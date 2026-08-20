@@ -84,10 +84,12 @@
   - Fixed share link "Listen on PhamiJam" redirect (needs testing)
   - Added social feature
   - Added customizable profile pages
-- 1.1.2.1 - 19/08/2026
-  - Signout button fix
-  - Profile widget fixes
-  - Lyrics fixes
+- 1.1.3 - 20/08/2026
+  - Fixed the sign-out button
+  - Fixed lyrics
+  - Fixed profile widget issues
+  - Fixed profile saves sometimes failing
+  - Added PhamiJam Playlists, with Top 50: Denmark and Top 50: Global charts
 
 ## Screenshots:
 

@@ -32,7 +32,6 @@ class FriendsPage extends StatelessWidget {
                     style: TextStyle(
                       color: colorScheme.onSurface,
                       fontWeight: FontWeight.w600,
-                      fontSize: 18,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -49,7 +48,6 @@ class FriendsPage extends StatelessWidget {
                         .toList(),
                   ),
                   _Section(
-                    title: 'Friends',
                     children: friendsProvider.friends.isEmpty
                         ? [
                             const _EmptyHint(
@@ -76,9 +74,9 @@ class FriendsPage extends StatelessWidget {
 }
 
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.children});
+  const _Section({this.title, required this.children});
 
-  final String title;
+  final String? title;
   final List<Widget> children;
 
   @override
@@ -90,14 +88,16 @@ class _Section extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontWeight: FontWeight.w600,
+          if (title != null) ...[
+            Text(
+              title!,
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
+            const SizedBox(height: 6),
+          ],
           ...children,
         ],
       ),

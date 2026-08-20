@@ -10,7 +10,9 @@ import 'package:phamijam/widgets/profile_grid/profile_grid_view.dart';
 import 'package:provider/provider.dart';
 
 class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  const ProfilePage({super.key, this.onTabSelected});
+
+  final void Function(String, {Map<String, dynamic>? extra})? onTabSelected;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -19,6 +21,23 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   ProfileGridProvider? _gridProvider;
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    context.read<ProfileProvider>().refresh();
+  }
+
+  void _openPlaylist(String playlistId, String title, String? thumbnailUrl) {
+    widget.onTabSelected?.call(
+      'playlist_inspect',
+      extra: {
+        'playlistId': playlistId,
+        'playlistTitle': title,
+        'thumbnailUrl': thumbnailUrl,
+      },
+    );
+  }
 
   @override
   void dispose() {
@@ -150,7 +169,12 @@ class _ProfilePageState extends State<ProfilePage> {
               ],
             ),
             const SizedBox(height: 8),
-            if (!editing && profileProvider.profile.gridLayout.isEmpty)
+            if (!editing && !profileProvider.hasLoadedOnce)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (!editing && profileProvider.profile.gridLayout.isEmpty)
               _EmptyGridHint(onEdit: () => _startEdit(profileProvider))
             else
               ProfileGridView(
@@ -158,6 +182,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 editable: editing,
                 tiles: editing ? null : profileProvider.profile.gridLayout,
                 gridProvider: gridProvider,
+                onOpenPlaylist: _openPlaylist,
               ),
             const SizedBox(height: 12),
           ],

@@ -27,6 +27,19 @@ class ProfileGridProvider extends ChangeNotifier {
 
   bool get isDirty => !_sameTiles(tiles, _original);
 
+  List<GridTile> get displayTiles {
+    final id = draggingTileId;
+    final col = previewCol;
+    final row = previewRow;
+    if (id == null || col == null || row == null) return tiles;
+    final index = tiles.indexWhere((t) => t.id == id);
+    if (index == -1) return tiles;
+    final moved = tiles[index].copyWith(col: col, row: row);
+    final updated = [...tiles];
+    updated[index] = moved;
+    return _resolveCollisions(updated, movedId: id);
+  }
+
   void revert() {
     tiles = List.of(_original);
     _clearDragState();

@@ -350,6 +350,49 @@ class YoutubePlaylistService {
     };
   }
 
+  static Future<List<Map<String, dynamic>>> fetchRegionalMusicChart(
+    String regionCode, {
+    int maxResults = 50,
+  }) async {
+    final uri = Uri.parse('https://www.googleapis.com/youtube/v3/videos')
+        .replace(
+          queryParameters: {
+            'part': 'snippet,contentDetails',
+            'chart': 'mostPopular',
+            'regionCode': regionCode,
+            'videoCategoryId': '10',
+            'maxResults': '$maxResults',
+          },
+        );
+    final response = await _getWithAutoRefresh(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to load chart (${response.statusCode}).');
+    }
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    final songs = <Map<String, dynamic>>[];
+    for (final item in (payload['items'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final videoId = item['id'] as String?;
+      if (videoId == null || videoId.isEmpty) continue;
+      final snippet = Map<String, dynamic>.from(
+        item['snippet'] as Map? ?? const {},
+      );
+      final contentDetails = Map<String, dynamic>.from(
+        item['contentDetails'] as Map? ?? const {},
+      );
+      final iso = contentDetails['duration'] as String?;
+      songs.add(<String, dynamic>{
+        'title': (snippet['title'] as String?) ?? 'Unknown song',
+        'artist': (snippet['channelTitle'] as String?) ?? 'Unknown artist',
+        'artistId': snippet['channelId'] as String? ?? '',
+        'videoId': videoId,
+        'thumbnailUrl': _bestThumbnailUrl(snippet),
+        'durationSeconds': iso == null ? 0 : _parseIso8601Duration(iso),
+      });
+    }
+    return songs;
+  }
+
   static Future<int> fetchVideoDurationSeconds(String videoId) async {
     if (videoId.isEmpty) return 0;
     final result = await _fetchVideoDurationsSeconds([videoId]);

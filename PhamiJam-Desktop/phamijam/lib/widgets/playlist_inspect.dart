@@ -232,6 +232,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
 
   bool get _isOwnedByUser => (widget.extra?['isOwnedByUser'] as bool?) ?? true;
 
+  bool get _hasRealPlaylistId => widget.extra?['songs'] == null;
+
   String? get _playlistId => widget.extra?['playlistId'] as String?;
 
   void _handleBack() {
@@ -326,6 +328,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   }
 
   Widget _buildPinButton() {
+    if (!_hasRealPlaylistId) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
     final playlistId = _playlistId;
     return Consumer<PlaylistPinProvider>(
@@ -346,11 +349,9 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
 
   Widget _buildFeatureButton() {
     if (!_isOwnedByUser) return const SizedBox.shrink();
+    if (_playlistPrivacyStatus == 'private') return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
     return IconButton(
-      tooltip: _isFeaturedOnProfile
-          ? 'Remove from profile'
-          : 'Feature on profile',
       onPressed: _handleToggleFeatured,
       icon: Icon(
         _isFeaturedOnProfile ? Icons.star_rounded : Icons.star_border_rounded,
@@ -362,6 +363,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   }
 
   Widget _buildShareButton() {
+    if (!_hasRealPlaylistId) return const SizedBox.shrink();
     if (_playlistPrivacyStatus == 'private') return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
     final playlistId = _playlistId;
@@ -541,6 +543,27 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         _isLoadingSongs = false;
         _errorMessage = 'Missing playlist id.';
         _songs = [];
+      });
+      return;
+    }
+
+    final injectedSongs = widget.extra?['songs'] as List?;
+    if (injectedSongs != null) {
+      final songs = injectedSongs
+          .whereType<Map<String, dynamic>>()
+          .map((song) => Map<String, dynamic>.from(song))
+          .toList();
+      final totalDurationSeconds = songs
+          .map((song) => song['durationSeconds'])
+          .whereType<int>()
+          .fold<int>(0, (sum, secs) => sum + secs);
+      if (!mounted) return;
+      setState(() {
+        _songs = songs;
+        _playlistSongCount = songs.length;
+        _playlistDurationSeconds = totalDurationSeconds;
+        _playlistPrivacyStatus = 'public';
+        _isLoadingSongs = false;
       });
       return;
     }
