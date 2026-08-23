@@ -106,7 +106,6 @@ class _ProfilePageState extends State<ProfilePage> {
                     style: TextStyle(
                       color: colorScheme.onSurface,
                       fontWeight: FontWeight.w600,
-                      fontSize: 18,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),

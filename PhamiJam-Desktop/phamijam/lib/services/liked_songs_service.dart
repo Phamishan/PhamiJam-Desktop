@@ -19,6 +19,20 @@ class LikedSongsService {
   static Future<List<Map<String, dynamic>>> fetchAll() async {
     final collection = _collection;
     if (collection == null) return [];
+    return _fetchFrom(collection);
+  }
+
+  static Future<List<Map<String, dynamic>>> fetchAllForUid(String uid) =>
+      _fetchFrom(
+        FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .collection('likedSongs'),
+      );
+
+  static Future<List<Map<String, dynamic>>> _fetchFrom(
+    CollectionReference<Map<String, dynamic>> collection,
+  ) async {
     final snapshot = await collection
         .orderBy('likedAt', descending: true)
         .get();

@@ -90,6 +90,10 @@
   - Fixed profile widget issues
   - Fixed profile saves sometimes failing
   - Added PhamiJam Playlists, with Top 50: Denmark and Top 50: Global charts
+- 1.1.4 - 23/08/2026
+  - Removed PhamiJam Playlists
+  - Fixed profile widgets
+  - Fixed lyrics
 
 ## Screenshots:
 

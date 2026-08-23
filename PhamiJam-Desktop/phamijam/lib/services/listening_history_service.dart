@@ -152,6 +152,37 @@ class ListeningHistoryService {
     return events;
   }
 
+  static Future<List<PlayEvent>> eventsSinceForUid(
+    String uid,
+    DateTime since, {
+    DateTime? until,
+  }) async {
+    final sinceMs = since.millisecondsSinceEpoch;
+    final untilMs = until?.millisecondsSinceEpoch;
+    final events = <PlayEvent>[];
+
+    try {
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('plays')
+          .where('s', isGreaterThanOrEqualTo: sinceMs);
+      if (untilMs != null) {
+        query = query.where('s', isLessThan: untilMs);
+      }
+      final snapshot = await query.get();
+      for (final doc in snapshot.docs) {
+        final event = PlayEvent.fromJson(doc.data());
+        if (event != null) events.add(event);
+      }
+    } catch (error) {
+      debugPrint('ListeningHistoryService: remote fetch failed: $error');
+    }
+
+    events.sort((a, b) => a.startedAt.compareTo(b.startedAt));
+    return events;
+  }
+
   static Future<int> earliestEventYear() async {
     await flushPending();
     DateTime? earliest;

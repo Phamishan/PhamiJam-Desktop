@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:phamijam/models/play_event.dart';
 import 'package:phamijam/services/listening_history_service.dart';
@@ -8,11 +7,12 @@ class RecentlyPlayedTile extends StatelessWidget {
 
   final String profileUid;
 
-  bool get _isOwner => profileUid == FirebaseAuth.instance.currentUser?.uid;
-
-  static Future<List<PlayEvent>> _fetchRecent() async {
+  static Future<List<PlayEvent>> _fetchRecent(String uid) async {
     final since = DateTime.now().subtract(const Duration(days: 180));
-    final events = await ListeningHistoryService.eventsSince(since);
+    final events = await ListeningHistoryService.eventsSinceForUid(
+      uid,
+      since,
+    );
     final seen = <String>{};
     final recent = <PlayEvent>[];
     for (final event in events.reversed) {
@@ -26,21 +26,8 @@ class RecentlyPlayedTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    if (!_isOwner) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(
-            'Recently played is private',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
-          ),
-        ),
-      );
-    }
-
     return FutureBuilder<List<PlayEvent>>(
-      future: _fetchRecent(),
+      future: _fetchRecent(profileUid),
       builder: (context, snapshot) {
         final tracks = snapshot.data ?? const [];
         if (snapshot.connectionState == ConnectionState.done &&

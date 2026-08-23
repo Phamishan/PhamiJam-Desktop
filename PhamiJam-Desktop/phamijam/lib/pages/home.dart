@@ -25,7 +25,6 @@ import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/profile_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
-import 'package:phamijam/services/charts_service.dart';
 import 'package:phamijam/services/deep_link_service.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/drive_folder_service.dart';
@@ -92,7 +91,6 @@ class _HomeState extends State<Home> {
       <String, Future<List<String>>>{};
   List<PlayEvent> _recentlyPlayedTracks = <PlayEvent>[];
   List<Map<String, dynamic>> _myPlaylists = <Map<String, dynamic>>[];
-  List<Map<String, dynamic>> _phamiJamPlaylists = <Map<String, dynamic>>[];
   bool _isLoadingHomeDashboard = false;
   bool _showingSkipSuggestion = false;
   String? _homeDashboardError;
@@ -271,21 +269,9 @@ class _HomeState extends State<Home> {
       final results = await Future.wait([
         ListeningHistoryService.eventsSince(since),
         YoutubePlaylistService.fetchMyPlaylists(),
-        ChartsService.fetchTopPlaylist(
-          countryCode: 'DK',
-          displayTitle: 'Top 10: Denmark',
-          targetSize: 10,
-        ),
-        ChartsService.fetchTopPlaylist(
-          countryCode: 'ZZ',
-          displayTitle: 'Top 50: Global',
-        ),
       ]);
       final events = results[0] as List<PlayEvent>;
       final playlists = results[1] as List<Map<String, dynamic>>;
-      final phamiJamPlaylists = [results[2], results[3]]
-          .whereType<Map<String, dynamic>>()
-          .toList();
 
       final seen = <String>{};
       final recent = <PlayEvent>[];
@@ -299,7 +285,6 @@ class _HomeState extends State<Home> {
       setState(() {
         _recentlyPlayedTracks = recent;
         _myPlaylists = playlists;
-        _phamiJamPlaylists = phamiJamPlaylists;
       });
     } catch (error) {
       if (!mounted) return;
@@ -816,39 +801,6 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Widget _buildPhamiJamPlaylistsSection() {
-    if (_phamiJamPlaylists.isEmpty) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildHomeSectionTitle('PhamiJam Playlists'),
-        SizedBox(
-          height: 240,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: _phamiJamPlaylists.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 14),
-            itemBuilder: (context, index) {
-              final playlist = _phamiJamPlaylists[index];
-              return HomePlaylistCard(
-                playlist: playlist,
-                onTap: () => _onSidebarTabSelected(
-                  'playlist_inspect',
-                  extra: {
-                    'playlistId': playlist['playlistId'],
-                    'playlistTitle': playlist['title'],
-                    'songs': playlist['songs'],
-                    'isOwnedByUser': false,
-                  },
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildYourPlaylistsSection() {
     final colorScheme = Theme.of(context).colorScheme;
     final pins = context.watch<PlaylistPinProvider>();
@@ -1056,8 +1008,6 @@ class _HomeState extends State<Home> {
               ),
             )
           else ...[
-            _buildPhamiJamPlaylistsSection(),
-            if (_phamiJamPlaylists.isNotEmpty) const SizedBox(height: 24),
             _buildRecentArtistsSection(),
             if (_recentlyPlayedTracks.isNotEmpty) const SizedBox(height: 24),
             _buildYourPlaylistsSection(),

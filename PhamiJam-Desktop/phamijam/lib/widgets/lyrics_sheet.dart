@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/services/lyrics_service.dart';
@@ -21,6 +23,9 @@ class _LyricsSheetState extends State<LyricsSheet> {
   String? _error;
   int _syncOffsetMs = 0;
   int _lastActiveIndex = -1;
+  bool _userScrolling = false;
+  bool _isAutoScrolling = false;
+  Timer? _resumeAutoScrollTimer;
 
   @override
   void initState() {
@@ -33,8 +38,23 @@ class _LyricsSheetState extends State<LyricsSheet> {
   @override
   void dispose() {
     _playback.removeListener(_handlePlaybackChanged);
+    _resumeAutoScrollTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (_isAutoScrolling) return false;
+    if (notification is ScrollStartNotification) {
+      _resumeAutoScrollTimer?.cancel();
+      _userScrolling = true;
+    } else if (notification is ScrollEndNotification) {
+      _resumeAutoScrollTimer?.cancel();
+      _resumeAutoScrollTimer = Timer(const Duration(seconds: 4), () {
+        _userScrolling = false;
+      });
+    }
+    return false;
   }
 
   String? get _currentVideoId => _playback.currentYouTubeVideoId;
@@ -114,14 +134,16 @@ class _LyricsSheetState extends State<LyricsSheet> {
     _lastActiveIndex = index;
     if (!mounted) return;
     setState(() {});
+    if (_userScrolling) return;
     final lineContext = _lineKeys[index]?.currentContext;
     if (lineContext == null) return;
+    _isAutoScrolling = true;
     Scrollable.ensureVisible(
       lineContext,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
       alignment: 0.4,
-    );
+    ).then((_) => _isAutoScrolling = false);
   }
 
   Future<void> _adjustOffset(int deltaMs) async {
@@ -234,33 +256,38 @@ class _LyricsSheetState extends State<LyricsSheet> {
     if (lyrics.hasSynced) {
       final synced = lyrics.synced!;
       final activeIndex = _activeLineIndex();
-      return ListView.builder(
-        controller: _scrollController,
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        itemCount: synced.length,
-        itemBuilder: (context, i) {
-          final key = _lineKeys.putIfAbsent(i, () => GlobalKey());
-          final isActive = i == activeIndex;
-          return Padding(
-            key: key,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () => _seekToLine(synced[i]),
-                child: AnimatedDefaultTextStyle(
-                  duration: const Duration(milliseconds: 200),
-                  style: TextStyle(
-                    color: isActive ? onSheet : onSheet.withValues(alpha: 0.5),
-                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
-                    fontSize: 18,
+      return NotificationListener<ScrollNotification>(
+        onNotification: _handleScrollNotification,
+        child: ListView.builder(
+          controller: _scrollController,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          itemCount: synced.length,
+          itemBuilder: (context, i) {
+            final key = _lineKeys.putIfAbsent(i, () => GlobalKey());
+            final isActive = i == activeIndex;
+            return Padding(
+              key: key,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: () => _seekToLine(synced[i]),
+                  child: AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 200),
+                    style: TextStyle(
+                      color: isActive
+                          ? onSheet
+                          : onSheet.withValues(alpha: 0.5),
+                      fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                      fontSize: 18,
+                    ),
+                    child: Text(synced[i].text),
                   ),
-                  child: Text(synced[i].text),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       );
     }
 

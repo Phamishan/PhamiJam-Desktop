@@ -1,4 +1,3 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:phamijam/services/liked_songs_service.dart';
 
@@ -7,26 +6,11 @@ class LikedSongsTile extends StatelessWidget {
 
   final String profileUid;
 
-  bool get _isOwner => profileUid == FirebaseAuth.instance.currentUser?.uid;
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    if (!_isOwner) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(
-            'Liked songs are private',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
-          ),
-        ),
-      );
-    }
-
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: LikedSongsService.fetchAll(),
+      future: LikedSongsService.fetchAllForUid(profileUid),
       builder: (context, snapshot) {
         final songs = snapshot.data ?? const [];
         if (snapshot.connectionState == ConnectionState.done && songs.isEmpty) {
