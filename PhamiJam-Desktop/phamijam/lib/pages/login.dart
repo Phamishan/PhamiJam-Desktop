@@ -115,9 +115,19 @@ class _LoginState extends State<Login> {
   }
 
   Future<void> _signOut() async {
-    await GoogleAuthService.signOut();
-    await GoogleDriveAuthService.signOut();
-    await DriveFolderService.clearFolderId();
+    try {
+      await GoogleAuthService.signOut().timeout(const Duration(seconds: 5));
+    } catch (_) {}
+    try {
+      await GoogleDriveAuthService.signOut().timeout(
+        const Duration(seconds: 5),
+      );
+    } catch (_) {}
+    try {
+      await DriveFolderService.clearFolderId().timeout(
+        const Duration(seconds: 5),
+      );
+    } catch (_) {}
     await _auth.signOut();
     PlaylistsPage.resetCache();
     if (!mounted) return;

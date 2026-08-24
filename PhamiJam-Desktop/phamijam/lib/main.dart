@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/firebase_options.dart';
 import 'package:phamijam/pages/login.dart';
@@ -22,9 +24,26 @@ import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/protocol_handler_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+Future<void> _recoverFromCorruptedPreferences() async {
+  if (!Platform.isWindows) return;
+  try {
+    await SharedPreferences.getInstance();
+  } catch (_) {
+    try {
+      final supportDir = await getApplicationSupportDirectory();
+      final file = File('${supportDir.path}\\shared_preferences.json');
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+}
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _recoverFromCorruptedPreferences();
   MediaKit.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await dotenv.load(fileName: '.env');

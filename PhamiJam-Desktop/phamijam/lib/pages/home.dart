@@ -1413,17 +1413,30 @@ class _HomeState extends State<Home> {
 
   Future<void> _logout() async {
     try {
-      await _playback.switchToLocalEngine();
-      await player.stop();
-      _playback.setIsPlaying(false);
-      _playback.setProgress(Duration.zero);
-      _playback.setDuration(Duration.zero);
-      _playback.setCurrentSongPath(null);
-      _playback.clearPlaylistQueue();
+      await _playback.switchToLocalEngine().timeout(const Duration(seconds: 5));
+      await player.stop().timeout(const Duration(seconds: 5));
+    } catch (_) {}
+    _playback.setIsPlaying(false);
+    _playback.setProgress(Duration.zero);
+    _playback.setDuration(Duration.zero);
+    _playback.setCurrentSongPath(null);
+    _playback.clearPlaylistQueue();
 
-      await GoogleAuthService.signOut();
-      await GoogleDriveAuthService.signOut();
-      await DriveFolderService.clearFolderId();
+    try {
+      await GoogleAuthService.signOut().timeout(const Duration(seconds: 5));
+    } catch (_) {}
+    try {
+      await GoogleDriveAuthService.signOut().timeout(
+        const Duration(seconds: 5),
+      );
+    } catch (_) {}
+    try {
+      await DriveFolderService.clearFolderId().timeout(
+        const Duration(seconds: 5),
+      );
+    } catch (_) {}
+
+    try {
       await _auth.signOut();
       PlaylistsPage.resetCache();
       if (!mounted) return;

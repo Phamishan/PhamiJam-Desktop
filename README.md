@@ -94,6 +94,8 @@
   - Removed PhamiJam Playlists
   - Fixed profile widgets
   - Fixed lyrics
+- 1.1.5 - 24/08/2026
+  - Fixed login
 
 ## Screenshots:
 
