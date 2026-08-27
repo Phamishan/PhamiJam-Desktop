@@ -75,6 +75,10 @@
   - Added Edit and Delete playlist options to playlist cards
   - Added a full menu to Recently Played tracks
   - Improved thumbnail quality on search, artist, and album pages
+- 1.1.1 - 17/08/2026
+  - Added a lyrics fallback for songs YouTube Music doesn't have lyrics for
+  - Fixed share link "Listen on PhamiJam" redirect
+  - Fixed the app failing to launch after updating
 - 1.1.2 - 19/08/2026
   - Added a lyrics fallback for songs YouTube Music doesn't have lyrics for
   - Fixed share link "Listen on PhamiJam" redirect (needs testing)
@@ -92,6 +96,13 @@
   - Fixed lyrics
 - 1.1.5 - 24/08/2026
   - Fixed login
+- 1.1.6 - 27/08/2026
+  - Fixed autoplay
+  - Fixed the app crashing when opening Jamstats ✨ while listening to music.
+  - Added a right-click menu to the video preview
+  - Made the queue show more than just the next 4 songs
+  - Fixed edited songs sometimes starting from the beginning
+  - Fixed switching theme color
 
 ## Screenshots:
 

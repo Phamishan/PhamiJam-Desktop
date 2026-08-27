@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
@@ -1382,21 +1383,27 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                         widget.onOpenArtist != null)
                                     ? MouseRegion(
                                         cursor: SystemMouseCursors.click,
-                                        child: GestureDetector(
-                                          onTap: () => widget.onOpenArtist!(
-                                            artistId,
-                                            artist,
-                                          ),
-                                          child: Text(
-                                            artist,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color:
-                                                  colorScheme.onSurfaceVariant,
-                                              decoration:
-                                                  TextDecoration.underline,
-                                            ),
+                                        child: RichText(
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          text: TextSpan(
+                                            text: artist,
+                                            style: DefaultTextStyle.of(context)
+                                                .style
+                                                .merge(
+                                                  TextStyle(
+                                                    color: colorScheme
+                                                        .onSurfaceVariant,
+                                                    decoration: TextDecoration
+                                                        .underline,
+                                                  ),
+                                                ),
+                                            recognizer: TapGestureRecognizer()
+                                              ..onTap = () =>
+                                                  widget.onOpenArtist!(
+                                                    artistId,
+                                                    artist,
+                                                  ),
                                           ),
                                         ),
                                       )

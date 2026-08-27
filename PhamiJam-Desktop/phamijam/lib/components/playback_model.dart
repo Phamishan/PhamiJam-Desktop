@@ -24,6 +24,7 @@ enum PlayerRepeatMode { off, all, one }
 
 class PlaybackModel extends ChangeNotifier {
   static const int _queueAheadCount = 4;
+  static const int _queueDisplayAheadCount = 20;
   static const Duration _discordPresenceDebounce = Duration(milliseconds: 50);
   static const String _prefsSongNameKey = 'phamijam.last_song_name';
   static const String _prefsArtistNameKey = 'phamijam.last_artist_name';
@@ -75,6 +76,20 @@ class PlaybackModel extends ChangeNotifier {
   Duration seekPreview = Duration.zero;
   List<dynamic> queue = [];
   bool needsResumeLoad = false;
+  bool _videoTexturePaused = false;
+  bool get isVideoTexturePaused => _videoTexturePaused;
+
+  void pauseVideoTexture() {
+    if (_videoTexturePaused) return;
+    _videoTexturePaused = true;
+    notifyListeners();
+  }
+
+  void resumeVideoTexture() {
+    if (!_videoTexturePaused) return;
+    _videoTexturePaused = false;
+    notifyListeners();
+  }
 
   List<dynamic> _playlistItems = [];
   List<int> _playOrder = [];
@@ -616,10 +631,6 @@ class PlaybackModel extends ChangeNotifier {
 
       final start = _trimStart;
       if (start != null && start > Duration.zero) {
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-        try {
-          await player.seek(start);
-        } catch (_) {}
         setProgress(start);
       }
     });
@@ -970,7 +981,7 @@ class PlaybackModel extends ChangeNotifier {
       );
       if (continuation.isEmpty) return false;
       for (final track in continuation) {
-        addToQueue(track);
+        appendToQueue(track);
       }
       return true;
     } catch (error) {
@@ -1287,14 +1298,17 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> _localPlayNext() async {
     if (_playOrder.isNotEmpty) {
-      var nextOrderIndex = _normalizeOrderIndex(
-        _currentOrderIndex + 1,
-        wrapAround: repeatMode == PlayerRepeatMode.all,
-      );
+      var nextOrderIndex = _normalizeOrderIndex(_currentOrderIndex + 1);
       if (nextOrderIndex == null) {
         final appended = await _tryAppendAutoplayContinuation();
-        if (!appended) return;
-        nextOrderIndex = _normalizeOrderIndex(_currentOrderIndex + 1);
+        if (appended) {
+          nextOrderIndex = _normalizeOrderIndex(_currentOrderIndex + 1);
+        } else if (repeatMode == PlayerRepeatMode.all) {
+          nextOrderIndex = _normalizeOrderIndex(
+            _currentOrderIndex + 1,
+            wrapAround: true,
+          );
+        }
         if (nextOrderIndex == null) return;
       }
 
@@ -1522,7 +1536,7 @@ class PlaybackModel extends ChangeNotifier {
     }
 
     final updatedQueue = <dynamic>[];
-    final endOffset = _queueAheadCount;
+    final endOffset = _queueDisplayAheadCount;
     for (var offset = 0; offset <= endOffset; offset++) {
       final orderIndex = _normalizeOrderIndex(_currentOrderIndex + offset);
       if (orderIndex == null) break;

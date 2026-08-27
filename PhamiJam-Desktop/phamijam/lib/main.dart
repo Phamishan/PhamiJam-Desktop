@@ -68,10 +68,18 @@ void main(List<String> args) async {
   );
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key, this.pendingDeepLink});
 
   final DeepLinkTarget? pendingDeepLink;
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  late final Stream<User?> _authStateChanges = FirebaseAuth.instance
+      .authStateChanges();
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +91,7 @@ class MyApp extends StatelessWidget {
       darkTheme: AppTheme.dark(accentColor: themeProvider.accentColor),
       themeMode: themeProvider.flutterThemeMode,
       home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
+        stream: _authStateChanges,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Scaffold(
@@ -92,7 +100,7 @@ class MyApp extends StatelessWidget {
           }
 
           if (snapshot.hasData) {
-            return Home(pendingDeepLink: pendingDeepLink);
+            return Home(pendingDeepLink: widget.pendingDeepLink);
           }
 
           return const Login();

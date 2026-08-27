@@ -39,12 +39,19 @@ class AppAudioPlayer {
   Stream<bool> get completedStream =>
       _player.stream.completed.asBroadcastStream();
 
-  Future<void> setUrl(String url, {Map<String, String>? headers}) async {
-    await _player.open(Media(url, httpHeaders: headers), play: false);
+  Future<void> setUrl(
+    String url, {
+    Map<String, String>? headers,
+    Duration? start,
+  }) async {
+    await _player.open(
+      Media(url, httpHeaders: headers, start: start),
+      play: false,
+    );
   }
 
-  Future<void> setFilePath(String path) async {
-    await _player.open(Media(path), play: false);
+  Future<void> setFilePath(String path, {Duration? start}) async {
+    await _player.open(Media(path, start: start), play: false);
   }
 
   Future<void> stop() => _player.stop();

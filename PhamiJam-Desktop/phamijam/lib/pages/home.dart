@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
@@ -373,6 +374,39 @@ class _HomeState extends State<Home> {
     }
   }
 
+  void _handleVideoPreviewMenuSelection(String value) {
+    final videoId = _playback.currentYouTubeVideoId;
+    if (videoId == null || videoId.isEmpty) {
+      AppFlushbar.error(context, 'This song is unavailable.');
+      return;
+    }
+    final title = _playback.songName;
+    final artist = _playback.artistName;
+    switch (value) {
+      case 'add_to_playlist':
+        showAddToPlaylistDialog(context, videoId: videoId, songTitle: title);
+      case 'download':
+        _downloads.download(
+          videoId: videoId,
+          songName: title,
+          artistName: artist,
+          artistId: _playback.currentArtistId,
+        );
+      case 'remove_download':
+        _downloads.remove(videoId);
+      case 'edit_trim':
+        showEditSongDialog(
+          context,
+          videoId: videoId,
+          title: title,
+          artist: artist,
+          thumbnailUrl: 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
+        );
+      case 'share':
+        ShareLinkService.shareSong(context, videoId);
+    }
+  }
+
   void _registerRecentlyPlayedQueueHandlers() {
     final songs = [
       for (final e in _recentlyPlayedTracks) _playEventToSongMap(e),
@@ -418,6 +452,7 @@ class _HomeState extends State<Home> {
     required String artist,
     String thumbnailUrl = '',
     String artistId = '',
+    bool detachFromQueue = false,
   }) async {
     if (videoId.isEmpty) return;
 
@@ -429,6 +464,18 @@ class _HomeState extends State<Home> {
     _playback.setCoverImageBytes(cover);
     await _playback.playYouTubeVideoById(videoId);
     await _playback.applyVolume(_playback.currentSliderValue);
+
+    if (detachFromQueue) {
+      _playback.setPlaylistQueue([
+        {
+          'videoId': videoId,
+          'title': title,
+          'artist': artist,
+          'artistId': artistId,
+          'thumbnailUrl': thumbnailUrl,
+        },
+      ], startIndex: 0);
+    }
   }
 
   Future<void> _playLocalSelection({
@@ -615,7 +662,11 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> _openDownloadedFile(String path) async {
-    await player.setFilePath(path);
+    final start = _playback.trimStart;
+    await player.setFilePath(
+      path,
+      start: start != null && start > Duration.zero ? start : null,
+    );
     final effectivePercent = _playback.effectiveVolumePercent;
     await player.setVolume(effectivePercent / 100);
     _playback.setIsMuted(_playback.currentSliderValue == 0);
@@ -627,7 +678,12 @@ class _HomeState extends State<Home> {
     String streamUrl, {
     Map<String, String>? headers,
   }) async {
-    await player.setUrl(streamUrl, headers: headers);
+    final start = _playback.trimStart;
+    await player.setUrl(
+      streamUrl,
+      headers: headers,
+      start: start != null && start > Duration.zero ? start : null,
+    );
 
     final effectivePercent = _playback.effectiveVolumePercent;
     await player.setVolume(effectivePercent / 100);
@@ -713,6 +769,7 @@ class _HomeState extends State<Home> {
           artist: video['artist'] as String? ?? '',
           thumbnailUrl: video['thumbnailUrl'] as String? ?? '',
           artistId: video['artistId'] as String? ?? '',
+          detachFromQueue: true,
         );
         return;
       }
@@ -1081,6 +1138,7 @@ class _HomeState extends State<Home> {
                       artist: artist,
                       thumbnailUrl: thumbnailUrl,
                       artistId: artistId,
+                      detachFromQueue: true,
                     );
                   },
               onOpenArtist: (artistId, artistName) {
@@ -1113,6 +1171,7 @@ class _HomeState extends State<Home> {
                       artist: artist,
                       thumbnailUrl: thumbnailUrl,
                       artistId: artistId,
+                      detachFromQueue: true,
                     );
                   },
               onOpenArtist: (artistId, artistName) {
@@ -1180,6 +1239,7 @@ class _HomeState extends State<Home> {
                   artist: artist,
                   thumbnailUrl: thumbnailUrl,
                   artistId: artistId,
+                  detachFromQueue: true,
                 );
               },
         );
@@ -1204,6 +1264,7 @@ class _HomeState extends State<Home> {
                 artist: artist,
                 thumbnailUrl: thumbnailUrl,
                 artistId: artistId,
+                detachFromQueue: true,
               );
             },
         onOpenAlbum: (albumId, albumTitle, nextArtistId, nextArtistName) {
@@ -1290,6 +1351,7 @@ class _HomeState extends State<Home> {
                   artist: artist,
                   thumbnailUrl: thumbnailUrl,
                   artistId: artistId,
+                  detachFromQueue: true,
                 ),
               );
             },
@@ -1849,9 +1911,65 @@ class _HomeState extends State<Home> {
             alignment: Alignment.topLeft,
             child: Sidebar(
               onTabSelected: _onSidebarTabSelected,
-              videoCover: Video(
-                controller: _sidebarVideoController,
-                controls: NoVideoControls,
+              videoCover: Consumer<PlaybackModel>(
+                builder: (context, playback, child) {
+                  if (playback.isVideoTexturePaused) {
+                    return const ColoredBox(color: Colors.black);
+                  }
+                  return child!;
+                },
+                child: Consumer<DownloadsProvider>(
+                  builder: (context, downloads, child) {
+                    final isDownloaded = downloads.isDownloaded(
+                      _playback.currentYouTubeVideoId ?? '',
+                    );
+                    return ContextMenuRegion<String>(
+                      contextMenu: ContextMenu(
+                        borderRadius: BorderRadius.circular(12),
+                        entries: [
+                          MenuItem<String>(
+                            value: 'add_to_playlist',
+                            icon: const Icon(Icons.playlist_add_rounded),
+                            label: const Text('Add to playlist'),
+                          ),
+                          MenuItem<String>(
+                            value: isDownloaded
+                                ? 'remove_download'
+                                : 'download',
+                            icon: Icon(
+                              isDownloaded
+                                  ? Icons.download_done_rounded
+                                  : Icons.download_rounded,
+                            ),
+                            label: Text(
+                              isDownloaded ? 'Remove download' : 'Download',
+                            ),
+                          ),
+                          MenuItem<String>(
+                            value: 'edit_trim',
+                            icon: const Icon(Icons.content_cut_rounded),
+                            label: const Text('Edit song'),
+                          ),
+                          MenuItem<String>(
+                            value: 'share',
+                            icon: const Icon(Icons.share_rounded),
+                            label: const Text('Share'),
+                          ),
+                        ],
+                      ),
+                      onItemSelected: (value) {
+                        if (value != null) {
+                          _handleVideoPreviewMenuSelection(value);
+                        }
+                      },
+                      child: child,
+                    );
+                  },
+                  child: Video(
+                    controller: _sidebarVideoController,
+                    controls: NoVideoControls,
+                  ),
+                ),
               ),
               onOpenFullscreenVideo: () => Navigator.of(context).push(
                 MaterialPageRoute(

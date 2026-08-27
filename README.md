@@ -96,6 +96,13 @@
   - Fixed lyrics
 - 1.1.5 - 24/08/2026
   - Fixed login
+- 1.1.6 - 27/08/2026
+  - Fixed autoplay
+  - Fixed the app crashing when opening Jamstats ✨ while listening to music.
+  - Added a right-click menu to the video preview
+  - Made the queue show more than just the next 4 songs
+  - Fixed edited songs sometimes starting from the beginning
+  - Fixed switching theme color
 
 ## Screenshots:
 
