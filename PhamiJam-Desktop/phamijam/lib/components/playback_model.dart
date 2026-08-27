@@ -38,6 +38,7 @@ class PlaybackModel extends ChangeNotifier {
   Timer? _discordPresenceTimer;
   bool _isBoundToPlayer = false;
   bool _completionHandledForCurrentTrack = false;
+  bool _isSwitchingTrack = false;
   bool _wasPlaying = false;
   PlaybackEngine _engine = PlaybackEngine.local;
   DiscordRPC? _discordRpc;
@@ -76,20 +77,6 @@ class PlaybackModel extends ChangeNotifier {
   Duration seekPreview = Duration.zero;
   List<dynamic> queue = [];
   bool needsResumeLoad = false;
-  bool _videoTexturePaused = false;
-  bool get isVideoTexturePaused => _videoTexturePaused;
-
-  void pauseVideoTexture() {
-    if (_videoTexturePaused) return;
-    _videoTexturePaused = true;
-    notifyListeners();
-  }
-
-  void resumeVideoTexture() {
-    if (!_videoTexturePaused) return;
-    _videoTexturePaused = false;
-    notifyListeners();
-  }
 
   List<dynamic> _playlistItems = [];
   List<int> _playOrder = [];
@@ -513,6 +500,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void _checkTrimEndReached() {
+    if (_isSwitchingTrack) return;
     final end = _trimEnd;
     if (end == null || _completionHandledForCurrentTrack) return;
     if (progress < end - const Duration(milliseconds: 500)) return;
@@ -609,29 +597,34 @@ class PlaybackModel extends ChangeNotifier {
     final trim = _trimLookup?.call(videoId, _sourcePlaylistId);
     _trimStart = trim != null ? Duration(milliseconds: trim.startMs) : null;
     _trimEnd = trim != null ? Duration(milliseconds: trim.endMs) : null;
+    _isSwitchingTrack = true;
 
     _engineTransition = _engineTransition.catchError((_) {}).then((_) async {
-      setDuration(Duration.zero);
-      setProgress(Duration.zero);
-      currentYouTubeVideoId = videoId;
-      notifyListeners();
-
       try {
-        await player.pause();
-      } catch (_) {}
-      try {
-        await player.stop();
-      } catch (_) {}
-      try {
-        await player.seek(Duration.zero);
-      } catch (_) {}
+        setDuration(Duration.zero);
+        setProgress(Duration.zero);
+        currentYouTubeVideoId = videoId;
+        notifyListeners();
 
-      await _youtubeLoadVideoById?.call(videoId);
-      _useYouTubeEngine(videoId);
+        try {
+          await player.pause();
+        } catch (_) {}
+        try {
+          await player.stop();
+        } catch (_) {}
+        try {
+          await player.seek(Duration.zero);
+        } catch (_) {}
 
-      final start = _trimStart;
-      if (start != null && start > Duration.zero) {
-        setProgress(start);
+        await _youtubeLoadVideoById?.call(videoId);
+        _useYouTubeEngine(videoId);
+
+        final start = _trimStart;
+        if (start != null && start > Duration.zero) {
+          setProgress(start);
+        }
+      } finally {
+        _isSwitchingTrack = false;
       }
     });
     await _engineTransition;

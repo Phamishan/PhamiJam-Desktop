@@ -27,12 +27,24 @@ class FriendsPage extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Friends',
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Friends',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.person_search_rounded),
+                        tooltip: 'Find people',
+                        onPressed: () =>
+                            onTabSelected?.call('search_profiles'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   _Section(

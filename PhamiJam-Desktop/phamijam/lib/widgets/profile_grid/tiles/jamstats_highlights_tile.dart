@@ -1,7 +1,11 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:phamijam/models/play_event.dart';
+import 'package:phamijam/providers/friends_provider.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/wrapped_stats.dart';
+import 'package:phamijam/widgets/profile_grid/tiles/private_tile_placeholder.dart';
+import 'package:provider/provider.dart';
 
 class JamstatsHighlightsTile extends StatelessWidget {
   const JamstatsHighlightsTile({super.key, required this.profileUid});
@@ -10,6 +14,10 @@ class JamstatsHighlightsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isOwner = profileUid == FirebaseAuth.instance.currentUser?.uid;
+    final isFriend = context.watch<FriendsProvider>().isFriend(profileUid);
+    if (!isOwner && !isFriend) return const PrivateTilePlaceholder();
+
     final colorScheme = Theme.of(context).colorScheme;
     final now = DateTime.now();
     return FutureBuilder<List<PlayEvent>>(

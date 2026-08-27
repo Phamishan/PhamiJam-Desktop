@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'dart:io';
 
+import 'package:ffi/ffi.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -26,6 +28,23 @@ import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+void _applyGrpcDnsResolverWorkaround() {
+  if (!Platform.isWindows) return;
+  try {
+    final kernel32 = DynamicLibrary.open('kernel32.dll');
+    final setEnvironmentVariable = kernel32
+        .lookupFunction<
+          Int32 Function(Pointer<Utf16> name, Pointer<Utf16> value),
+          int Function(Pointer<Utf16> name, Pointer<Utf16> value)
+        >('SetEnvironmentVariableW');
+    final name = 'GRPC_DNS_RESOLVER'.toNativeUtf16();
+    final value = 'native'.toNativeUtf16();
+    setEnvironmentVariable(name, value);
+    calloc.free(name);
+    calloc.free(value);
+  } catch (_) {}
+}
+
 Future<void> _recoverFromCorruptedPreferences() async {
   if (!Platform.isWindows) return;
   try {
@@ -42,6 +61,7 @@ Future<void> _recoverFromCorruptedPreferences() async {
 }
 
 void main(List<String> args) async {
+  _applyGrpcDnsResolverWorkaround();
   WidgetsFlutterBinding.ensureInitialized();
   await _recoverFromCorruptedPreferences();
   MediaKit.ensureInitialized();

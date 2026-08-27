@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum FriendRequestStatus { pending, declined }
+enum FriendRequestStatus { pending }
 
 FriendRequestStatus? _statusFromString(String? value) {
   for (final status in FriendRequestStatus.values) {

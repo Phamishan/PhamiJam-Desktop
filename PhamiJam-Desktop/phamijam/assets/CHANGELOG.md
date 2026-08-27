@@ -103,6 +103,11 @@
   - Made the queue show more than just the next 4 songs
   - Fixed edited songs sometimes starting from the beginning
   - Fixed switching theme color
+- 1.1.7 - 27/08/2026
+  - Added a "Find friends" search
+  - Added option to like a song through the right-click menu on the video preview
+  - Fixed edits
+  - Fixed Jamstats ✨ issues
 
 ## Screenshots:
 

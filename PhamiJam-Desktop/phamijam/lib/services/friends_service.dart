@@ -211,19 +211,4 @@ class FriendsService {
     );
     await batch.commit();
   }
-
-  static Future<({String displayName, String? photoUrl})?>
-  fetchProfileSummaryByUid(String uid) async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(uid)
-        .get();
-    if (!snapshot.exists) return null;
-    final profile = snapshot.data()?['profile'];
-    final displayName = profile is Map
-        ? profile['displayNameOverride'] as String?
-        : null;
-    final avatarUrl = profile is Map ? profile['avatarUrl'] as String? : null;
-    return (displayName: displayName ?? 'PhamiJam User', photoUrl: avatarUrl);
-  }
 }

@@ -14,6 +14,7 @@ import 'package:phamijam/components/playback_interface.dart';
 import 'package:phamijam/pages/friend_profile_page.dart';
 import 'package:phamijam/pages/friends_page.dart';
 import 'package:phamijam/pages/fullscreen_video_page.dart';
+import 'package:phamijam/pages/search_profiles_page.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/remote_session_banner.dart';
 import 'package:phamijam/components/sidebar.dart';
@@ -383,6 +384,14 @@ class _HomeState extends State<Home> {
     final title = _playback.songName;
     final artist = _playback.artistName;
     switch (value) {
+      case 'toggle_like':
+        context.read<LikedSongsProvider>().toggleLike({
+          'videoId': videoId,
+          'title': title,
+          'artist': artist,
+          'artistId': _playback.currentArtistId,
+          'thumbnailUrl': 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
+        });
       case 'add_to_playlist':
         showAddToPlaylistDialog(context, videoId: videoId, songTitle: title);
       case 'download':
@@ -1420,6 +1429,10 @@ class _HomeState extends State<Home> {
       return FriendProfilePage(uid: uid, onTabSelected: _onSidebarTabSelected);
     }
 
+    if (_selectedTab == 'search_profiles') {
+      return SearchProfilesPage(onTabSelected: _onSidebarTabSelected);
+    }
+
     if (_selectedTab == 'playlist_inspect') {
       return PlaylistInspectPage(
         extra: _selectedTabExtra,
@@ -1911,64 +1924,70 @@ class _HomeState extends State<Home> {
             alignment: Alignment.topLeft,
             child: Sidebar(
               onTabSelected: _onSidebarTabSelected,
-              videoCover: Consumer<PlaybackModel>(
-                builder: (context, playback, child) {
-                  if (playback.isVideoTexturePaused) {
-                    return const ColoredBox(color: Colors.black);
-                  }
-                  return child!;
+              videoCover: Consumer<DownloadsProvider>(
+                builder: (context, downloads, child) {
+                  final isDownloaded = downloads.isDownloaded(
+                    _playback.currentYouTubeVideoId ?? '',
+                  );
+                  final isLiked = context.watch<LikedSongsProvider>().isLiked(
+                    _playback.currentYouTubeVideoId ?? '',
+                  );
+                  return ContextMenuRegion<String>(
+                    contextMenu: ContextMenu(
+                      borderRadius: BorderRadius.circular(12),
+                      entries: [
+                        MenuItem<String>(
+                          value: 'toggle_like',
+                          icon: Icon(
+                            isLiked
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                          ),
+                          label: Text(
+                            isLiked
+                                ? 'Remove from Liked Songs'
+                                : 'Add to Liked Songs',
+                          ),
+                        ),
+                        MenuItem<String>(
+                          value: 'add_to_playlist',
+                          icon: const Icon(Icons.playlist_add_rounded),
+                          label: const Text('Add to playlist'),
+                        ),
+                        MenuItem<String>(
+                          value: isDownloaded ? 'remove_download' : 'download',
+                          icon: Icon(
+                            isDownloaded
+                                ? Icons.download_done_rounded
+                                : Icons.download_rounded,
+                          ),
+                          label: Text(
+                            isDownloaded ? 'Remove download' : 'Download',
+                          ),
+                        ),
+                        MenuItem<String>(
+                          value: 'edit_trim',
+                          icon: const Icon(Icons.content_cut_rounded),
+                          label: const Text('Edit song'),
+                        ),
+                        MenuItem<String>(
+                          value: 'share',
+                          icon: const Icon(Icons.share_rounded),
+                          label: const Text('Share'),
+                        ),
+                      ],
+                    ),
+                    onItemSelected: (value) {
+                      if (value != null) {
+                        _handleVideoPreviewMenuSelection(value);
+                      }
+                    },
+                    child: child,
+                  );
                 },
-                child: Consumer<DownloadsProvider>(
-                  builder: (context, downloads, child) {
-                    final isDownloaded = downloads.isDownloaded(
-                      _playback.currentYouTubeVideoId ?? '',
-                    );
-                    return ContextMenuRegion<String>(
-                      contextMenu: ContextMenu(
-                        borderRadius: BorderRadius.circular(12),
-                        entries: [
-                          MenuItem<String>(
-                            value: 'add_to_playlist',
-                            icon: const Icon(Icons.playlist_add_rounded),
-                            label: const Text('Add to playlist'),
-                          ),
-                          MenuItem<String>(
-                            value: isDownloaded
-                                ? 'remove_download'
-                                : 'download',
-                            icon: Icon(
-                              isDownloaded
-                                  ? Icons.download_done_rounded
-                                  : Icons.download_rounded,
-                            ),
-                            label: Text(
-                              isDownloaded ? 'Remove download' : 'Download',
-                            ),
-                          ),
-                          MenuItem<String>(
-                            value: 'edit_trim',
-                            icon: const Icon(Icons.content_cut_rounded),
-                            label: const Text('Edit song'),
-                          ),
-                          MenuItem<String>(
-                            value: 'share',
-                            icon: const Icon(Icons.share_rounded),
-                            label: const Text('Share'),
-                          ),
-                        ],
-                      ),
-                      onItemSelected: (value) {
-                        if (value != null) {
-                          _handleVideoPreviewMenuSelection(value);
-                        }
-                      },
-                      child: child,
-                    );
-                  },
-                  child: Video(
-                    controller: _sidebarVideoController,
-                    controls: NoVideoControls,
-                  ),
+                child: Video(
+                  controller: _sidebarVideoController,
+                  controls: NoVideoControls,
                 ),
               ),
               onOpenFullscreenVideo: () => Navigator.of(context).push(

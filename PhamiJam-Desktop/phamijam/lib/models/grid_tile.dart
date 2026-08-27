@@ -58,7 +58,6 @@ class GridTile {
   final int row;
   final int colSpan;
   final int rowSpan;
-  final Map<String, dynamic> config;
 
   const GridTile({
     required this.id,
@@ -67,24 +66,17 @@ class GridTile {
     required this.row,
     required this.colSpan,
     required this.rowSpan,
-    this.config = const {},
   });
 
-  GridTile copyWith({
-    int? col,
-    int? row,
-    int? colSpan,
-    int? rowSpan,
-    Map<String, dynamic>? config,
-  }) => GridTile(
-    id: id,
-    widgetType: widgetType,
-    col: col ?? this.col,
-    row: row ?? this.row,
-    colSpan: colSpan ?? this.colSpan,
-    rowSpan: rowSpan ?? this.rowSpan,
-    config: config ?? this.config,
-  );
+  GridTile copyWith({int? col, int? row, int? colSpan, int? rowSpan}) =>
+      GridTile(
+        id: id,
+        widgetType: widgetType,
+        col: col ?? this.col,
+        row: row ?? this.row,
+        colSpan: colSpan ?? this.colSpan,
+        rowSpan: rowSpan ?? this.rowSpan,
+      );
 
   Map<String, dynamic> toMap() => {
     'id': id,
@@ -93,7 +85,6 @@ class GridTile {
     'row': row,
     'colSpan': colSpan,
     'rowSpan': rowSpan,
-    'config': config,
   };
 
   static GridTile? fromMap(dynamic raw) {
@@ -113,7 +104,6 @@ class GridTile {
         rowSpan is! int) {
       return null;
     }
-    final config = raw['config'];
     return GridTile(
       id: id,
       widgetType: widgetType,
@@ -121,7 +111,6 @@ class GridTile {
       row: row,
       colSpan: colSpan,
       rowSpan: rowSpan,
-      config: config is Map ? Map<String, dynamic>.from(config) : const {},
     );
   }
 }
