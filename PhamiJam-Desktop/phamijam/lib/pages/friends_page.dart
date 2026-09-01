@@ -40,9 +40,7 @@ class FriendsPage extends StatelessWidget {
                       ),
                       IconButton(
                         icon: const Icon(Icons.person_search_rounded),
-                        tooltip: 'Find people',
-                        onPressed: () =>
-                            onTabSelected?.call('search_profiles'),
+                        onPressed: () => onTabSelected?.call('search_profiles'),
                       ),
                     ],
                   ),

@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:media_kit_video/media_kit_video.dart';
@@ -122,6 +122,10 @@ class _HomeState extends State<Home> {
     _playback.bindAutoplay(
       isEnabled: () => context.read<SettingsProvider>().autoplayEnabled,
       ensureYtMusic: _ensureYtMusic,
+    );
+    _playback.bindCrossfade(
+      isEnabled: () => context.read<SettingsProvider>().crossfadeEnabled,
+      duration: () => context.read<SettingsProvider>().crossfadeDuration,
     );
     _settings = context.read<SettingsProvider>();
     _playback.setDiscordRichPresenceEnabled(
@@ -528,6 +532,30 @@ class _HomeState extends State<Home> {
     _playback.togglePlayPause();
   }
 
+  bool _isTextInputFocused() {
+    final element = FocusManager.instance.primaryFocus?.context;
+    if (element == null) return false;
+    var found = false;
+    element.visitAncestorElements((ancestor) {
+      if (ancestor.widget is EditableText) {
+        found = true;
+        return false;
+      }
+      return true;
+    });
+    return found;
+  }
+
+  KeyEventResult _handleHomeKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.space) {
+      return KeyEventResult.ignored;
+    }
+    if (_isTextInputFocused()) return KeyEventResult.ignored;
+    _handlePlayPauseToggle();
+    return KeyEventResult.handled;
+  }
+
   Future<void> _resumeRestoredSong() async {
     final path = _playback.currentSongPath;
     if (path == null || path.isEmpty) return;
@@ -670,82 +698,117 @@ class _HomeState extends State<Home> {
     await _resolvePlayableYouTubeStreamUrls(videoId);
   }
 
-  Future<void> _openDownloadedFile(String path) async {
-    final start = _playback.trimStart;
-    await player.setFilePath(
+  Future<void> _openDownloadedFile(
+    String path, {
+    AppAudioPlayer? target,
+    Duration? startAt,
+  }) async {
+    final effectiveTarget = target ?? player;
+    final isMain = target == null;
+    final start = startAt ?? (isMain ? _playback.trimStart : null);
+    await effectiveTarget.setFilePath(
       path,
       start: start != null && start > Duration.zero ? start : null,
     );
-    final effectivePercent = _playback.effectiveVolumePercent;
-    await player.setVolume(effectivePercent / 100);
-    _playback.setIsMuted(_playback.currentSliderValue == 0);
+    if (isMain) {
+      final effectivePercent = _playback.effectiveVolumePercent;
+      await effectiveTarget.setVolume(effectivePercent / 100);
+      _playback.setIsMuted(_playback.currentSliderValue == 0);
+    } else {
+      await effectiveTarget.setVolume(0);
+    }
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    await player.play();
+    await effectiveTarget.play();
   }
 
   Future<void> _openYouTubeStream(
     String streamUrl, {
     Map<String, String>? headers,
+    AppAudioPlayer? target,
+    Duration? startAt,
   }) async {
-    final start = _playback.trimStart;
-    await player.setUrl(
+    final effectiveTarget = target ?? player;
+    final isMain = target == null;
+    final start = startAt ?? (isMain ? _playback.trimStart : null);
+    await effectiveTarget.setUrl(
       streamUrl,
       headers: headers,
       start: start != null && start > Duration.zero ? start : null,
     );
 
-    final effectivePercent = _playback.effectiveVolumePercent;
-    await player.setVolume(effectivePercent / 100);
-    _playback.setIsMuted(_playback.currentSliderValue == 0);
+    if (isMain) {
+      final effectivePercent = _playback.effectiveVolumePercent;
+      await effectiveTarget.setVolume(effectivePercent / 100);
+      _playback.setIsMuted(_playback.currentSliderValue == 0);
+    } else {
+      await effectiveTarget.setVolume(0);
+    }
     await Future<void>.delayed(const Duration(milliseconds: 50));
-    await player.play();
+    await effectiveTarget.play();
   }
 
   void _bindYouTubeEngineToPlayback() {
     _playback.bindYouTubeCallbacks(
-      loadVideoById: (videoId) async {
-        try {
-          await player.pause();
-        } catch (_) {}
-        try {
-          await player.stop();
-        } catch (_) {}
+      loadVideoById:
+          (videoId, {AppAudioPlayer? target, Duration? startAt}) async {
+            final effectiveTarget = target ?? player;
+            if (target == null) {
+              try {
+                await player.pause();
+              } catch (_) {}
+              try {
+                await player.stop();
+              } catch (_) {}
+            }
 
-        final localPath = _downloads.localPathFor(videoId);
-        if (localPath != null) {
-          await _openDownloadedFile(localPath);
-          return;
-        }
+            final localPath = _downloads.localPathFor(videoId);
+            if (localPath != null) {
+              await _openDownloadedFile(
+                localPath,
+                target: target,
+                startAt: startAt,
+              );
+              return;
+            }
 
-        final streamUrls = await _resolvePlayableYouTubeStreamUrls(videoId);
-        Object? lastError;
+            final streamUrls = await _resolvePlayableYouTubeStreamUrls(videoId);
+            Object? lastError;
 
-        for (final streamUrl in streamUrls) {
-          try {
-            await _openYouTubeStream(streamUrl, headers: _youtubeHttpHeaders);
-            return;
-          } catch (error) {
-            lastError = error;
-            try {
-              await player.stop();
-            } catch (_) {}
-          }
+            for (final streamUrl in streamUrls) {
+              try {
+                await _openYouTubeStream(
+                  streamUrl,
+                  headers: _youtubeHttpHeaders,
+                  target: target,
+                  startAt: startAt,
+                );
+                return;
+              } catch (error) {
+                lastError = error;
+                try {
+                  await effectiveTarget.stop();
+                } catch (_) {}
+              }
 
-          try {
-            await _openYouTubeStream(streamUrl);
-            return;
-          } catch (error) {
-            lastError = error;
-            try {
-              await player.stop();
-            } catch (_) {}
-          }
-        }
+              try {
+                await _openYouTubeStream(
+                  streamUrl,
+                  target: target,
+                  startAt: startAt,
+                );
+                return;
+              } catch (error) {
+                lastError = error;
+                try {
+                  await effectiveTarget.stop();
+                } catch (_) {}
+              }
+            }
 
-        throw Exception(
-          'Failed to open any playable stream for this video. $lastError',
-        );
-      },
+            throw Exception(
+              'Failed to open any playable stream for this video. $lastError',
+            );
+          },
       prefetchVideoById: _prefetchYouTubeStreamUrls,
       play: player.play,
       pause: player.pause,
@@ -1918,259 +1981,273 @@ class _HomeState extends State<Home> {
           );
         },
       ),
-      body: Row(
-        children: [
-          Align(
-            alignment: Alignment.topLeft,
-            child: Sidebar(
-              onTabSelected: _onSidebarTabSelected,
-              videoCover: Consumer<DownloadsProvider>(
-                builder: (context, downloads, child) {
-                  final isDownloaded = downloads.isDownloaded(
-                    _playback.currentYouTubeVideoId ?? '',
-                  );
-                  final isLiked = context.watch<LikedSongsProvider>().isLiked(
-                    _playback.currentYouTubeVideoId ?? '',
-                  );
-                  return ContextMenuRegion<String>(
-                    contextMenu: ContextMenu(
-                      borderRadius: BorderRadius.circular(12),
-                      entries: [
-                        MenuItem<String>(
-                          value: 'toggle_like',
-                          icon: Icon(
-                            isLiked
-                                ? Icons.favorite_rounded
-                                : Icons.favorite_border_rounded,
+      body: Focus(
+        autofocus: true,
+        onKeyEvent: _handleHomeKeyEvent,
+        child: Row(
+          children: [
+            Align(
+              alignment: Alignment.topLeft,
+              child: Sidebar(
+                onTabSelected: _onSidebarTabSelected,
+                videoCover: Consumer<DownloadsProvider>(
+                  builder: (context, downloads, child) {
+                    final isDownloaded = downloads.isDownloaded(
+                      _playback.currentYouTubeVideoId ?? '',
+                    );
+                    final isLiked = context.watch<LikedSongsProvider>().isLiked(
+                      _playback.currentYouTubeVideoId ?? '',
+                    );
+                    final hideVideo = context
+                        .watch<PlaybackModel>()
+                        .isSidebarVideoHidden;
+                    return ContextMenuRegion<String>(
+                      contextMenu: ContextMenu(
+                        borderRadius: BorderRadius.circular(12),
+                        entries: [
+                          MenuItem<String>(
+                            value: 'toggle_like',
+                            icon: Icon(
+                              isLiked
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                            ),
+                            label: Text(
+                              isLiked
+                                  ? 'Remove from Liked Songs'
+                                  : 'Add to Liked Songs',
+                            ),
                           ),
-                          label: Text(
-                            isLiked
-                                ? 'Remove from Liked Songs'
-                                : 'Add to Liked Songs',
+                          MenuItem<String>(
+                            value: 'add_to_playlist',
+                            icon: const Icon(Icons.playlist_add_rounded),
+                            label: const Text('Add to playlist'),
                           ),
-                        ),
-                        MenuItem<String>(
-                          value: 'add_to_playlist',
-                          icon: const Icon(Icons.playlist_add_rounded),
-                          label: const Text('Add to playlist'),
-                        ),
-                        MenuItem<String>(
-                          value: isDownloaded ? 'remove_download' : 'download',
-                          icon: Icon(
-                            isDownloaded
-                                ? Icons.download_done_rounded
-                                : Icons.download_rounded,
+                          MenuItem<String>(
+                            value: isDownloaded
+                                ? 'remove_download'
+                                : 'download',
+                            icon: Icon(
+                              isDownloaded
+                                  ? Icons.download_done_rounded
+                                  : Icons.download_rounded,
+                            ),
+                            label: Text(
+                              isDownloaded ? 'Remove download' : 'Download',
+                            ),
                           ),
-                          label: Text(
-                            isDownloaded ? 'Remove download' : 'Download',
+                          MenuItem<String>(
+                            value: 'edit_trim',
+                            icon: const Icon(Icons.content_cut_rounded),
+                            label: const Text('Edit song'),
                           ),
-                        ),
-                        MenuItem<String>(
-                          value: 'edit_trim',
-                          icon: const Icon(Icons.content_cut_rounded),
-                          label: const Text('Edit song'),
-                        ),
-                        MenuItem<String>(
-                          value: 'share',
-                          icon: const Icon(Icons.share_rounded),
-                          label: const Text('Share'),
-                        ),
-                      ],
-                    ),
-                    onItemSelected: (value) {
-                      if (value != null) {
-                        _handleVideoPreviewMenuSelection(value);
-                      }
-                    },
-                    child: child,
-                  );
-                },
-                child: Video(
-                  controller: _sidebarVideoController,
-                  controls: NoVideoControls,
+                          MenuItem<String>(
+                            value: 'share',
+                            icon: const Icon(Icons.share_rounded),
+                            label: const Text('Share'),
+                          ),
+                        ],
+                      ),
+                      onItemSelected: (value) {
+                        if (value != null) {
+                          _handleVideoPreviewMenuSelection(value);
+                        }
+                      },
+                      child: hideVideo
+                          ? const ColoredBox(color: Colors.black)
+                          : child,
+                    );
+                  },
+                  child: Video(
+                    controller: _sidebarVideoController,
+                    controls: NoVideoControls,
+                  ),
                 ),
-              ),
-              onOpenFullscreenVideo: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const FullscreenVideoPage(),
-                  fullscreenDialog: true,
+                onOpenFullscreenVideo: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const FullscreenVideoPage(),
+                    fullscreenDialog: true,
+                  ),
                 ),
               ),
             ),
-          ),
-          Padding(padding: EdgeInsets.all(10)),
-          Expanded(
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.all(10),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _selectedTab = 'home';
-                                });
-                              },
-                              icon: Icon(
-                                Icons.home_rounded,
-                                color: colorScheme.onSurface,
+            Padding(padding: EdgeInsets.all(10)),
+            Expanded(
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.all(10),
+                          child: Row(
+                            children: [
+                              IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedTab = 'home';
+                                  });
+                                },
+                                icon: Icon(
+                                  Icons.home_rounded,
+                                  color: colorScheme.onSurface,
+                                ),
                               ),
-                            ),
-                            SizedBox(width: 10),
-                            Expanded(
-                              child: SizedBox(
-                                height: 45,
-                                child: TextField(
-                                  controller: _searchController,
-                                  textInputAction: TextInputAction.search,
-                                  onSubmitted: (_) => _submitSearch(),
-                                  decoration: InputDecoration(
-                                    hintText: 'Search songs, artists or albums',
-                                    hintStyle: TextStyle(
-                                      color: colorScheme.onSurface.withValues(
-                                        alpha: 0.78,
+                              SizedBox(width: 10),
+                              Expanded(
+                                child: SizedBox(
+                                  height: 45,
+                                  child: TextField(
+                                    controller: _searchController,
+                                    textInputAction: TextInputAction.search,
+                                    onSubmitted: (_) => _submitSearch(),
+                                    decoration: InputDecoration(
+                                      hintText:
+                                          'Search songs, artists or albums',
+                                      hintStyle: TextStyle(
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.78,
+                                        ),
+                                        fontSize: 15,
                                       ),
-                                      fontSize: 15,
-                                    ),
-                                    filled: true,
-                                    fillColor: colorScheme.onSurface.withValues(
-                                      alpha: 0.08,
-                                    ),
-                                    contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 18,
-                                      vertical: 14,
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: BorderSide(
-                                        color: colorScheme.onSurface,
-                                        width: 1.0,
+                                      filled: true,
+                                      fillColor: colorScheme.onSurface
+                                          .withValues(alpha: 0.08),
+                                      contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 18,
+                                        vertical: 14,
                                       ),
-                                    ),
-                                    enabledBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: BorderSide(
-                                        color: colorScheme.onSurfaceVariant,
-                                        width: 1.0,
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: colorScheme.onSurface,
+                                          width: 1.0,
+                                        ),
                                       ),
-                                    ),
-                                    suffixIcon: IconButton(
-                                      icon: Icon(
-                                        Icons.search_rounded,
-                                        color: colorScheme.onSurface,
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: colorScheme.onSurfaceVariant,
+                                          width: 1.0,
+                                        ),
                                       ),
-                                      onPressed: _submitSearch,
+                                      suffixIcon: IconButton(
+                                        icon: Icon(
+                                          Icons.search_rounded,
+                                          color: colorScheme.onSurface,
+                                        ),
+                                        onPressed: _submitSearch,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                            SizedBox(width: 10),
-                            IconButton(
-                              onPressed: () {
-                                setState(() {
-                                  _selectedTab = 'settings';
-                                });
-                              },
-                              icon: Icon(
-                                Icons.settings_rounded,
-                                color: colorScheme.onSurface,
-                              ),
-                            ),
-                            SizedBox(width: 10),
-                            Consumer<FriendsProvider>(
-                              builder: (context, friendsProvider, _) {
-                                final icon = Icon(
-                                  Icons.people_alt_rounded,
+                              SizedBox(width: 10),
+                              IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedTab = 'settings';
+                                  });
+                                },
+                                icon: Icon(
+                                  Icons.settings_rounded,
                                   color: colorScheme.onSurface,
-                                );
-                                return IconButton(
-                                  onPressed: () => setState(() {
-                                    _selectedTab = 'friends';
-                                  }),
-                                  icon: friendsProvider.received.isNotEmpty
-                                      ? Badge(child: icon)
-                                      : icon,
-                                );
-                              },
-                            ),
-                            SizedBox(width: 10),
-                            IconButton(
-                              onPressed: () => setState(() {
-                                _selectedTab = 'profile';
-                              }),
-                              icon: Builder(
-                                builder: (context) {
-                                  final photoUrl = _auth.currentUser?.photoURL;
-                                  final showPhoto =
-                                      photoUrl != null &&
-                                      photoUrl.isNotEmpty &&
-                                      !_avatarLoadFailed;
-                                  return CircleAvatar(
-                                    radius: 20,
-                                    backgroundImage: showPhoto
-                                        ? NetworkImage(photoUrl)
-                                        : null,
-                                    onBackgroundImageError: showPhoto
-                                        ? (error, stackTrace) {
-                                            if (!mounted) return;
-                                            setState(
-                                              () => _avatarLoadFailed = true,
-                                            );
-                                          }
-                                        : null,
-                                    child: showPhoto
-                                        ? null
-                                        : Icon(
-                                            Icons.person_rounded,
-                                            color: colorScheme.onSurface,
-                                          ),
+                                ),
+                              ),
+                              SizedBox(width: 10),
+                              Consumer<FriendsProvider>(
+                                builder: (context, friendsProvider, _) {
+                                  final icon = Icon(
+                                    Icons.people_alt_rounded,
+                                    color: colorScheme.onSurface,
+                                  );
+                                  return IconButton(
+                                    onPressed: () => setState(() {
+                                      _selectedTab = 'friends';
+                                    }),
+                                    icon: friendsProvider.received.isNotEmpty
+                                        ? Badge(child: icon)
+                                        : icon,
                                   );
                                 },
                               ),
-                            ),
-                            SizedBox(width: 10),
-                            IconButton(
-                              onPressed: _logout,
-                              icon: Icon(
-                                Icons.logout_rounded,
-                                color: colorScheme.onSurface,
+                              SizedBox(width: 10),
+                              IconButton(
+                                onPressed: () => setState(() {
+                                  _selectedTab = 'profile';
+                                }),
+                                icon: Builder(
+                                  builder: (context) {
+                                    final photoUrl =
+                                        _auth.currentUser?.photoURL;
+                                    final showPhoto =
+                                        photoUrl != null &&
+                                        photoUrl.isNotEmpty &&
+                                        !_avatarLoadFailed;
+                                    return CircleAvatar(
+                                      radius: 20,
+                                      backgroundImage: showPhoto
+                                          ? NetworkImage(photoUrl)
+                                          : null,
+                                      onBackgroundImageError: showPhoto
+                                          ? (error, stackTrace) {
+                                              if (!mounted) return;
+                                              setState(
+                                                () => _avatarLoadFailed = true,
+                                              );
+                                            }
+                                          : null,
+                                      child: showPhoto
+                                          ? null
+                                          : Icon(
+                                              Icons.person_rounded,
+                                              color: colorScheme.onSurface,
+                                            ),
+                                    );
+                                  },
+                                ),
                               ),
-                            ),
-                            SizedBox(width: 10),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const RemoteSessionBanner(),
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Padding(
-                        padding: EdgeInsets.all(10),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceContainerLowest,
-                            borderRadius: BorderRadius.all(Radius.circular(10)),
+                              SizedBox(width: 10),
+                              IconButton(
+                                onPressed: _logout,
+                                icon: Icon(
+                                  Icons.logout_rounded,
+                                  color: colorScheme.onSurface,
+                                ),
+                              ),
+                              SizedBox(width: 10),
+                            ],
                           ),
-                          width: MediaQuery.of(context).size.width - 260,
-                          child: _buildMainContent(),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  const RemoteSessionBanner(),
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: EdgeInsets.all(10),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerLowest,
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(10),
+                              ),
+                            ),
+                            width: MediaQuery.of(context).size.width - 260,
+                            child: _buildMainContent(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

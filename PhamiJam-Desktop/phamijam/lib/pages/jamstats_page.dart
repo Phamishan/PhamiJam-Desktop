@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/wrapped_stats.dart';
 import 'package:phamijam/theme/app_theme.dart';
+import 'package:provider/provider.dart';
 
 class JamstatsPage extends StatefulWidget {
   const JamstatsPage({super.key});
@@ -15,12 +17,28 @@ class _JamstatsPageState extends State<JamstatsPage> {
   int _slideIndex = 0;
   int _year = DateTime.now().year;
   int _earliestYear = DateTime.now().year;
+  PlaybackModel? _playback;
 
   @override
   void initState() {
     super.initState();
     _loadStats();
     _loadEarliestYear();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_playback == null) {
+      _playback = context.read<PlaybackModel>();
+      _playback!.hideSidebarVideo();
+    }
+  }
+
+  @override
+  void dispose() {
+    _playback?.showSidebarVideo();
+    super.dispose();
   }
 
   Future<void> _loadEarliestYear() async {

@@ -2,14 +2,20 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
-enum RemoteCommandType { play, pause, next, previous, setVolume }
+enum RemoteCommandType { play, pause, next, previous, setVolume, playTrack }
 
 class RemoteCommand {
   final String id;
   final RemoteCommandType type;
   final double? value;
+  final Map<String, dynamic>? track;
 
-  const RemoteCommand({required this.id, required this.type, this.value});
+  const RemoteCommand({
+    required this.id,
+    required this.type,
+    this.value,
+    this.track,
+  });
 
   static RemoteCommand? fromDoc(String id, Map<String, dynamic> data) {
     final typeName = data['type'];
@@ -21,6 +27,7 @@ class RemoteCommand {
       id: id,
       type: type.first,
       value: value is num ? value.toDouble() : null,
+      track: PlaybackSessionSyncService._trackFromJson(data['track']),
     );
   }
 }
@@ -181,6 +188,7 @@ class PlaybackSessionSyncService {
   static Future<void> sendCommand(
     RemoteCommandType type, {
     double? value,
+    Map<String, dynamic>? track,
   }) async {
     final commands = _otherDoc?.collection('commands');
     if (commands == null) return;
@@ -188,6 +196,7 @@ class PlaybackSessionSyncService {
       await commands.add({
         'type': type.name,
         'value': ?value,
+        'track': ?(track != null ? _trackToJson(track) : null),
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (error) {

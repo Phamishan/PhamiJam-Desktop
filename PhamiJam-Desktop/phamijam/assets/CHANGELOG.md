@@ -108,6 +108,10 @@
   - Added option to like a song through the right-click menu on the video preview
   - Fixed edits
   - Fixed Jamstats ✨ issues
+- 1.1.8 - 01/09/2026
+  - Added crossfade
+  - Fixed remote control
+  - Fixed Jamstats ✨ issues (🙏🏽)
 
 ## Screenshots:
 

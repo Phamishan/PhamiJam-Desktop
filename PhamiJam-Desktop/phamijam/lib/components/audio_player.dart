@@ -13,6 +13,8 @@ class AppAudioPlayer {
 
   Player get mediaKitPlayer => _player;
 
+  Duration get position => _player.state.position;
+
   Stream<Duration> createPositionStream({
     Duration? minPeriod,
     Duration? maxPeriod,
@@ -66,6 +68,8 @@ class AppAudioPlayer {
     final scaled = (volume * 100).clamp(0, 100).toDouble();
     return _player.setVolume(scaled);
   }
+
+  Future<void> dispose() => _player.dispose();
 }
 
 final AppAudioPlayer player = AppAudioPlayer();

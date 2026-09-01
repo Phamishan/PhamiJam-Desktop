@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/audio_player.dart';
+import 'package:phamijam/components/crossfade_controller.dart';
 import 'package:phamijam/models/edited_song_trim.dart';
 import 'package:phamijam/services/drive_duration_cache_service.dart';
 import 'package:phamijam/services/google_drive_service.dart'
@@ -47,8 +48,16 @@ class PlaybackModel extends ChangeNotifier {
   String? _lastDiscordPresenceSignature;
   Future<void>? _discordReconnectFuture;
 
-  Future<void> Function(String videoId)? _youtubeLoadVideoById;
+  Future<void> Function(
+    String videoId, {
+    AppAudioPlayer? target,
+    Duration? startAt,
+  })?
+  _youtubeLoadVideoById;
   Future<void> Function(String videoId)? _youtubePrefetchVideoById;
+  final CrossfadeController _crossfade = CrossfadeController();
+  bool Function()? _crossfadeEnabledLookup;
+  Duration Function()? _crossfadeDurationLookup;
   Future<void> Function()? _youtubePlay;
   Future<void> Function()? _youtubePause;
   Future<void> Function(Duration position)? _youtubeSeek;
@@ -77,6 +86,20 @@ class PlaybackModel extends ChangeNotifier {
   Duration seekPreview = Duration.zero;
   List<dynamic> queue = [];
   bool needsResumeLoad = false;
+  bool _sidebarVideoHidden = false;
+  bool get isSidebarVideoHidden => _sidebarVideoHidden;
+
+  void hideSidebarVideo() {
+    if (_sidebarVideoHidden) return;
+    _sidebarVideoHidden = true;
+    notifyListeners();
+  }
+
+  void showSidebarVideo() {
+    if (!_sidebarVideoHidden) return;
+    _sidebarVideoHidden = false;
+    notifyListeners();
+  }
 
   List<dynamic> _playlistItems = [];
   List<int> _playOrder = [];
@@ -142,6 +165,7 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> enterRemoteControl() async {
     if (_remoteSession == null) return;
+    _crossfade.cancel();
     if (isPlaying) await _localTogglePlayPause();
     _isRemoteControlling = true;
     notifyListeners();
@@ -207,7 +231,32 @@ class PlaybackModel extends ChangeNotifier {
     );
   }
 
+  Future<void> _applyRemotePlayTrack(Map<String, dynamic> track) async {
+    final videoId = track['videoId'] as String? ?? '';
+    if (videoId.isEmpty) return;
+    final title = (track['songName'] as String?) ?? 'Unknown song';
+    final artist = (track['artistName'] as String?) ?? 'Unknown artist';
+    final artistId = track['artistId'] as String?;
+    setSongName(title);
+    setArtist(artist);
+    setArtistId(artistId);
+    setCurrentSongPath('yt:$videoId');
+    setPlaylistQueue([
+      {
+        'videoId': videoId,
+        'title': title,
+        'artist': artist,
+        'artistId': artistId,
+      },
+    ], startIndex: 0);
+    await playYouTubeVideoById(videoId);
+    await applyVolume(currentSliderValue);
+    unawaited(_fetchAndApplyYouTubeThumbnail(videoId));
+    _pushSessionIfHosting();
+  }
+
   Future<void> _handleIncomingCommands(List<RemoteCommand> commands) async {
+    if (commands.isNotEmpty) _crossfade.cancel();
     for (final command in commands) {
       switch (command.type) {
         case RemoteCommandType.play:
@@ -225,6 +274,10 @@ class PlaybackModel extends ChangeNotifier {
         case RemoteCommandType.setVolume:
           final value = command.value;
           if (value != null) await _localApplyVolume(value * 100);
+          break;
+        case RemoteCommandType.playTrack:
+          final track = command.track;
+          if (track != null) await _applyRemotePlayTrack(track);
           break;
       }
       await PlaybackSessionSyncService.ackCommand(command.id);
@@ -466,7 +519,12 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void bindYouTubeCallbacks({
-    required Future<void> Function(String videoId) loadVideoById,
+    required Future<void> Function(
+      String videoId, {
+      AppAudioPlayer? target,
+      Duration? startAt,
+    })
+    loadVideoById,
     required Future<void> Function(String videoId) prefetchVideoById,
     required Future<void> Function() play,
     required Future<void> Function() pause,
@@ -507,8 +565,128 @@ class PlaybackModel extends ChangeNotifier {
     unawaited(_triggerTrackCompletedIfNeeded());
   }
 
+  static const Duration _crossfadeLeadIn = Duration(milliseconds: 2500);
+
+  void _checkCrossfadeTrigger() {
+    if (_isSwitchingTrack) return;
+    if (_crossfade.isActive) return;
+    if (_completionHandledForCurrentTrack) return;
+    if (!isPlaying) return;
+    if (_isRemoteControlling) return;
+    if (repeatMode == PlayerRepeatMode.one) return;
+    if (_pauseAtTrackEndScheduled) return;
+    if (_crossfadeEnabledLookup?.call() != true) return;
+
+    final crossfadeDuration = _crossfadeDurationLookup?.call();
+    if (crossfadeDuration == null || crossfadeDuration <= Duration.zero) {
+      return;
+    }
+
+    final total = _trimEnd ?? duration;
+    if (total == null || total <= Duration.zero) return;
+    if (total <= crossfadeDuration + _crossfadeLeadIn) return;
+
+    final current = progress;
+    if (current <= Duration.zero) return;
+    final remaining = total - current;
+    if (remaining > crossfadeDuration + _crossfadeLeadIn) return;
+
+    final nextOrderIndex = _normalizeOrderIndex(
+      _currentOrderIndex + 1,
+      wrapAround: repeatMode == PlayerRepeatMode.all,
+    );
+    if (nextOrderIndex == null) return;
+    final nextSourceIndex = _playOrder[nextOrderIndex];
+    if (nextSourceIndex < 0 || nextSourceIndex >= _playlistItems.length) {
+      return;
+    }
+    final nextItem = _playlistItems[nextSourceIndex];
+    if (nextItem is! Map<String, dynamic>) return;
+    final nextVideoId = (nextItem['videoId'] as String?) ?? '';
+    final nextPath = (nextItem['path'] as String?) ?? '';
+    if (nextVideoId.isEmpty && nextPath.isEmpty) return;
+
+    debugPrint(
+      '[crossfade] trigger fired: remaining=$remaining crossfadeDuration=$crossfadeDuration nextVideoId=$nextVideoId nextPath=$nextPath',
+    );
+    _recordOutgoingTrackCompleted();
+    unawaited(
+      _beginCrossfade(
+        nextOrderIndex: nextOrderIndex,
+        nextVideoId: nextVideoId,
+        nextPath: nextPath,
+        crossfadeDuration: crossfadeDuration,
+      ),
+    );
+  }
+
+  void _recordOutgoingTrackCompleted() {
+    final playlistId = _sourcePlaylistId;
+    if (playlistId == null ||
+        _currentOrderIndex < 0 ||
+        _currentOrderIndex >= _playOrder.length) {
+      return;
+    }
+    final sourceIndex = _playOrder[_currentOrderIndex];
+    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) return;
+    final item = _playlistItems[sourceIndex];
+    if (item is! Map<String, dynamic>) return;
+    final videoId = (item['videoId'] as String?) ?? '';
+    if (videoId.isEmpty) return;
+    unawaited(SkipTrackingService.recordCompleted(playlistId, videoId));
+  }
+
+  Future<void> _beginCrossfade({
+    required int nextOrderIndex,
+    required String nextVideoId,
+    required String nextPath,
+    required Duration crossfadeDuration,
+  }) async {
+    final targetVolume = effectiveVolumePercent;
+    await _crossfade.begin(
+      crossfadeDuration: crossfadeDuration,
+      targetVolume: targetVolume,
+      remainingOnMain: () {
+        final total = _trimEnd ?? duration;
+        if (total == null || total <= Duration.zero) return Duration.zero;
+        final rem = total - progress;
+        return rem > Duration.zero ? rem : Duration.zero;
+      },
+      load: (fadePlayer) async {
+        if (nextVideoId.isNotEmpty) {
+          final trim = _trimLookup?.call(nextVideoId, _sourcePlaylistId);
+          final start = trim != null
+              ? Duration(milliseconds: trim.startMs)
+              : null;
+          await _youtubeLoadVideoById?.call(
+            nextVideoId,
+            target: fadePlayer,
+            startAt: start,
+          );
+        } else {
+          await fadePlayer.setFilePath(nextPath);
+        }
+      },
+      setMainVolume: (volume) async {
+        try {
+          await player.setVolume(volume / 100);
+        } catch (_) {}
+      },
+      onComplete: (startAt) async {
+        _currentOrderIndex = nextOrderIndex;
+        _refreshQueueWindow();
+        notifyListeners();
+        await _playBySourceIndex(_playOrder[nextOrderIndex], startAt: startAt);
+        _forceDiscordPresenceRefreshAfterTrackChange();
+        unawaited(_prefetchAhead());
+        _pushSessionIfHosting();
+      },
+    );
+  }
+
   Future<void> _triggerTrackCompletedIfNeeded() async {
     if (_completionHandledForCurrentTrack) return;
+    if (_crossfade.isActive) return;
     if (!_isNearTrackEnd()) return;
 
     _completionHandledForCurrentTrack = true;
@@ -593,7 +771,20 @@ class PlaybackModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> playYouTubeVideoById(String videoId) async {
+  Future<void> playYouTubeVideoById(String videoId, {Duration? startAt}) async {
+    if (_isRemoteControlling) {
+      await PlaybackSessionSyncService.sendCommand(
+        RemoteCommandType.playTrack,
+        track: {
+          'videoId': videoId,
+          'songName': songName,
+          'artistName': artistName,
+          'artistId': currentArtistId,
+        },
+      );
+      return;
+    }
+
     final trim = _trimLookup?.call(videoId, _sourcePlaylistId);
     _trimStart = trim != null ? Duration(milliseconds: trim.startMs) : null;
     _trimEnd = trim != null ? Duration(milliseconds: trim.endMs) : null;
@@ -616,15 +807,27 @@ class PlaybackModel extends ChangeNotifier {
           await player.seek(Duration.zero);
         } catch (_) {}
 
-        await _youtubeLoadVideoById?.call(videoId);
+        final effectiveStart = startAt ?? _trimStart;
+        await _youtubeLoadVideoById?.call(videoId, startAt: effectiveStart);
         _useYouTubeEngine(videoId);
 
-        final start = _trimStart;
-        if (start != null && start > Duration.zero) {
-          setProgress(start);
+        if (effectiveStart != null && effectiveStart > Duration.zero) {
+          setProgress(effectiveStart);
+        }
+        if (startAt != null) {
+          debugPrint(
+            '[crossfade] handoff load done: effectiveStart=$effectiveStart nativePosition=${player.position}',
+          );
         }
       } finally {
         _isSwitchingTrack = false;
+      }
+      if (startAt != null) {
+        Future<void>.delayed(const Duration(milliseconds: 500), () {
+          debugPrint(
+            '[crossfade] +500ms after handoff: progress=$progress nativePosition=${player.position}',
+          );
+        });
       }
     });
     await _engineTransition;
@@ -670,8 +873,10 @@ class PlaybackModel extends ChangeNotifier {
           maxPeriod: const Duration(milliseconds: 40),
         )
         .listen((position) {
+          if (_isSwitchingTrack) return;
           setProgress(position);
           _checkTrimEndReached();
+          _checkCrossfadeTrigger();
         });
 
     _playerStateSubscription = player.playerStateStream.listen((state) async {
@@ -690,6 +895,7 @@ class PlaybackModel extends ChangeNotifier {
     });
 
     _volumeSubscription = player.volumeStream.listen((volume) {
+      if (_crossfade.isActive) return;
       final outputVolumePercent = (volume * 100).clamp(0, 100).toDouble();
       final sliderValue = _outputToSliderVolumePercent(outputVolumePercent);
       currentSliderValue = sliderValue;
@@ -944,6 +1150,14 @@ class PlaybackModel extends ChangeNotifier {
     _ensureYtMusicLookup = ensureYtMusic;
   }
 
+  void bindCrossfade({
+    required bool Function() isEnabled,
+    required Duration Function() duration,
+  }) {
+    _crossfadeEnabledLookup = isEnabled;
+    _crossfadeDurationLookup = duration;
+  }
+
   Future<bool> _tryAppendAutoplayContinuation() async {
     if (_autoplayEnabledLookup?.call() != true) return false;
     if (_currentOrderIndex < 0 || _currentOrderIndex >= _playOrder.length) {
@@ -1031,6 +1245,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void clearPlaylistQueue() {
+    _crossfade.cancel();
     _exitRemoteControl();
     _playlistItems = [];
     _playOrder = [];
@@ -1058,6 +1273,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void setPlaylistQueue(List<dynamic> items, {required int startIndex}) {
+    _crossfade.cancel();
     unawaited(_recordPotentialSkip());
     _sourcePlaylistId = null;
     _sourcePlaylistTitle = null;
@@ -1231,6 +1447,7 @@ class PlaybackModel extends ChangeNotifier {
     if (_isRemoteControlling) return;
     if (queueIndex < 0 || queueIndex >= queue.length) return;
     if (_currentOrderIndex < 0) return;
+    _crossfade.cancel();
     await _recordPotentialSkip();
 
     final targetRawOrderIndex = _currentOrderIndex + queueIndex;
@@ -1252,6 +1469,7 @@ class PlaybackModel extends ChangeNotifier {
       progress > _previousRestartThreshold;
 
   Future<void> playPrevious() async {
+    _crossfade.cancel();
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.previous);
       return;
@@ -1281,6 +1499,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> playNext() async {
+    _crossfade.cancel();
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.next);
       return;
@@ -1289,7 +1508,7 @@ class PlaybackModel extends ChangeNotifier {
     await _localPlayNext();
   }
 
-  Future<void> _localPlayNext() async {
+  Future<void> _localPlayNext({Duration? startAt}) async {
     if (_playOrder.isNotEmpty) {
       var nextOrderIndex = _normalizeOrderIndex(_currentOrderIndex + 1);
       if (nextOrderIndex == null) {
@@ -1309,14 +1528,14 @@ class PlaybackModel extends ChangeNotifier {
       _refreshQueueWindow();
       notifyListeners();
 
-      await _playBySourceIndex(_playOrder[nextOrderIndex]);
+      await _playBySourceIndex(_playOrder[nextOrderIndex], startAt: startAt);
       _forceDiscordPresenceRefreshAfterTrackChange();
       unawaited(_prefetchAhead());
       _pushSessionIfHosting();
     }
   }
 
-  Future<void> _playBySourceIndex(int sourceIndex) async {
+  Future<void> _playBySourceIndex(int sourceIndex, {Duration? startAt}) async {
     final playAtSourceIndex = _onPlaySourceIndexRequested;
     if (playAtSourceIndex != null) {
       final expectedItem =
@@ -1357,7 +1576,7 @@ class PlaybackModel extends ChangeNotifier {
     final videoId = (item['videoId'] as String?) ?? '';
     if (videoId.isNotEmpty) {
       setCurrentSongPath('yt:$videoId');
-      await playYouTubeVideoById(videoId);
+      await playYouTubeVideoById(videoId, startAt: startAt);
       await applyVolume(currentSliderValue);
       return;
     }
@@ -1366,8 +1585,12 @@ class PlaybackModel extends ChangeNotifier {
     if (path.isNotEmpty) {
       final localCover = item['coverImageBytes'] as Uint8List?;
       await switchToLocalEngine();
-      await player.setFilePath(path);
-      await player.seek(Duration.zero);
+      await player.setFilePath(path, start: startAt);
+      if (startAt == null) {
+        await player.seek(Duration.zero);
+      } else {
+        setProgress(startAt);
+      }
       await player.play();
       setCurrentSongPath(path);
       setCoverImageBytes(localCover);
@@ -1396,6 +1619,7 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> seekTo(Duration value) async {
     if (_isRemoteControlling) return;
+    _crossfade.cancel();
     final clamped = _clampToTrim(value);
     setProgress(clamped);
     if (_engine == PlaybackEngine.youtube) {
@@ -1407,6 +1631,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> togglePlayPause() async {
+    _crossfade.cancel();
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(
         isPlaying ? RemoteCommandType.pause : RemoteCommandType.play,
@@ -1705,6 +1930,7 @@ class PlaybackModel extends ChangeNotifier {
   @override
   void dispose() {
     _finalizeActivePlay();
+    _crossfade.dispose();
     _discordPresenceTimer?.cancel();
     _positionSubscription?.cancel();
     _playerStateSubscription?.cancel();

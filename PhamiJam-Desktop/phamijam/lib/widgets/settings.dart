@@ -550,6 +550,89 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildCrossfadeCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Consumer<SettingsProvider>(
+      builder: (context, settings, _) {
+        final seconds = (settings.crossfadeDurationMs / 1000).round();
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.compare_arrows_rounded,
+                    color: colorScheme.onSurface,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Crossfade',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Smoothly fade between songs as your queue advances',
+                          style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Switch(
+                    value: settings.crossfadeEnabled,
+                    onChanged: settings.setCrossfadeEnabled,
+                    activeThumbColor: colorScheme.onPrimary,
+                    inactiveThumbColor: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+              if (settings.crossfadeEnabled) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Slider(
+                        value: settings.crossfadeDurationMs.toDouble(),
+                        min: 1000,
+                        max: 12000,
+                        divisions: 11,
+                        label: '${seconds}s',
+                        onChanged: (value) =>
+                            settings.setCrossfadeDurationMs(value.round()),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 32,
+                      child: Text(
+                        '${seconds}s',
+                        textAlign: TextAlign.end,
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildDiscordRichPresenceCard() {
     final colorScheme = Theme.of(context).colorScheme;
     return Consumer<SettingsProvider>(
@@ -1121,6 +1204,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildPlayerCard(),
         const SizedBox(height: 10),
         _buildAutoplayCard(),
+        const SizedBox(height: 10),
+        _buildCrossfadeCard(),
         const SizedBox(height: 10),
         _buildDiscordRichPresenceCard(),
         const SizedBox(height: 10),

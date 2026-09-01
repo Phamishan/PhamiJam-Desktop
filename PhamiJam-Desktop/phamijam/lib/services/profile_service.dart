@@ -183,7 +183,8 @@ class ProfileService {
     String query, {
     int limit = 20,
   }) {
-    final normalized = query.trim().toLowerCase();
+    var normalized = query.trim().toLowerCase();
+    if (normalized.startsWith('@')) normalized = normalized.substring(1);
     if (normalized.isEmpty) return Future.value(const []);
     return _withRetry(() async {
       final snapshot = await FirebaseFirestore.instance

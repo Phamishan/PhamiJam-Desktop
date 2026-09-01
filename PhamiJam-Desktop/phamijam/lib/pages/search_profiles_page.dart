@@ -16,6 +16,7 @@ class _SearchProfilesPageState extends State<SearchProfilesPage> {
   final _controller = TextEditingController();
   List<ProfileSearchResult> _results = const [];
   bool _loading = false;
+  String? _error;
   Timer? _debounce;
 
   @override
@@ -39,10 +40,14 @@ class _SearchProfilesPageState extends State<SearchProfilesPage> {
       setState(() {
         _results = const [];
         _loading = false;
+        _error = null;
       });
       return;
     }
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final results = await ProfileService.searchByUsername(query);
       if (!mounted) return;
@@ -50,9 +55,13 @@ class _SearchProfilesPageState extends State<SearchProfilesPage> {
         _results = results;
         _loading = false;
       });
-    } catch (_) {
+    } catch (error) {
+      debugPrint('SearchProfilesPage: search failed: $error');
       if (!mounted) return;
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _error = "Couldn't search right now: $error";
+      });
     }
   }
 
@@ -92,10 +101,15 @@ class _SearchProfilesPageState extends State<SearchProfilesPage> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 24),
               child: Text(
-                _controller.text.trim().isEmpty
-                    ? 'Search for a username to find people'
-                    : 'No one found',
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
+                _error ??
+                    (_controller.text.trim().isEmpty
+                        ? 'Search for a username to find people'
+                        : 'No one found'),
+                style: TextStyle(
+                  color: _error != null
+                      ? colorScheme.error
+                      : colorScheme.onSurfaceVariant,
+                ),
               ),
             )
           else
