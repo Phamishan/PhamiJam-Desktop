@@ -112,6 +112,10 @@
   - Added crossfade
   - Fixed remote control
   - Fixed Jamstats ✨ issues (🙏🏽)
+- 1.1.9 - 09/09/2026
+  - Fixed crossfade issues
+  - Made Jamstats ✨ load faster
+  - Fixed lyrics not being found for some songs
 
 ## Screenshots:
 

@@ -33,6 +33,7 @@ class LyricsService {
     'User-Agent': 'PhamiJam (https://phamishan.dk)',
   };
   static const int _lrclibDurationToleranceSeconds = 10;
+  static const int _lrclibNoArtistDurationToleranceSeconds = 3;
 
   static final Map<String, SongLyrics?> _cache = {};
 
@@ -108,11 +109,35 @@ class LyricsService {
     caseSensitive: false,
   );
 
+  static final RegExp _featuringSuffix = RegExp(
+    r'\s*[\(\[]?\b(?:feat|ft|featuring)\b\.?\s+.*$',
+    caseSensitive: false,
+  );
+
   static String _cleanTitle(String title) {
     return title
         .replaceAll(_bracketedNoise, '')
+        .replaceAll(_featuringSuffix, '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+  }
+
+  static String _stripLeadingArtist(String title, String artist) {
+    if (artist.isEmpty) return title;
+    final prefix = RegExp(
+      '^${RegExp.escape(artist)}\\s*[-:]\\s*',
+      caseSensitive: false,
+    );
+    return title.replaceFirst(prefix, '').trim();
+  }
+
+  static final RegExp _topicSuffix = RegExp(
+    r'\s*-\s*Topic$',
+    caseSensitive: false,
+  );
+
+  static String _cleanArtist(String artist) {
+    return artist.replaceFirst(_topicSuffix, '').trim();
   }
 
   static Future<SongLyrics?> _fetchFromLrclib({
@@ -120,12 +145,54 @@ class LyricsService {
     required String artist,
     int? durationSeconds,
   }) async {
-    final cleanedTitle = _cleanTitle(title);
-    if (cleanedTitle.isEmpty) return null;
+    final cleanedArtist = _cleanArtist(artist);
+    final baseTitle = _cleanTitle(title);
+    if (baseTitle.isEmpty) return null;
 
+    final dashParts = baseTitle.split(RegExp(r'\s+-\s+'));
+    final titleAfterDash = dashParts.length >= 2
+        ? dashParts.sublist(1).join(' - ')
+        : baseTitle;
+
+    final attempts = <({String track, String artist})>[
+      (
+        track: _stripLeadingArtist(baseTitle, cleanedArtist),
+        artist: cleanedArtist,
+      ),
+      if (dashParts.length >= 2)
+        (track: titleAfterDash, artist: dashParts.first.trim()),
+      (track: titleAfterDash, artist: ''),
+    ];
+
+    final seen = <String>{};
+    for (final attempt in attempts) {
+      final track = attempt.track.trim();
+      if (track.isEmpty) continue;
+      final key = '${track.toLowerCase()}|${attempt.artist.toLowerCase()}';
+      if (!seen.add(key)) continue;
+
+      final result = await _searchLrclib(
+        trackName: track,
+        artistName: attempt.artist,
+        durationSeconds: durationSeconds,
+        toleranceSeconds: attempt.artist.isEmpty
+            ? _lrclibNoArtistDurationToleranceSeconds
+            : _lrclibDurationToleranceSeconds,
+      );
+      if (result != null) return result;
+    }
+    return null;
+  }
+
+  static Future<SongLyrics?> _searchLrclib({
+    required String trackName,
+    required String artistName,
+    int? durationSeconds,
+    required int toleranceSeconds,
+  }) async {
     final uri = Uri.https('lrclib.net', '/api/search', {
-      'track_name': cleanedTitle,
-      if (artist.trim().isNotEmpty) 'artist_name': artist,
+      'track_name': trackName,
+      if (artistName.isNotEmpty) 'artist_name': artistName,
     });
     final response = await http
         .get(uri, headers: _lrclibHeaders)
@@ -150,8 +217,7 @@ class LyricsService {
       });
       best = candidates.first;
       final bestDuration = (best['duration'] as num?)?.toInt() ?? 0;
-      if ((bestDuration - durationSeconds).abs() >
-          _lrclibDurationToleranceSeconds) {
+      if ((bestDuration - durationSeconds).abs() > toleranceSeconds) {
         return null;
       }
     }

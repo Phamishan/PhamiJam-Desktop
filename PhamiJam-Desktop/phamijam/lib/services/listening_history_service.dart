@@ -15,6 +15,11 @@ class ListeningHistoryService {
   static const Duration _syncTimeout = Duration(seconds: 8);
   static const int _batchChunkSize = 450;
   static Future<void>? _flushInProgress;
+  static const Duration _eventsCacheTtl = Duration(minutes: 2);
+  static final Map<String, Future<List<PlayEvent>>> _eventsSinceInFlight = {};
+  static final Map<String, _CachedEvents> _eventsSinceCache = {};
+  static int? _cachedEarliestYear;
+  static Future<int>? _earliestYearInFlight;
 
   static CollectionReference<Map<String, dynamic>>? get _remotePlays {
     final uid = FirebaseAuth.instance.currentUser?.uid;
@@ -129,6 +134,26 @@ class ListeningHistoryService {
   static Future<List<PlayEvent>> eventsSince(
     DateTime since, {
     DateTime? until,
+  }) {
+    final key =
+        '${since.millisecondsSinceEpoch}-${until?.millisecondsSinceEpoch}';
+    final cached = _eventsSinceCache[key];
+    if (cached != null &&
+        DateTime.now().difference(cached.fetchedAt) < _eventsCacheTtl) {
+      return Future.value(cached.events);
+    }
+    return _eventsSinceInFlight[key] ??=
+        _eventsSinceInternal(since, until: until)
+            .then((events) {
+              _eventsSinceCache[key] = _CachedEvents(events, DateTime.now());
+              return events;
+            })
+            .whenComplete(() => _eventsSinceInFlight.remove(key));
+  }
+
+  static Future<List<PlayEvent>> _eventsSinceInternal(
+    DateTime since, {
+    DateTime? until,
   }) async {
     await flushPending();
     final sinceMs = since.millisecondsSinceEpoch;
@@ -199,7 +224,18 @@ class ListeningHistoryService {
     return events;
   }
 
-  static Future<int> earliestEventYear() async {
+  static Future<int> earliestEventYear() {
+    final cached = _cachedEarliestYear;
+    if (cached != null) return Future.value(cached);
+    return _earliestYearInFlight ??= _earliestEventYearInternal()
+        .then((year) {
+          _cachedEarliestYear = year;
+          return year;
+        })
+        .whenComplete(() => _earliestYearInFlight = null);
+  }
+
+  static Future<int> _earliestEventYearInternal() async {
     await flushPending();
     DateTime? earliest;
 
@@ -224,4 +260,11 @@ class ListeningHistoryService {
 
     return (earliest ?? DateTime.now()).year;
   }
+}
+
+class _CachedEvents {
+  _CachedEvents(this.events, this.fetchedAt);
+
+  final List<PlayEvent> events;
+  final DateTime fetchedAt;
 }

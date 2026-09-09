@@ -2054,7 +2054,9 @@ class _HomeState extends State<Home> {
                         }
                       },
                       child: hideVideo
-                          ? const ColoredBox(color: Colors.black)
+                          ? _VideoPreviewFallbackThumb(
+                              videoId: _playback.currentYouTubeVideoId ?? '',
+                            )
                           : child,
                     );
                   },
@@ -2248,6 +2250,28 @@ class _HomeState extends State<Home> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _VideoPreviewFallbackThumb extends StatelessWidget {
+  const _VideoPreviewFallbackThumb({required this.videoId});
+
+  final String videoId;
+
+  @override
+  Widget build(BuildContext context) {
+    if (videoId.isEmpty) {
+      return const ColoredBox(color: Colors.black);
+    }
+    return ColoredBox(
+      color: Colors.black,
+      child: Image.network(
+        'https://i.ytimg.com/vi/$videoId/hqdefault.jpg',
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) =>
+            const ColoredBox(color: Colors.black),
       ),
     );
   }

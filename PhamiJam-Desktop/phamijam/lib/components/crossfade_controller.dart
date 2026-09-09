@@ -20,6 +20,7 @@ class CrossfadeController {
     required Duration Function() remainingOnMain,
     required Future<void> Function(double volume0to100) setMainVolume,
     required Future<void> Function(Duration startAt) onComplete,
+    void Function(Duration position)? onProgress,
   }) async {
     cancel();
     debugPrint('[crossfade] begin: opening next track on fade player');
@@ -78,6 +79,7 @@ class CrossfadeController {
       final t = (stopwatch.elapsedMilliseconds / totalMs).clamp(0.0, 1.0);
       unawaited(fadePlayer.setVolume(t * targetVolume / 100));
       unawaited(setMainVolume((1 - t) * targetVolume));
+      onProgress?.call(fadePlayer.position);
       if (t >= 1.0) {
         timer.cancel();
         if (!completer.isCompleted) completer.complete();
@@ -95,13 +97,18 @@ class CrossfadeController {
     );
     _fadePlayer = null;
     _restoreMainVolume = null;
-    await onComplete(startAt);
-    await setMainVolume(targetVolume);
-    _active = false;
-    debugPrint('[crossfade] handoff complete');
     try {
       await fadePlayer.stop();
     } catch (_) {}
+    try {
+      await onComplete(startAt);
+      await setMainVolume(targetVolume);
+    } catch (error, stackTrace) {
+      debugPrint('[crossfade] onComplete FAILED: $error\n$stackTrace');
+    } finally {
+      _active = false;
+    }
+    debugPrint('[crossfade] handoff complete');
     unawaited(fadePlayer.dispose());
   }
 

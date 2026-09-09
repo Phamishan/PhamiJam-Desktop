@@ -613,6 +613,7 @@ class PlaybackModel extends ChangeNotifier {
     unawaited(
       _beginCrossfade(
         nextOrderIndex: nextOrderIndex,
+        nextItem: nextItem,
         nextVideoId: nextVideoId,
         nextPath: nextPath,
         crossfadeDuration: crossfadeDuration,
@@ -638,50 +639,97 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> _beginCrossfade({
     required int nextOrderIndex,
+    required Map<String, dynamic> nextItem,
     required String nextVideoId,
     required String nextPath,
     required Duration crossfadeDuration,
   }) async {
     final targetVolume = effectiveVolumePercent;
-    await _crossfade.begin(
-      crossfadeDuration: crossfadeDuration,
-      targetVolume: targetVolume,
-      remainingOnMain: () {
-        final total = _trimEnd ?? duration;
-        if (total == null || total <= Duration.zero) return Duration.zero;
-        final rem = total - progress;
-        return rem > Duration.zero ? rem : Duration.zero;
-      },
-      load: (fadePlayer) async {
-        if (nextVideoId.isNotEmpty) {
-          final trim = _trimLookup?.call(nextVideoId, _sourcePlaylistId);
-          final start = trim != null
-              ? Duration(milliseconds: trim.startMs)
-              : null;
-          await _youtubeLoadVideoById?.call(
-            nextVideoId,
-            target: fadePlayer,
-            startAt: start,
+    final outgoingTotal = _trimEnd ?? duration;
+    final outgoingRemaining =
+        (outgoingTotal == null || outgoingTotal <= Duration.zero)
+        ? Duration.zero
+        : (outgoingTotal - progress > Duration.zero
+              ? outgoingTotal - progress
+              : Duration.zero);
+    final previousSongName = songName;
+    final previousArtistName = artistName;
+    final previousArtistId = currentArtistId;
+    final previousDuration = duration;
+    final previousProgress = progress;
+    final previousVideoId = currentYouTubeVideoId;
+    final previousSongPath = currentSongPath;
+
+    _applyDisplayMetadata(nextItem);
+    if (nextVideoId.isNotEmpty) {
+      currentYouTubeVideoId = nextVideoId;
+      currentSongPath = 'yt:$nextVideoId';
+    } else if (nextPath.isNotEmpty) {
+      currentYouTubeVideoId = null;
+      currentSongPath = nextPath;
+    }
+    notifyListeners();
+    hideSidebarVideo();
+
+    var handoffCompleted = false;
+    try {
+      await _crossfade.begin(
+        crossfadeDuration: crossfadeDuration,
+        targetVolume: targetVolume,
+        remainingOnMain: () => outgoingRemaining,
+        onProgress: setProgress,
+        load: (fadePlayer) async {
+          if (nextVideoId.isNotEmpty) {
+            final trim = _trimLookup?.call(nextVideoId, _sourcePlaylistId);
+            final start = trim != null
+                ? Duration(milliseconds: trim.startMs)
+                : null;
+            await _youtubeLoadVideoById?.call(
+              nextVideoId,
+              target: fadePlayer,
+              startAt: start,
+            );
+            if (start != null && start > Duration.zero) {
+              try {
+                await fadePlayer.seek(start);
+              } catch (_) {}
+            }
+          } else {
+            await fadePlayer.setFilePath(nextPath);
+          }
+        },
+        setMainVolume: (volume) async {
+          try {
+            await player.setVolume(volume / 100);
+          } catch (_) {}
+        },
+        onComplete: (startAt) async {
+          handoffCompleted = true;
+          _currentOrderIndex = nextOrderIndex;
+          _refreshQueueWindow();
+          notifyListeners();
+          await _playBySourceIndexDirect(
+            _playOrder[nextOrderIndex],
+            startAt: startAt,
           );
-        } else {
-          await fadePlayer.setFilePath(nextPath);
-        }
-      },
-      setMainVolume: (volume) async {
-        try {
-          await player.setVolume(volume / 100);
-        } catch (_) {}
-      },
-      onComplete: (startAt) async {
-        _currentOrderIndex = nextOrderIndex;
-        _refreshQueueWindow();
+          _forceDiscordPresenceRefreshAfterTrackChange();
+          unawaited(_prefetchAhead());
+          _pushSessionIfHosting();
+        },
+      );
+    } finally {
+      if (!handoffCompleted) {
+        songName = previousSongName;
+        artistName = previousArtistName;
+        currentArtistId = previousArtistId;
+        setDuration(previousDuration ?? Duration.zero);
+        setProgress(previousProgress);
+        currentYouTubeVideoId = previousVideoId;
+        currentSongPath = previousSongPath;
         notifyListeners();
-        await _playBySourceIndex(_playOrder[nextOrderIndex], startAt: startAt);
-        _forceDiscordPresenceRefreshAfterTrackChange();
-        unawaited(_prefetchAhead());
-        _pushSessionIfHosting();
-      },
-    );
+      }
+      showSidebarVideo();
+    }
   }
 
   Future<void> _triggerTrackCompletedIfNeeded() async {
@@ -808,26 +856,23 @@ class PlaybackModel extends ChangeNotifier {
         } catch (_) {}
 
         final effectiveStart = startAt ?? _trimStart;
-        await _youtubeLoadVideoById?.call(videoId, startAt: effectiveStart);
+        try {
+          await _youtubeLoadVideoById?.call(videoId, startAt: effectiveStart);
+        } catch (error) {
+          debugPrint('PlaybackModel: failed to load video $videoId: $error');
+        }
+        if (effectiveStart != null && effectiveStart > Duration.zero) {
+          try {
+            await player.seek(effectiveStart);
+          } catch (_) {}
+        }
         _useYouTubeEngine(videoId);
 
         if (effectiveStart != null && effectiveStart > Duration.zero) {
           setProgress(effectiveStart);
         }
-        if (startAt != null) {
-          debugPrint(
-            '[crossfade] handoff load done: effectiveStart=$effectiveStart nativePosition=${player.position}',
-          );
-        }
       } finally {
         _isSwitchingTrack = false;
-      }
-      if (startAt != null) {
-        Future<void>.delayed(const Duration(milliseconds: 500), () {
-          debugPrint(
-            '[crossfade] +500ms after handoff: progress=$progress nativePosition=${player.position}',
-          );
-        });
       }
     });
     await _engineTransition;
@@ -874,6 +919,7 @@ class PlaybackModel extends ChangeNotifier {
         )
         .listen((position) {
           if (_isSwitchingTrack) return;
+          if (_crossfade.isActive) return;
           setProgress(position);
           _checkTrimEndReached();
           _checkCrossfadeTrigger();
@@ -1551,15 +1597,10 @@ class PlaybackModel extends ChangeNotifier {
       }
     }
 
-    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) {
-      return;
-    }
+    await _playBySourceIndexDirect(sourceIndex, startAt: startAt);
+  }
 
-    final item = _playlistItems[sourceIndex];
-    if (item is! Map<String, dynamic>) {
-      return;
-    }
-
+  void _applyDisplayMetadata(Map<String, dynamic> item) {
     final song = (item['songName'] ?? item['title'] ?? '').toString();
     final artist = (item['artistName'] ?? item['artist'] ?? '').toString();
     if (song.isNotEmpty) setSongName(song);
@@ -1572,6 +1613,22 @@ class PlaybackModel extends ChangeNotifier {
     } else {
       setDuration(Duration.zero);
     }
+  }
+
+  Future<void> _playBySourceIndexDirect(
+    int sourceIndex, {
+    Duration? startAt,
+  }) async {
+    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) {
+      return;
+    }
+
+    final item = _playlistItems[sourceIndex];
+    if (item is! Map<String, dynamic>) {
+      return;
+    }
+
+    _applyDisplayMetadata(item);
 
     final videoId = (item['videoId'] as String?) ?? '';
     if (videoId.isNotEmpty) {
