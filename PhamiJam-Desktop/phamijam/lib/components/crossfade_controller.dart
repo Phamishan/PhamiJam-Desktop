@@ -46,7 +46,7 @@ class CrossfadeController {
       try {
         await fadePlayer.stop();
       } catch (_) {}
-      unawaited(fadePlayer.dispose());
+      unawaited(_safeDispose(fadePlayer));
       return;
     }
     if (!_active || !identical(_fadePlayer, fadePlayer)) {
@@ -77,7 +77,7 @@ class CrossfadeController {
         return;
       }
       final t = (stopwatch.elapsedMilliseconds / totalMs).clamp(0.0, 1.0);
-      unawaited(fadePlayer.setVolume(t * targetVolume / 100));
+      unawaited(_safeSetVolume(fadePlayer, t * targetVolume / 100));
       unawaited(setMainVolume((1 - t) * targetVolume));
       onProgress?.call(fadePlayer.position);
       if (t >= 1.0) {
@@ -109,7 +109,19 @@ class CrossfadeController {
       _active = false;
     }
     debugPrint('[crossfade] handoff complete');
-    unawaited(fadePlayer.dispose());
+    unawaited(_safeDispose(fadePlayer));
+  }
+
+  Future<void> _safeSetVolume(AppAudioPlayer fadePlayer, double volume) async {
+    try {
+      await fadePlayer.setVolume(volume);
+    } catch (_) {}
+  }
+
+  Future<void> _safeDispose(AppAudioPlayer fadePlayer) async {
+    try {
+      await fadePlayer.dispose();
+    } catch (_) {}
   }
 
   void cancel() {

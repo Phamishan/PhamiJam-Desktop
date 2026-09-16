@@ -390,6 +390,7 @@ class _SettingsPageState extends State<SettingsPage> {
         );
       },
     );
+    controller.dispose();
   }
 
   Widget _buildSearchEngineCard() {

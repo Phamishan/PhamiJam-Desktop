@@ -116,6 +116,11 @@
   - Fixed crossfade issues
   - Made Jamstats ✨ load faster
   - Fixed lyrics not being found for some songs
+- 1.2.0 - 16/09/2026
+  - Made lyrics search smarter
+  - Reduced Firestore usage
+  - Improved app performance
+  - Fixed the app crashing when pausing during a crossfade
 
 ## Screenshots:
 

@@ -271,9 +271,8 @@ class _HomeState extends State<Home> {
     });
 
     try {
-      final since = DateTime.now().subtract(const Duration(days: 180));
       final results = await Future.wait([
-        ListeningHistoryService.eventsSince(since),
+        ListeningHistoryService.recentEvents(limit: 100),
         YoutubePlaylistService.fetchMyPlaylists(),
       ]);
       final events = results[0] as List<PlayEvent>;
@@ -281,7 +280,7 @@ class _HomeState extends State<Home> {
 
       final seen = <String>{};
       final recent = <PlayEvent>[];
-      for (final event in events.reversed) {
+      for (final event in events) {
         if (!seen.add(event.videoId)) continue;
         recent.add(event);
         if (recent.length >= 15) break;

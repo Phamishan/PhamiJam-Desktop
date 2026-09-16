@@ -14,6 +14,7 @@ class JamstatsPage extends StatefulWidget {
 
 class _JamstatsPageState extends State<JamstatsPage> {
   WrappedStats? _stats;
+  String? _loadError;
   int _slideIndex = 0;
   int _year = DateTime.now().year;
   int _earliestYear = DateTime.now().year;
@@ -48,13 +49,22 @@ class _JamstatsPageState extends State<JamstatsPage> {
   }
 
   Future<void> _loadStats() async {
-    setState(() => _stats = null);
-    final events = await ListeningHistoryService.eventsSince(
-      DateTime(_year),
-      until: DateTime(_year + 1),
-    );
-    if (!mounted) return;
-    setState(() => _stats = WrappedStats.fromEvents(events));
+    setState(() {
+      _stats = null;
+      _loadError = null;
+    });
+    try {
+      final events = await ListeningHistoryService.eventsSince(
+        DateTime(_year),
+        until: DateTime(_year + 1),
+      );
+      if (!mounted) return;
+      setState(() => _stats = WrappedStats.fromEvents(events));
+    } catch (error, stackTrace) {
+      debugPrint('JamstatsPage: failed to load stats: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() => _loadError = "Couldn't load Jamstats.");
+    }
   }
 
   void _selectYear(int year) {
@@ -105,9 +115,37 @@ class _JamstatsPageState extends State<JamstatsPage> {
   @override
   Widget build(BuildContext context) {
     final stats = _stats;
+    final loadError = _loadError;
 
     Widget body;
-    if (stats == null) {
+    if (loadError != null) {
+      body = Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  loadError,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: _loadStats,
+                  child: const Text(
+                    'Try again',
+                    style: TextStyle(color: kBrandGold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } else if (stats == null) {
       body = const Center(child: CircularProgressIndicator(color: kBrandGold));
     } else if (stats.isEmpty) {
       body = Center(

@@ -938,10 +938,14 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
     final subscribers = _readString(data.artist['subscribers']);
     final views = _readString(data.artist['views']);
     final thumbnailUrl = _thumbnailUrl(data.artist);
-    final playback = context.watch<PlaybackModel>();
-    final isThisArtistPlaying =
-        playback.isPlaying &&
-        _isOneOfSongs(playback.currentSongPath, data.songs);
+    final playback = context.read<PlaybackModel>();
+    final isThisArtistPlaying = context.select<PlaybackModel, bool>(
+      (p) => p.isPlaying && _isOneOfSongs(p.currentSongPath, data.songs),
+    );
+    final isShuffled = context.select<PlaybackModel, bool>((p) => p.isShuffled);
+    final repeatMode = context.select<PlaybackModel, PlayerRepeatMode>(
+      (p) => p.repeatMode,
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -1050,7 +1054,7 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
                   onPressed: playback.toggleShuffle,
                   icon: Icon(
                     Icons.shuffle_rounded,
-                    color: playback.isShuffled
+                    color: isShuffled
                         ? colorScheme.primary
                         : colorScheme.onSurfaceVariant,
                   ),
@@ -1062,7 +1066,7 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
                   child: InkWell(
                     customBorder: const CircleBorder(),
                     onTap: () => isThisArtistPlaying
-                        ? context.read<PlaybackModel>().togglePlayPause()
+                        ? playback.togglePlayPause()
                         : _playSongs(data.songs, shuffle: true),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -1080,10 +1084,10 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
                 IconButton(
                   onPressed: playback.cycleRepeatMode,
                   icon: Icon(
-                    playback.repeatMode == PlayerRepeatMode.one
+                    repeatMode == PlayerRepeatMode.one
                         ? Icons.repeat_one_rounded
                         : Icons.repeat_rounded,
-                    color: playback.repeatMode == PlayerRepeatMode.off
+                    color: repeatMode == PlayerRepeatMode.off
                         ? colorScheme.onSurfaceVariant
                         : colorScheme.primary,
                   ),
@@ -1771,19 +1775,24 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
 
   Widget _buildControlButtons(_AlbumDetailsData data) {
     final colorScheme = Theme.of(context).colorScheme;
-    final playback = context.watch<PlaybackModel>();
     final videoIds = data.tracks
         .map((track) => _readString(track['videoId']))
         .where((id) => id.isNotEmpty)
         .toSet();
-    final currentPath = playback.currentSongPath;
-    final currentVideoId = currentPath != null && currentPath.startsWith('yt:')
-        ? currentPath.substring(3)
-        : null;
-    final isThisAlbumPlaying =
-        playback.isPlaying &&
-        currentVideoId != null &&
-        videoIds.contains(currentVideoId);
+    final isThisAlbumPlaying = context.select<PlaybackModel, bool>((p) {
+      final currentPath = p.currentSongPath;
+      final currentVideoId =
+          currentPath != null && currentPath.startsWith('yt:')
+          ? currentPath.substring(3)
+          : null;
+      return p.isPlaying &&
+          currentVideoId != null &&
+          videoIds.contains(currentVideoId);
+    });
+    final isShuffled = context.select<PlaybackModel, bool>((p) => p.isShuffled);
+    final repeatMode = context.select<PlaybackModel, PlayerRepeatMode>(
+      (p) => p.repeatMode,
+    );
     final playableTracks = data.tracks
         .where((track) => _readString(track['videoId']).isNotEmpty)
         .toList();
@@ -1794,9 +1803,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
         IconButton(
           onPressed: playableTracks.isEmpty ? null : _playback.toggleShuffle,
           icon: Icon(
-            playback.isShuffled
-                ? Icons.shuffle_on_rounded
-                : Icons.shuffle_rounded,
+            isShuffled ? Icons.shuffle_on_rounded : Icons.shuffle_rounded,
             color: colorScheme.primary,
           ),
         ),
@@ -1817,7 +1824,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
                         i,
                   ];
                   if (playableIndices.isEmpty) return;
-                  final startIndex = playback.isShuffled
+                  final startIndex = isShuffled
                       ? playableIndices[Random().nextInt(
                           playableIndices.length,
                         )]
@@ -1834,7 +1841,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
         const SizedBox(width: 12),
         IconButton(
           onPressed: _playback.cycleRepeatMode,
-          icon: Icon(switch (playback.repeatMode) {
+          icon: Icon(switch (repeatMode) {
             PlayerRepeatMode.off => Icons.repeat_rounded,
             PlayerRepeatMode.all => Icons.repeat_on_rounded,
             PlayerRepeatMode.one => Icons.repeat_one_on_rounded,
@@ -2220,9 +2227,14 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
     final description = (channel?['description'] as String?) ?? '';
     final subscriberCount = (channel?['subscriberCount'] as String?) ?? '';
     final thumbnailUrl = (channel?['thumbnailUrl'] as String?) ?? '';
-    final playback = context.watch<PlaybackModel>();
-    final isThisChannelPlaying =
-        playback.isPlaying && _isOneOfVideos(playback.currentSongPath, videos);
+    final playback = context.read<PlaybackModel>();
+    final isThisChannelPlaying = context.select<PlaybackModel, bool>(
+      (p) => p.isPlaying && _isOneOfVideos(p.currentSongPath, videos),
+    );
+    final isShuffled = context.select<PlaybackModel, bool>((p) => p.isShuffled);
+    final repeatMode = context.select<PlaybackModel, PlayerRepeatMode>(
+      (p) => p.repeatMode,
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -2318,7 +2330,7 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
                   onPressed: playback.toggleShuffle,
                   icon: Icon(
                     Icons.shuffle_rounded,
-                    color: playback.isShuffled
+                    color: isShuffled
                         ? colorScheme.primary
                         : colorScheme.onSurfaceVariant,
                   ),
@@ -2330,7 +2342,7 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
                   child: InkWell(
                     customBorder: const CircleBorder(),
                     onTap: () => isThisChannelPlaying
-                        ? context.read<PlaybackModel>().togglePlayPause()
+                        ? playback.togglePlayPause()
                         : _playVideos(videos, shuffle: true),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -2348,10 +2360,10 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
                 IconButton(
                   onPressed: playback.cycleRepeatMode,
                   icon: Icon(
-                    playback.repeatMode == PlayerRepeatMode.one
+                    repeatMode == PlayerRepeatMode.one
                         ? Icons.repeat_one_rounded
                         : Icons.repeat_rounded,
-                    color: playback.repeatMode == PlayerRepeatMode.off
+                    color: repeatMode == PlayerRepeatMode.off
                         ? colorScheme.onSurfaceVariant
                         : colorScheme.primary,
                   ),
