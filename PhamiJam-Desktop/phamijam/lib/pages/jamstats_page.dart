@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/services/listening_history_service.dart';
@@ -19,6 +21,9 @@ class _JamstatsPageState extends State<JamstatsPage> {
   int _year = DateTime.now().year;
   int _earliestYear = DateTime.now().year;
   PlaybackModel? _playback;
+  Timer? _slowLoadTimer;
+  bool _showSlowLoadHint = false;
+  static const Duration _slowLoadHintDelay = Duration(seconds: 5);
 
   @override
   void initState() {
@@ -32,13 +37,22 @@ class _JamstatsPageState extends State<JamstatsPage> {
     super.didChangeDependencies();
     if (_playback == null) {
       _playback = context.read<PlaybackModel>();
-      _playback!.hideSidebarVideo();
+      final playback = _playback!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        playback.hideSidebarVideo();
+      });
     }
   }
 
   @override
   void dispose() {
-    _playback?.showSidebarVideo();
+    _slowLoadTimer?.cancel();
+    final playback = _playback;
+    if (playback != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        playback.showSidebarVideo();
+      });
+    }
     super.dispose();
   }
 
@@ -49,9 +63,14 @@ class _JamstatsPageState extends State<JamstatsPage> {
   }
 
   Future<void> _loadStats() async {
+    _slowLoadTimer?.cancel();
+    _slowLoadTimer = Timer(_slowLoadHintDelay, () {
+      if (mounted) setState(() => _showSlowLoadHint = true);
+    });
     setState(() {
       _stats = null;
       _loadError = null;
+      _showSlowLoadHint = false;
     });
     try {
       final events = await ListeningHistoryService.eventsSince(
@@ -64,6 +83,8 @@ class _JamstatsPageState extends State<JamstatsPage> {
       debugPrint('JamstatsPage: failed to load stats: $error\n$stackTrace');
       if (!mounted) return;
       setState(() => _loadError = "Couldn't load Jamstats.");
+    } finally {
+      _slowLoadTimer?.cancel();
     }
   }
 
@@ -146,7 +167,22 @@ class _JamstatsPageState extends State<JamstatsPage> {
         ),
       );
     } else if (stats == null) {
-      body = const Center(child: CircularProgressIndicator(color: kBrandGold));
+      body = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(color: kBrandGold),
+            if (_showSlowLoadHint) ...[
+              const SizedBox(height: 20),
+              const Text(
+                'Still loading',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70),
+              ),
+            ],
+          ],
+        ),
+      );
     } else if (stats.isEmpty) {
       body = Center(
         child: ConstrainedBox(

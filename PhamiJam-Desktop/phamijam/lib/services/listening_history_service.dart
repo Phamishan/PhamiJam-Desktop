@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -16,6 +17,8 @@ class ListeningHistoryService {
   static const int _maxPending = 2000;
   static const int _minListenMs = 30000;
   static const Duration _syncTimeout = Duration(seconds: 8);
+  static const Duration _queryTimeout = Duration(seconds: 20);
+  static const Duration _prefsTimeout = Duration(seconds: 5);
   static const int _batchChunkSize = 450;
   static const int _recentEventsLimit = 100;
   static Future<void>? _flushInProgress;
@@ -36,7 +39,9 @@ class ListeningHistoryService {
 
   static Future<List<PlayEvent>> _loadPending() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance().timeout(
+        _prefsTimeout,
+      );
       final raw = prefs.getString(_pendingKey);
       if (raw == null || raw.isEmpty) return [];
       final decoded = jsonDecode(raw);
@@ -55,7 +60,9 @@ class ListeningHistoryService {
 
   static Future<void> _savePending(List<PlayEvent> events) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance().timeout(
+        _prefsTimeout,
+      );
       await prefs.setString(
         _pendingKey,
         jsonEncode(events.map((e) => e.toJson()).toList()),
@@ -112,7 +119,9 @@ class ListeningHistoryService {
 
   static Future<void> _flushPendingInternal() async {
     final remote = _remotePlays;
-    if (remote == null) return;
+    if (remote == null) {
+      return;
+    }
     final pending = await _loadPending();
     if (pending.isEmpty) return;
 
@@ -146,7 +155,8 @@ class ListeningHistoryService {
   ) async {
     final merged = List<PlayEvent>.from(events);
     final seen = merged.map((e) => e.docId).toSet();
-    for (final event in await _loadPending()) {
+    final pending = await _loadPending();
+    for (final event in pending) {
       final ms = event.startedAt.millisecondsSinceEpoch;
       if (ms >= sinceMs && ms < untilMs && seen.add(event.docId)) {
         merged.add(event);
@@ -184,7 +194,7 @@ class ListeningHistoryService {
         if (untilMs != null) {
           query = query.where('s', isLessThan: untilMs);
         }
-        final snapshot = await query.get();
+        final snapshot = await query.get().timeout(_queryTimeout);
         for (final doc in snapshot.docs) {
           final event = PlayEvent.fromJson(doc.data());
           if (event != null) events.add(event);
@@ -212,9 +222,9 @@ class ListeningHistoryService {
 
   static Future<List<PlayEvent>> _eventsForYear(int year) {
     final key = '$_currentUid|$year';
-    return _yearInFlight[key] ??= _eventsForYearInternal(
-      year,
-    ).whenComplete(() => _yearInFlight.remove(key));
+    return _yearInFlight[key] ??= _eventsForYearInternal(year).whenComplete(() {
+      _yearInFlight.remove(key);
+    });
   }
 
   static Future<List<PlayEvent>> _eventsForYearInternal(int year) async {
@@ -243,7 +253,8 @@ class ListeningHistoryService {
       final snapshot = await remote
           .where('s', isGreaterThanOrEqualTo: fetchFromMs)
           .where('s', isLessThan: untilMs)
-          .get();
+          .get()
+          .timeout(_queryTimeout);
       final seen = events.map((e) => e.docId).toSet();
       for (final doc in snapshot.docs) {
         final event = PlayEvent.fromJson(doc.data());
@@ -276,7 +287,9 @@ class ListeningHistoryService {
 
   static Future<_YearCache?> _loadYearCache(String uid, int year) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance().timeout(
+        _prefsTimeout,
+      );
       final raw = prefs.getString(_yearCacheKey(uid, year));
       if (raw == null || raw.isEmpty) return null;
       final decoded = jsonDecode(raw);
@@ -308,7 +321,9 @@ class ListeningHistoryService {
     _YearCache cache,
   ) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await SharedPreferences.getInstance().timeout(
+        _prefsTimeout,
+      );
       await prefs.setString(
         _yearCacheKey(uid, year),
         jsonEncode({
@@ -334,7 +349,8 @@ class ListeningHistoryService {
         final snapshot = await remote
             .orderBy('s', descending: true)
             .limit(limit)
-            .get();
+            .get()
+            .timeout(_queryTimeout);
         for (final doc in snapshot.docs) {
           final event = PlayEvent.fromJson(doc.data());
           if (event != null) events.add(event);
@@ -371,7 +387,7 @@ class ListeningHistoryService {
       if (untilMs != null) {
         query = query.where('s', isLessThan: untilMs);
       }
-      final snapshot = await query.get();
+      final snapshot = await query.get().timeout(_queryTimeout);
       for (final doc in snapshot.docs) {
         final event = PlayEvent.fromJson(doc.data());
         if (event != null) events.add(event);
@@ -404,9 +420,13 @@ class ListeningHistoryService {
 
     if (uid != null) {
       try {
-        final prefs = await SharedPreferences.getInstance();
+        final prefs = await SharedPreferences.getInstance().timeout(
+          _prefsTimeout,
+        );
         final persisted = prefs.getInt('$_earliestYearKeyPrefix$uid');
-        if (persisted != null) return persisted;
+        if (persisted != null) {
+          return persisted;
+        }
       } catch (error) {
         debugPrint(
           'ListeningHistoryService: failed to read earliest year cache: $error',
@@ -419,7 +439,11 @@ class ListeningHistoryService {
     final remote = _remotePlays;
     if (remote != null) {
       try {
-        final snapshot = await remote.orderBy('s').limit(1).get();
+        final snapshot = await remote
+            .orderBy('s')
+            .limit(1)
+            .get()
+            .timeout(_queryTimeout);
         if (snapshot.docs.isNotEmpty) {
           final event = PlayEvent.fromJson(snapshot.docs.first.data());
           if (event != null) earliest = event.startedAt;
@@ -438,7 +462,9 @@ class ListeningHistoryService {
     final year = (earliest ?? DateTime.now()).year;
     if (uid != null && earliest != null) {
       try {
-        final prefs = await SharedPreferences.getInstance();
+        final prefs = await SharedPreferences.getInstance().timeout(
+          _prefsTimeout,
+        );
         await prefs.setInt('$_earliestYearKeyPrefix$uid', year);
       } catch (error) {
         debugPrint(

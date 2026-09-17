@@ -11,6 +11,7 @@ import 'package:phamijam/models/edited_song_trim.dart';
 import 'package:phamijam/services/drive_duration_cache_service.dart';
 import 'package:phamijam/services/google_drive_service.dart'
     show driveTrackIdPrefix;
+import 'package:phamijam/services/listen_along_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
 import 'package:phamijam/services/playback_state_service.dart';
@@ -124,6 +125,12 @@ class PlaybackModel extends ChangeNotifier {
   DateTime? _sleepTimerEndsAt;
   bool _pauseAtTrackEndScheduled = false;
 
+  String? _listenAlongFriendUid;
+  String? _listenAlongFriendName;
+  StreamSubscription<FriendNowPlaying?>? _listenAlongSub;
+  String? _listenAlongLastAppliedVideoId;
+  Timer? _nowPlayingHeartbeat;
+
   PlaybackModel() {
     unawaited(_restoreVolume());
     unawaited(_restoreLastPlayedState());
@@ -144,9 +151,115 @@ class PlaybackModel extends ChangeNotifier {
     _positionAutosaveTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (isPlaying) _persistQueueState();
     });
+    _nowPlayingHeartbeat = Timer.periodic(const Duration(seconds: 12), (_) {
+      _pushNowPlayingIfActive();
+    });
   }
 
   bool get hasRestorableQueue => needsResumeLoad && _playOrder.isNotEmpty;
+
+  bool get isListeningAlong => _listenAlongFriendUid != null;
+  String? get listenAlongFriendUid => _listenAlongFriendUid;
+  String? get listenAlongFriendName => _listenAlongFriendName;
+
+  Future<void> startListenAlong(
+    String friendUid, {
+    required String friendDisplayName,
+  }) async {
+    if (friendUid.isEmpty) return;
+    _exitRemoteControl();
+    _crossfade.cancel();
+    await _listenAlongSub?.cancel();
+    unawaited(ListenAlongService.clearNowPlaying());
+
+    _listenAlongFriendUid = friendUid;
+    _listenAlongFriendName = friendDisplayName;
+    _listenAlongLastAppliedVideoId = null;
+    notifyListeners();
+
+    _listenAlongSub = ListenAlongService.watchFriendNowPlaying(
+      friendUid,
+    ).listen(_applyFriendNowPlaying);
+  }
+
+  void stopListenAlong() {
+    if (_listenAlongFriendUid == null) return;
+    unawaited(_listenAlongSub?.cancel());
+    _listenAlongSub = null;
+    _listenAlongFriendUid = null;
+    _listenAlongFriendName = null;
+    _listenAlongLastAppliedVideoId = null;
+    notifyListeners();
+  }
+
+  void _exitListenAlongIfActive() {
+    if (_listenAlongFriendUid == null) return;
+    stopListenAlong();
+  }
+
+  Future<void> _applyFriendNowPlaying(FriendNowPlaying? data) async {
+    if (_listenAlongFriendUid == null) return;
+    final track = data?.track;
+    if (track == null) {
+      if (_listenAlongLastAppliedVideoId != null && isPlaying) {
+        await _localTogglePlayPause();
+      }
+      return;
+    }
+    final videoId = track['videoId'] as String? ?? '';
+    if (videoId.isEmpty) return;
+
+    final isNewTrack = videoId != _listenAlongLastAppliedVideoId;
+    if (isNewTrack) {
+      _listenAlongLastAppliedVideoId = videoId;
+      setSongName((track['songName'] as String?) ?? 'Unknown song');
+      setArtist((track['artistName'] as String?) ?? 'Unknown artist');
+      setArtistId(track['artistId'] as String?);
+      setCurrentSongPath('yt:$videoId');
+      await playYouTubeVideoById(videoId);
+      unawaited(_fetchAndApplyYouTubeThumbnail(videoId));
+    }
+
+    if (_listenAlongFriendUid == null) return;
+    if (data!.isPlaying != isPlaying) {
+      await _localTogglePlayPause();
+    }
+
+    final estimatedPosition = data.isPlaying
+        ? data.position + DateTime.now().difference(data.updatedAt)
+        : data.position;
+    final target = estimatedPosition < Duration.zero
+        ? Duration.zero
+        : estimatedPosition;
+    final drift = (target - progress).abs();
+    if (isNewTrack || drift > const Duration(seconds: 3)) {
+      if (_engine == PlaybackEngine.youtube) {
+        await _youtubeSeek?.call(target);
+      } else {
+        await player.seek(target);
+      }
+      setProgress(target);
+    }
+  }
+
+  void _pushNowPlayingIfActive() {
+    if (_listenAlongFriendUid != null || _isRemoteControlling) return;
+    final videoId = currentYouTubeVideoId;
+    if (videoId == null || videoId.isEmpty) return;
+    unawaited(
+      ListenAlongService.pushNowPlaying(
+        track: {
+          'videoId': videoId,
+          'songName': songName,
+          'artistName': artistName,
+          'artistId': currentArtistId,
+          'durationSeconds': duration?.inSeconds ?? 0,
+        },
+        position: displayedProgress,
+        isPlaying: isPlaying,
+      ),
+    );
+  }
 
   RemoteSession? get remoteSession => _remoteSession;
   bool get isRemoteControlling => _isRemoteControlling;
@@ -253,6 +366,7 @@ class PlaybackModel extends ChangeNotifier {
     await applyVolume(currentSliderValue);
     unawaited(_fetchAndApplyYouTubeThumbnail(videoId));
     _pushSessionIfHosting();
+    _pushNowPlayingIfActive();
   }
 
   Future<void> _handleIncomingCommands(List<RemoteCommand> commands) async {
@@ -715,6 +829,7 @@ class PlaybackModel extends ChangeNotifier {
           _forceDiscordPresenceRefreshAfterTrackChange();
           unawaited(_prefetchAhead());
           _pushSessionIfHosting();
+          _pushNowPlayingIfActive();
         },
       );
     } finally {
@@ -1293,6 +1408,8 @@ class PlaybackModel extends ChangeNotifier {
   void clearPlaylistQueue() {
     _crossfade.cancel();
     _exitRemoteControl();
+    _exitListenAlongIfActive();
+    unawaited(ListenAlongService.clearNowPlaying());
     _playlistItems = [];
     _playOrder = [];
     _currentOrderIndex = -1;
@@ -1325,6 +1442,7 @@ class PlaybackModel extends ChangeNotifier {
     _sourcePlaylistTitle = null;
     _sourcePlaylistPrivacyStatus = null;
     _exitRemoteControl();
+    _exitListenAlongIfActive();
     if (items.isEmpty || startIndex < 0 || startIndex >= items.length) {
       _playlistItems = [];
       _playOrder = [];
@@ -1388,6 +1506,7 @@ class PlaybackModel extends ChangeNotifier {
 
   void addToQueue(dynamic item) {
     _exitRemoteControl();
+    _exitListenAlongIfActive();
     _playlistItems = List<dynamic>.from(_playlistItems)..add(item);
     final sourceIndex = _playlistItems.length - 1;
 
@@ -1410,6 +1529,7 @@ class PlaybackModel extends ChangeNotifier {
 
   void appendToQueue(dynamic item) {
     _exitRemoteControl();
+    _exitListenAlongIfActive();
     _playlistItems = List<dynamic>.from(_playlistItems)..add(item);
     final sourceIndex = _playlistItems.length - 1;
 
@@ -1494,6 +1614,7 @@ class PlaybackModel extends ChangeNotifier {
     if (queueIndex < 0 || queueIndex >= queue.length) return;
     if (_currentOrderIndex < 0) return;
     _crossfade.cancel();
+    _exitListenAlongIfActive();
     await _recordPotentialSkip();
 
     final targetRawOrderIndex = _currentOrderIndex + queueIndex;
@@ -1516,6 +1637,7 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> playPrevious() async {
     _crossfade.cancel();
+    _exitListenAlongIfActive();
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.previous);
       return;
@@ -1542,10 +1664,12 @@ class PlaybackModel extends ChangeNotifier {
     _forceDiscordPresenceRefreshAfterTrackChange();
     unawaited(_prefetchAhead());
     _pushSessionIfHosting();
+    _pushNowPlayingIfActive();
   }
 
   Future<void> playNext() async {
     _crossfade.cancel();
+    _exitListenAlongIfActive();
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(RemoteCommandType.next);
       return;
@@ -1578,6 +1702,7 @@ class PlaybackModel extends ChangeNotifier {
       _forceDiscordPresenceRefreshAfterTrackChange();
       unawaited(_prefetchAhead());
       _pushSessionIfHosting();
+      _pushNowPlayingIfActive();
     }
   }
 
@@ -1677,6 +1802,7 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> seekTo(Duration value) async {
     if (_isRemoteControlling) return;
     _crossfade.cancel();
+    _exitListenAlongIfActive();
     final clamped = _clampToTrim(value);
     setProgress(clamped);
     if (_engine == PlaybackEngine.youtube) {
@@ -1689,6 +1815,7 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> togglePlayPause() async {
     _crossfade.cancel();
+    _exitListenAlongIfActive();
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(
         isPlaying ? RemoteCommandType.pause : RemoteCommandType.play,
@@ -1708,6 +1835,7 @@ class PlaybackModel extends ChangeNotifier {
         setIsPlaying(true);
       }
       _pushSessionIfHosting();
+      _pushNowPlayingIfActive();
       return;
     }
 
@@ -1717,10 +1845,12 @@ class PlaybackModel extends ChangeNotifier {
       await player.play();
     }
     _pushSessionIfHosting();
+    _pushNowPlayingIfActive();
   }
 
   void toggleShuffle() {
     if (_isRemoteControlling) return;
+    _exitListenAlongIfActive();
     isShuffled = !isShuffled;
     if (_playlistItems.isNotEmpty) {
       final fallbackSourceIndex =
@@ -1739,6 +1869,7 @@ class PlaybackModel extends ChangeNotifier {
 
   void cycleRepeatMode() {
     if (_isRemoteControlling) return;
+    _exitListenAlongIfActive();
     repeatMode = PlayerRepeatMode
         .values[(repeatMode.index + 1) % PlayerRepeatMode.values.length];
     if (_playlistItems.isNotEmpty) {
@@ -2000,6 +2131,9 @@ class PlaybackModel extends ChangeNotifier {
     _positionAutosaveTimer?.cancel();
     _volumeCommandThrottle?.cancel();
     _sleepTimer?.cancel();
+    _listenAlongSub?.cancel();
+    _nowPlayingHeartbeat?.cancel();
+    unawaited(ListenAlongService.clearNowPlaying());
     unawaited(_discordRpc?.clearPresence());
     unawaited(_discordRpc?.dispose());
     super.dispose();

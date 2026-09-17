@@ -932,7 +932,7 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
     playback.setPlaylistQueue(items, startIndex: startIndex);
   }
 
-  Widget _buildHeader(_ArtistDetailsData data) {
+  Widget _buildHeader(BuildContext context, _ArtistDetailsData data) {
     final colorScheme = Theme.of(context).colorScheme;
     final description = _readString(data.artist['description']);
     final subscribers = _readString(data.artist['subscribers']);
@@ -1387,7 +1387,7 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
                 ],
               ),
               const SizedBox(height: 14),
-              _buildHeader(data),
+              _buildHeader(context, data),
               const SizedBox(height: 14),
               _buildSearchEngineToggle(context),
               const SizedBox(height: 6),
@@ -1546,7 +1546,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
     );
   }
 
-  Widget _buildHeader(_AlbumDetailsData data) {
+  Widget _buildHeader(BuildContext context, _AlbumDetailsData data) {
     final colorScheme = Theme.of(context).colorScheme;
     final artistNames = <String>[];
     final artists = data.album['artists'];
@@ -1773,7 +1773,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
     );
   }
 
-  Widget _buildControlButtons(_AlbumDetailsData data) {
+  Widget _buildControlButtons(BuildContext context, _AlbumDetailsData data) {
     final colorScheme = Theme.of(context).colorScheme;
     final videoIds = data.tracks
         .map((track) => _readString(track['videoId']))
@@ -2021,9 +2021,9 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
                 ],
               ),
               const SizedBox(height: 14),
-              _buildHeader(data),
+              _buildHeader(context, data),
               const SizedBox(height: 10),
-              _buildControlButtons(data),
+              _buildControlButtons(context, data),
               if (data.tracks.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
@@ -2219,6 +2219,7 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
   }
 
   Widget _buildHeader(
+    BuildContext context,
     Map<String, dynamic>? channel,
     List<Map<String, dynamic>> videos,
   ) {
@@ -2548,7 +2549,7 @@ class _YoutubeChannelDetailsPageState extends State<YoutubeChannelDetailsPage> {
                 ],
               ),
               const SizedBox(height: 14),
-              _buildHeader(channel, videos),
+              _buildHeader(context, channel, videos),
               const SizedBox(height: 14),
               _buildSearchEngineToggle(context),
               if (videos.isEmpty)

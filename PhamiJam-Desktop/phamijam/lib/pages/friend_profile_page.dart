@@ -1,9 +1,12 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/models/friend_request.dart';
 import 'package:phamijam/models/user_profile.dart';
 import 'package:phamijam/providers/friends_provider.dart';
+import 'package:phamijam/services/listen_along_service.dart';
+import 'package:phamijam/services/presence_service.dart';
 import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/widgets/profile.dart';
 import 'package:phamijam/widgets/profile_grid/profile_grid_view.dart';
@@ -51,7 +54,7 @@ class FriendProfilePage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _FriendHeader(profile: profile, displayName: displayName),
+                _FriendHeader(uid: uid, profile: profile, displayName: displayName),
                 const SizedBox(height: 12),
                 _RelationshipActionRow(
                   uid: uid,
@@ -88,8 +91,13 @@ class FriendProfilePage extends StatelessWidget {
 }
 
 class _FriendHeader extends StatelessWidget {
-  const _FriendHeader({required this.profile, required this.displayName});
+  const _FriendHeader({
+    required this.uid,
+    required this.profile,
+    required this.displayName,
+  });
 
+  final String uid;
   final UserProfile profile;
   final String displayName;
 
@@ -97,50 +105,146 @@ class _FriendHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final avatarUrl = profile.avatarUrl;
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 28,
-          backgroundColor: colorScheme.primary,
-          backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
-              ? NetworkImage(avatarUrl)
-              : null,
-          child: (avatarUrl == null || avatarUrl.isEmpty)
-              ? Icon(
-                  Icons.person_rounded,
-                  color: colorScheme.onPrimary,
-                  size: 28,
-                )
-              : null,
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 16,
+    return StreamBuilder<FriendPresence>(
+      stream: PresenceService.watchPresence(uid),
+      initialData: FriendPresence.offline,
+      builder: (context, presenceSnapshot) {
+        final presence = presenceSnapshot.data ?? FriendPresence.offline;
+
+        return StreamBuilder<FriendNowPlaying?>(
+          stream: ListenAlongService.watchFriendNowPlaying(uid),
+          builder: (context, nowPlayingSnapshot) {
+            final nowPlaying = nowPlayingSnapshot.data;
+            final isActivelyPlaying =
+                presence.online &&
+                nowPlaying != null &&
+                nowPlaying.isLive &&
+                nowPlaying.isPlaying &&
+                nowPlaying.track != null;
+
+            String statusText;
+            if (isActivelyPlaying) {
+              final track = nowPlaying.track!;
+              final song = (track['songName'] as String?) ?? '';
+              final artist = (track['artistName'] as String?) ?? '';
+              statusText = song.isEmpty
+                  ? 'Listening to music'
+                  : 'Listening to $song${artist.isEmpty ? '' : ' · $artist'}';
+            } else {
+              statusText = presence.online ? 'Online' : 'Offline';
+            }
+
+            return Row(
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    CircleAvatar(
+                      radius: 28,
+                      backgroundColor: colorScheme.primary,
+                      backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                          ? NetworkImage(avatarUrl)
+                          : null,
+                      child: (avatarUrl == null || avatarUrl.isEmpty)
+                          ? Icon(
+                              Icons.person_rounded,
+                              color: colorScheme.onPrimary,
+                              size: 28,
+                            )
+                          : null,
+                    ),
+                    Positioned(
+                      right: -1,
+                      bottom: -1,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: presence.online
+                              ? Colors.green
+                              : colorScheme.outlineVariant,
+                          border: Border.all(
+                            color: colorScheme.surface,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              if ((profile.bio ?? '').trim().isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  profile.bio!.trim(),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: colorScheme.onSurfaceVariant),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        statusText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isActivelyPlaying
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                          fontSize: 13,
+                        ),
+                      ),
+                      if ((profile.bio ?? '').trim().isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          profile.bio!.trim(),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
+                if (isActivelyPlaying)
+                  Consumer<PlaybackModel>(
+                    builder: (context, playback, _) {
+                      final isListeningToThisFriend =
+                          playback.isListeningAlong &&
+                          playback.listenAlongFriendUid == uid;
+                      return IconButton.filledTonal(
+                        tooltip: isListeningToThisFriend
+                            ? 'Stop listening along'
+                            : 'Listen along',
+                        icon: Icon(
+                          isListeningToThisFriend
+                              ? Icons.headphones_rounded
+                              : Icons.headphones_outlined,
+                        ),
+                        onPressed: () {
+                          if (isListeningToThisFriend) {
+                            playback.stopListenAlong();
+                          } else {
+                            playback.startListenAlong(
+                              uid,
+                              friendDisplayName: displayName,
+                            );
+                          }
+                        },
+                      );
+                    },
+                  ),
               ],
-            ],
-          ),
-        ),
-      ],
+            );
+          },
+        );
+      },
     );
   }
 }

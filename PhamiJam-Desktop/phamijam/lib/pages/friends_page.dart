@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/models/friend.dart';
 import 'package:phamijam/models/friend_request.dart';
 import 'package:phamijam/providers/friends_provider.dart';
+import 'package:phamijam/services/listen_along_service.dart';
+import 'package:phamijam/services/presence_service.dart';
 import 'package:provider/provider.dart';
 
 class FriendsPage extends StatelessWidget {
@@ -116,14 +119,15 @@ class _Section extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({this.photoUrl});
+  const _Avatar({this.photoUrl, this.online});
 
   final String? photoUrl;
+  final bool? online;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return CircleAvatar(
+    final avatar = CircleAvatar(
       backgroundColor: colorScheme.primary,
       backgroundImage: (photoUrl != null && photoUrl!.isNotEmpty)
           ? NetworkImage(photoUrl!)
@@ -131,6 +135,27 @@ class _Avatar extends StatelessWidget {
       child: (photoUrl == null || photoUrl!.isEmpty)
           ? Icon(Icons.person_rounded, color: colorScheme.onPrimary)
           : null,
+    );
+    if (online == null) return avatar;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        avatar,
+        Positioned(
+          right: -1,
+          bottom: -1,
+          child: Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: online! ? Colors.green : colorScheme.outlineVariant,
+              border: Border.all(color: colorScheme.surface, width: 2),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -297,20 +322,104 @@ class _FriendTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: _Avatar(photoUrl: friend.photoUrl),
-      title: Text(friend.displayName),
-      onTap: onTap,
-      trailing: PopupMenuButton<String>(
-        tooltip: '',
-        onSelected: (value) {
-          if (value == 'unfriend') _unfriend(context);
-        },
-        itemBuilder: (context) => const [
-          PopupMenuItem(value: 'unfriend', child: Text('Remove friend')),
-        ],
-      ),
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return StreamBuilder<FriendPresence>(
+      stream: PresenceService.watchPresence(friend.uid),
+      initialData: FriendPresence.offline,
+      builder: (context, presenceSnapshot) {
+        final presence = presenceSnapshot.data ?? FriendPresence.offline;
+
+        return StreamBuilder<FriendNowPlaying?>(
+          stream: ListenAlongService.watchFriendNowPlaying(friend.uid),
+          builder: (context, nowPlayingSnapshot) {
+            final nowPlaying = nowPlayingSnapshot.data;
+            final isActivelyPlaying =
+                presence.online &&
+                nowPlaying != null &&
+                nowPlaying.isLive &&
+                nowPlaying.isPlaying &&
+                nowPlaying.track != null;
+
+            String? subtitle;
+            if (isActivelyPlaying) {
+              final track = nowPlaying.track!;
+              final song = (track['songName'] as String?) ?? '';
+              final artist = (track['artistName'] as String?) ?? '';
+              subtitle = song.isEmpty
+                  ? 'Listening to music'
+                  : 'Listening to $song${artist.isEmpty ? '' : ' · $artist'}';
+            } else {
+              subtitle = presence.online ? 'Online' : 'Offline';
+            }
+
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: _Avatar(photoUrl: friend.photoUrl, online: presence.online),
+              title: Text(friend.displayName),
+              subtitle: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isActivelyPlaying
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                ),
+              ),
+              onTap: onTap,
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isActivelyPlaying)
+                    Consumer<PlaybackModel>(
+                      builder: (context, playback, _) {
+                        final isListeningToThisFriend =
+                            playback.isListeningAlong &&
+                            playback.listenAlongFriendUid == friend.uid;
+                        return IconButton(
+                          tooltip: isListeningToThisFriend
+                              ? 'Stop listening along'
+                              : 'Listen along',
+                          icon: Icon(
+                            isListeningToThisFriend
+                                ? Icons.headphones_rounded
+                                : Icons.headphones_outlined,
+                            color: isListeningToThisFriend
+                                ? colorScheme.primary
+                                : null,
+                          ),
+                          onPressed: () {
+                            if (isListeningToThisFriend) {
+                              playback.stopListenAlong();
+                            } else {
+                              playback.startListenAlong(
+                                friend.uid,
+                                friendDisplayName: friend.displayName,
+                              );
+                            }
+                          },
+                        );
+                      },
+                    ),
+                  PopupMenuButton<String>(
+                    tooltip: '',
+                    onSelected: (value) {
+                      if (value == 'unfriend') _unfriend(context);
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'unfriend',
+                        child: Text('Remove friend'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

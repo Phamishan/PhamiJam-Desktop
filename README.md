@@ -121,6 +121,10 @@
   - Reduced Firestore usage
   - Improved app performance
   - Fixed the app crashing when pausing during a crossfade
+- 1.2.1 - 17/09/2026
+  - Added online/offline status for friends
+  - Added Listen Along (needs testing)
+  - Fixed Jamstats ✨ issues
 
 ## Screenshots:
 

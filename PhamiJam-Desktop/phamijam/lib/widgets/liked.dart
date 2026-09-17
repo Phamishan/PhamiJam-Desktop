@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
@@ -61,7 +62,9 @@ class _LikedPageState extends State<LikedPage> {
     _playback = context.read<PlaybackModel>();
     final liked = context.read<LikedSongsProvider>();
     if (!liked.hasLoadedOnce && !liked.isLoading) {
-      liked.refresh();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(liked.refresh());
+      });
     }
   }
 

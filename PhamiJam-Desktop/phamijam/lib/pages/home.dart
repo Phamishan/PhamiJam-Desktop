@@ -15,6 +15,7 @@ import 'package:phamijam/pages/friend_profile_page.dart';
 import 'package:phamijam/pages/friends_page.dart';
 import 'package:phamijam/pages/fullscreen_video_page.dart';
 import 'package:phamijam/pages/search_profiles_page.dart';
+import 'package:phamijam/components/listen_along_banner.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/remote_session_banner.dart';
 import 'package:phamijam/components/sidebar.dart';
@@ -33,6 +34,7 @@ import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/presence_service.dart';
 import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
@@ -71,11 +73,12 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 
-class _HomeState extends State<Home> {
+class _HomeState extends State<Home> with WidgetsBindingObserver {
   late final TextEditingController _searchController;
   late final PlaybackModel _playback;
   late final DownloadsProvider _downloads;
   late final SettingsProvider _settings;
+  late final FriendsProvider _friends;
   late final VideoController _sidebarVideoController;
   Future<YTMusic>? _ytmusicFuture;
   YTMusic? _ytmusic;
@@ -134,13 +137,24 @@ class _HomeState extends State<Home> {
     _settings.addListener(_handleSettingsChanged);
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
-    unawaited(context.read<LikedSongsProvider>().refresh());
-    unawaited(context.read<PlaylistPinProvider>().refresh());
-    unawaited(context.read<EditedSongsProvider>().refresh());
-    unawaited(context.read<SavedPlaylistsProvider>().refresh());
-    unawaited(context.read<ProfileProvider>().refresh());
-    context.read<FriendsProvider>().start();
-    unawaited(context.read<SettingsProvider>().refreshHiddenPlaylists());
+    final likedSongs = context.read<LikedSongsProvider>();
+    final playlistPins = context.read<PlaylistPinProvider>();
+    final editedSongs = context.read<EditedSongsProvider>();
+    final savedPlaylists = context.read<SavedPlaylistsProvider>();
+    final profile = context.read<ProfileProvider>();
+    final settings = context.read<SettingsProvider>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(likedSongs.refresh());
+      unawaited(playlistPins.refresh());
+      unawaited(editedSongs.refresh());
+      unawaited(savedPlaylists.refresh());
+      unawaited(profile.refresh());
+      unawaited(settings.refreshHiddenPlaylists());
+    });
+    _friends = context.read<FriendsProvider>();
+    _friends.start();
+    WidgetsBinding.instance.addObserver(this);
+    PresenceService.startHeartbeat();
     final pendingDeepLink = widget.pendingDeepLink;
     if (pendingDeepLink != null && FirebaseAuth.instance.currentUser != null) {
       unawaited(_handleDeepLink(pendingDeepLink));
@@ -153,7 +167,25 @@ class _HomeState extends State<Home> {
     _playback.addListener(_handlePlaybackChanged);
     if (Platform.isWindows) {
       _playback.addListener(_updateTaskbarThumbnailToolbar);
-      _updateTaskbarThumbnailToolbar();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateTaskbarThumbnailToolbar();
+      });
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        PresenceService.startHeartbeat();
+        break;
+      case AppLifecycleState.detached:
+        unawaited(PresenceService.goOffline());
+        break;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        break;
     }
   }
 
@@ -185,31 +217,35 @@ class _HomeState extends State<Home> {
     _taskbarIsPlaying = isPlaying;
 
     if (!hasTrack) {
-      WindowsTaskbar.resetThumbnailToolbar();
+      try {
+        WindowsTaskbar.resetThumbnailToolbar();
+      } catch (_) {}
       return;
     }
 
-    WindowsTaskbar.setThumbnailToolbar([
-      ThumbnailToolbarButton(
-        ThumbnailToolbarAssetIcon('assets/icons/taskbar/previous.ico'),
-        'Previous',
-        () => _playback.playPrevious(),
-      ),
-      ThumbnailToolbarButton(
-        ThumbnailToolbarAssetIcon(
-          isPlaying
-              ? 'assets/icons/taskbar/pause.ico'
-              : 'assets/icons/taskbar/play.ico',
+    try {
+      WindowsTaskbar.setThumbnailToolbar([
+        ThumbnailToolbarButton(
+          ThumbnailToolbarAssetIcon('assets/icons/taskbar/previous.ico'),
+          'Previous',
+          () => _playback.playPrevious(),
         ),
-        isPlaying ? 'Pause' : 'Play',
-        () => _handlePlayPauseToggle(),
-      ),
-      ThumbnailToolbarButton(
-        ThumbnailToolbarAssetIcon('assets/icons/taskbar/next.ico'),
-        'Next',
-        () => _playback.playNext(),
-      ),
-    ]);
+        ThumbnailToolbarButton(
+          ThumbnailToolbarAssetIcon(
+            isPlaying
+                ? 'assets/icons/taskbar/pause.ico'
+                : 'assets/icons/taskbar/play.ico',
+          ),
+          isPlaying ? 'Pause' : 'Play',
+          () => _handlePlayPauseToggle(),
+        ),
+        ThumbnailToolbarButton(
+          ThumbnailToolbarAssetIcon('assets/icons/taskbar/next.ico'),
+          'Next',
+          () => _playback.playNext(),
+        ),
+      ]);
+    } catch (_) {}
   }
 
   Future<void> _showSkipSuggestionDialog(
@@ -1518,17 +1554,21 @@ class _HomeState extends State<Home> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(PresenceService.goOffline());
     _deepLinkSubscription?.cancel();
     _playback.removeListener(_handlePlaybackChanged);
     if (Platform.isWindows) {
       _playback.removeListener(_updateTaskbarThumbnailToolbar);
-      WindowsTaskbar.resetThumbnailToolbar();
+      try {
+        WindowsTaskbar.resetThumbnailToolbar();
+      } catch (_) {}
     }
     _settings.removeListener(_handleSettingsChanged);
     _youtubeExplode.close();
     _ytmusic?.close();
     _searchController.dispose();
-    context.read<FriendsProvider>().stop();
+    _friends.stop();
     super.dispose();
   }
 
@@ -1549,6 +1589,8 @@ class _HomeState extends State<Home> {
   }
 
   Future<void> _logout() async {
+    _friends.stop();
+    unawaited(PresenceService.goOffline());
     try {
       await _playback.switchToLocalEngine().timeout(const Duration(seconds: 5));
       await player.stop().timeout(const Duration(seconds: 5));
@@ -1577,10 +1619,14 @@ class _HomeState extends State<Home> {
       await _auth.signOut();
       PlaylistsPage.resetCache();
       if (!mounted) return;
-      AppFlushbar.success(context, 'Logged out successfully.');
+      try {
+        AppFlushbar.success(context, 'Logged out successfully.');
+      } catch (_) {}
     } catch (error) {
       if (!mounted) return;
-      AppFlushbar.error(context, 'Failed to log out: $error');
+      try {
+        AppFlushbar.error(context, 'Failed to log out: $error');
+      } catch (_) {}
     }
   }
 
@@ -2224,6 +2270,7 @@ class _HomeState extends State<Home> {
                     ],
                   ),
                   const RemoteSessionBanner(),
+                  const ListenAlongBanner(),
                   Expanded(
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,

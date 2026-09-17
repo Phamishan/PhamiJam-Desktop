@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/app_flushbar.dart';
@@ -25,7 +27,10 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
-    context.read<ProfileProvider>().refresh();
+    final profile = context.read<ProfileProvider>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(profile.refresh());
+    });
   }
 
   void _openPlaylist(String playlistId, String title, String? thumbnailUrl) {
