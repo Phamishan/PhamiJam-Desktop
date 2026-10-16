@@ -225,10 +225,21 @@ class PlaybackSessionSyncService {
   static Future<void> ackCommand(String commandDocId) async {
     final commands = _ownDoc?.collection('commands');
     if (commands == null) return;
-    try {
-      await commands.doc(commandDocId).delete();
-    } catch (error) {
-      debugPrint('PlaybackSessionSyncService: ackCommand failed: $error');
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await commands.doc(commandDocId).delete();
+        return;
+      } catch (error) {
+        debugPrint(
+          'PlaybackSessionSyncService: ackCommand failed (attempt '
+          '${attempt + 1}/3): $error',
+        );
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 300 * (attempt + 1)),
+          );
+        }
+      }
     }
   }
 }

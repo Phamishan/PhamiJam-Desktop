@@ -125,6 +125,10 @@
   - Added online/offline status for friends
   - Added Listen Along (needs testing)
   - Fixed Jamstats ✨ issues
+- 1.2.2 - 16/10/2026
+  - Listen Along fix
+  - Added a way to submit app logs
+  - Fixed remote control
 
 ## Screenshots:
 

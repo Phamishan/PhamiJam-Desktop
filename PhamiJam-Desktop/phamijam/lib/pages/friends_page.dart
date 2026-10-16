@@ -339,11 +339,11 @@ class _FriendTile extends StatelessWidget {
                 nowPlaying != null &&
                 nowPlaying.isLive &&
                 nowPlaying.isPlaying &&
-                nowPlaying.track != null;
+                nowPlaying.currentTrack != null;
 
             String? subtitle;
             if (isActivelyPlaying) {
-              final track = nowPlaying.track!;
+              final track = nowPlaying.currentTrack!;
               final song = (track['songName'] as String?) ?? '';
               final artist = (track['artistName'] as String?) ?? '';
               subtitle = song.isEmpty

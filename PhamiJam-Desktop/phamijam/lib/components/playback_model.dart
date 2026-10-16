@@ -197,64 +197,100 @@ class PlaybackModel extends ChangeNotifier {
     stopListenAlong();
   }
 
+  void _applyListenAlongQueue(
+    List<Map<String, dynamic>> items,
+    int startIndex,
+  ) {
+    if (items.isEmpty || startIndex < 0 || startIndex >= items.length) return;
+    _sourcePlaylistId = null;
+    _sourcePlaylistTitle = null;
+    _sourcePlaylistPrivacyStatus = null;
+    _playlistItems = List<dynamic>.from(items);
+    _playOrder = List<int>.generate(items.length, (i) => i);
+    _currentOrderIndex = startIndex;
+    _refreshQueueWindow();
+    unawaited(_prefetchAhead());
+    notifyListeners();
+    _persistQueueState();
+  }
+
   Future<void> _applyFriendNowPlaying(FriendNowPlaying? data) async {
     if (_listenAlongFriendUid == null) return;
-    final track = data?.track;
-    if (track == null) {
+    final currentTrack = data?.currentTrack;
+    if (currentTrack == null) {
       if (_listenAlongLastAppliedVideoId != null && isPlaying) {
         await _localTogglePlayPause();
       }
       return;
     }
-    final videoId = track['videoId'] as String? ?? '';
+    final videoId = currentTrack['videoId'] as String? ?? '';
     if (videoId.isEmpty) return;
 
-    final isNewTrack = videoId != _listenAlongLastAppliedVideoId;
-    if (isNewTrack) {
-      _listenAlongLastAppliedVideoId = videoId;
-      setSongName((track['songName'] as String?) ?? 'Unknown song');
-      setArtist((track['artistName'] as String?) ?? 'Unknown artist');
-      setArtistId(track['artistId'] as String?);
-      setCurrentSongPath('yt:$videoId');
-      await playYouTubeVideoById(videoId);
-      unawaited(_fetchAndApplyYouTubeThumbnail(videoId));
-    }
-
-    if (_listenAlongFriendUid == null) return;
-    if (data!.isPlaying != isPlaying) {
-      await _localTogglePlayPause();
-    }
-
-    final estimatedPosition = data.isPlaying
+    final estimatedPosition = data!.isPlaying
         ? data.position + DateTime.now().difference(data.updatedAt)
         : data.position;
     final target = estimatedPosition < Duration.zero
         ? Duration.zero
         : estimatedPosition;
-    final drift = (target - progress).abs();
-    if (isNewTrack || drift > const Duration(seconds: 3)) {
-      if (_engine == PlaybackEngine.youtube) {
-        await _youtubeSeek?.call(target);
-      } else {
-        await player.seek(target);
+
+    final isNewTrack = videoId != _listenAlongLastAppliedVideoId;
+    _applyListenAlongQueue(data.queue, data.queueIndex);
+
+    if (isNewTrack) {
+      _listenAlongLastAppliedVideoId = videoId;
+      _applyDisplayMetadata(currentTrack);
+      setCurrentSongPath('yt:$videoId');
+      await playYouTubeVideoById(videoId, startAt: target);
+      unawaited(_fetchAndApplyYouTubeThumbnail(videoId));
+      _forceDiscordPresenceRefreshAfterTrackChange();
+    } else {
+      final drift = (target - progress).abs();
+      if (drift > const Duration(seconds: 3)) {
+        if (_engine == PlaybackEngine.youtube) {
+          await _youtubeSeek?.call(target);
+        } else {
+          await player.seek(target);
+        }
+        setProgress(target);
+        _scheduleDiscordPresenceSync();
       }
-      setProgress(target);
+    }
+
+    if (_listenAlongFriendUid == null) return;
+    if (data.isPlaying != isPlaying) {
+      await _localTogglePlayPause();
     }
   }
 
   void _pushNowPlayingIfActive() {
     if (_listenAlongFriendUid != null || _isRemoteControlling) return;
-    final videoId = currentYouTubeVideoId;
-    if (videoId == null || videoId.isEmpty) return;
+    if (_currentOrderIndex < 0 || _currentOrderIndex >= _playOrder.length) {
+      return;
+    }
+    final unfiltered = <Map<String, dynamic>>[
+      for (final sourceIndex in _playOrder)
+        if (_playlistItems[sourceIndex] is Map<String, dynamic>)
+          _playlistItems[sourceIndex] as Map<String, dynamic>,
+    ];
+    if (_currentOrderIndex >= unfiltered.length) return;
+    final currentItem = unfiltered[_currentOrderIndex];
+    final currentVideoId = currentItem['videoId'] as String?;
+    if (currentVideoId == null || currentVideoId.isEmpty) return;
+
+    final syncable = <Map<String, dynamic>>[];
+    var syncableIndex = -1;
+    for (var i = 0; i < unfiltered.length; i++) {
+      final videoId = unfiltered[i]['videoId'] as String?;
+      if (videoId == null || videoId.isEmpty) continue;
+      if (i == _currentOrderIndex) syncableIndex = syncable.length;
+      syncable.add(unfiltered[i]);
+    }
+    if (syncableIndex < 0) return;
+
     unawaited(
       ListenAlongService.pushNowPlaying(
-        track: {
-          'videoId': videoId,
-          'songName': songName,
-          'artistName': artistName,
-          'artistId': currentArtistId,
-          'durationSeconds': duration?.inSeconds ?? 0,
-        },
+        queue: syncable,
+        queueIndex: syncableIndex,
         position: displayedProgress,
         isPlaying: isPlaying,
       ),
@@ -372,6 +408,7 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> _handleIncomingCommands(List<RemoteCommand> commands) async {
     if (commands.isNotEmpty) _crossfade.cancel();
     for (final command in commands) {
+      await PlaybackSessionSyncService.ackCommand(command.id);
       switch (command.type) {
         case RemoteCommandType.play:
           if (!isPlaying) await _localTogglePlayPause();
@@ -394,7 +431,6 @@ class PlaybackModel extends ChangeNotifier {
           if (track != null) await _applyRemotePlayTrack(track);
           break;
       }
-      await PlaybackSessionSyncService.ackCommand(command.id);
     }
   }
 

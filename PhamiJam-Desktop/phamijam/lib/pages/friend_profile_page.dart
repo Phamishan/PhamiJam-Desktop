@@ -120,11 +120,11 @@ class _FriendHeader extends StatelessWidget {
                 nowPlaying != null &&
                 nowPlaying.isLive &&
                 nowPlaying.isPlaying &&
-                nowPlaying.track != null;
+                nowPlaying.currentTrack != null;
 
             String statusText;
             if (isActivelyPlaying) {
-              final track = nowPlaying.track!;
+              final track = nowPlaying.currentTrack!;
               final song = (track['songName'] as String?) ?? '';
               final artist = (track['artistName'] as String?) ?? '';
               statusText = song.isEmpty

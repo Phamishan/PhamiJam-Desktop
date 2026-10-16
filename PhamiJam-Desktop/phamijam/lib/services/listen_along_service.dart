@@ -3,20 +3,25 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 class FriendNowPlaying {
-  final Map<String, dynamic>? track;
+  final List<Map<String, dynamic>> queue;
+  final int queueIndex;
   final Duration position;
   final bool isPlaying;
   final DateTime updatedAt;
 
   const FriendNowPlaying({
-    required this.track,
+    required this.queue,
+    required this.queueIndex,
     required this.position,
     required this.isPlaying,
     required this.updatedAt,
   });
 
+  Map<String, dynamic>? get currentTrack =>
+      (queueIndex >= 0 && queueIndex < queue.length) ? queue[queueIndex] : null;
+
   bool get isLive =>
-      track != null &&
+      currentTrack != null &&
       DateTime.now().difference(updatedAt) < const Duration(minutes: 2);
 }
 
@@ -40,25 +45,51 @@ class ListenAlongService {
           .collection('status')
           .doc('nowPlaying');
 
+  static Map<String, dynamic> _trackToJson(Map<String, dynamic> item) => {
+    'v': item['videoId'] as String?,
+    't': (item['songName'] ?? '').toString(),
+    'a': (item['artistName'] ?? '').toString(),
+    'c': item['artistId'] as String?,
+    'd': ((item['durationSeconds'] as int?) ?? 0) * 1000,
+  };
+
+  static Map<String, dynamic>? _trackFromJson(dynamic json) {
+    if (json is! Map) return null;
+    final videoId = json['v'];
+    if (videoId is! String || videoId.isEmpty) return null;
+    return {
+      'videoId': videoId,
+      'songName': json['t'] is String ? json['t'] as String : '',
+      'artistName': json['a'] is String ? json['a'] as String : '',
+      'artistId': json['c'] as String?,
+      'durationSeconds': json['d'] is int ? (json['d'] as int) ~/ 1000 : 0,
+    };
+  }
+
   static Future<void> pushNowPlaying({
-    required Map<String, dynamic> track,
+    required List<Map<String, dynamic>> queue,
+    required int queueIndex,
     required Duration position,
     required bool isPlaying,
   }) async {
     final doc = _ownDoc;
     if (doc == null) return;
-    final videoId = track['videoId'] as String?;
-    if (videoId == null || videoId.isEmpty) return;
+    if (queueIndex < 0 || queueIndex >= queue.length) return;
+    final currentVideoId = queue[queueIndex]['videoId'] as String?;
+    if (currentVideoId == null || currentVideoId.isEmpty) return;
+
+    final syncableQueue = queue
+        .where((item) => (item['videoId'] as String?)?.isNotEmpty ?? false)
+        .toList();
+    final syncableIndex = syncableQueue.indexWhere(
+      (item) => item['videoId'] == currentVideoId,
+    );
+    if (syncableIndex < 0) return;
 
     try {
       await doc.set({
-        'track': {
-          'v': videoId,
-          't': (track['songName'] ?? '').toString(),
-          'a': (track['artistName'] ?? '').toString(),
-          'c': track['artistId'] as String?,
-          'd': ((track['durationSeconds'] as int?) ?? 0) * 1000,
-        },
+        'queue': syncableQueue.map(_trackToJson).toList(),
+        'queueIndex': syncableIndex,
         'positionMs': position.inMilliseconds,
         'isPlaying': isPlaying,
         'updatedAt': FieldValue.serverTimestamp(),
@@ -73,7 +104,7 @@ class ListenAlongService {
     if (doc == null) return;
     try {
       await doc.set({
-        'track': null,
+        'queue': [],
         'isPlaying': false,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -87,32 +118,20 @@ class ListenAlongService {
       final data = snapshot.data();
       if (data == null) return null;
 
-      Map<String, dynamic>? track;
-      final trackJson = data['track'];
-      if (trackJson is Map) {
-        final videoId = trackJson['v'];
-        if (videoId is String && videoId.isNotEmpty) {
-          track = {
-            'videoId': videoId,
-            'songName': trackJson['t'] is String
-                ? trackJson['t'] as String
-                : '',
-            'artistName': trackJson['a'] is String
-                ? trackJson['a'] as String
-                : '',
-            'artistId': trackJson['c'] as String?,
-            'durationSeconds': trackJson['d'] is int
-                ? (trackJson['d'] as int) ~/ 1000
-                : 0,
-          };
-        }
-      }
+      final queue = ((data['queue'] as List?) ?? [])
+          .map(_trackFromJson)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      if (queue.isEmpty) return null;
+      final queueIndex = data['queueIndex'] as int? ?? 0;
+      if (queueIndex < 0 || queueIndex >= queue.length) return null;
 
       final updatedAt = data['updatedAt'];
       if (updatedAt is! Timestamp) return null;
 
       return FriendNowPlaying(
-        track: track,
+        queue: queue,
+        queueIndex: queueIndex,
         position: Duration(milliseconds: data['positionMs'] as int? ?? 0),
         isPlaying: data['isPlaying'] as bool? ?? false,
         updatedAt: updatedAt.toDate(),

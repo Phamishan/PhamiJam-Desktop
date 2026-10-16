@@ -23,6 +23,7 @@ import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/providers/theme_provider.dart';
 import 'package:phamijam/services/deep_link_service.dart';
 import 'package:phamijam/services/download_service.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/protocol_handler_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
@@ -63,6 +64,7 @@ Future<void> _recoverFromCorruptedPreferences() async {
 void main(List<String> args) async {
   _applyGrpcDnsResolverWorkaround();
   WidgetsFlutterBinding.ensureInitialized();
+  await LogService.instance.init();
   await _recoverFromCorruptedPreferences();
   MediaKit.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);

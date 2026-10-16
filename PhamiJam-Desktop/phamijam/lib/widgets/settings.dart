@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/components/changelog_dialog.dart';
 import 'package:phamijam/components/manage_playlist_visibility_dialog.dart';
 import 'package:phamijam/models/app_update_info.dart';
@@ -12,9 +15,14 @@ import 'package:phamijam/providers/theme_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_drive_service.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/update_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+const String _logSubmissionEmail = 'phamishan93@gmail.com';
+const int _maxLogEmailBodyChars = 6000;
 
 enum _UpdateState {
   idle,
@@ -1078,6 +1086,89 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _submitLog() async {
+    final logText = await LogService.instance.fullLogText();
+    if (logText.trim().isEmpty) {
+      if (mounted) AppFlushbar.error(context, 'No log recorded yet.');
+      return;
+    }
+
+    final body = logText.length > _maxLogEmailBodyChars
+        ? '(showing the most recent part of the log)\n\n'
+              '${logText.substring(logText.length - _maxLogEmailBodyChars)}'
+        : logText;
+
+    final mailtoUri = Uri(
+      scheme: 'mailto',
+      path: _logSubmissionEmail,
+      queryParameters: {
+        'subject': 'PhamiJam Desktop log - ${DateTime.now().toIso8601String()}',
+        'body': 'Platform: ${Platform.operatingSystem}\n\n$body',
+      },
+    );
+
+    final launched = await launchUrl(mailtoUri);
+    if (!launched) {
+      await Clipboard.setData(ClipboardData(text: logText));
+      if (mounted) {
+        AppFlushbar.error(
+          context,
+          'No email app found - log copied to clipboard instead. '
+          'Paste it into an email to $_logSubmissionEmail.',
+        );
+      }
+    }
+  }
+
+  Widget _buildSubmitLogCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: _submitLog,
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                Icon(Icons.bug_report_rounded, color: colorScheme.onSurface),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Submit log',
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Send app logs to $_logSubmissionEmail',
+                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, color: colorScheme.onSurface),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   List<Widget> _buildUpdateSection(ColorScheme colorScheme) {
     switch (_updateState) {
       case _UpdateState.idle:
@@ -1219,6 +1310,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildDriveCard(),
         const SizedBox(height: 10),
         _buildVersionInfoCard(),
+        const SizedBox(height: 10),
+        _buildSubmitLogCard(),
       ],
     );
   }
