@@ -693,6 +693,65 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _buildShowActivityCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Consumer<SettingsProvider>(
+      builder: (context, settings, _) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.dynamic_feed_rounded, color: colorScheme.onSurface),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Show activity to friends',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Let friends see what you've played in their Activity feed",
+                      style: TextStyle(color: colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: settings.showActivityEnabled,
+                onChanged: (value) async {
+                  try {
+                    await settings.setShowActivityEnabled(value);
+                  } catch (error) {
+                    if (context.mounted) {
+                      AppFlushbar.error(
+                        context,
+                        "Couldn't update activity visibility: $error",
+                      );
+                    }
+                  }
+                },
+                activeThumbColor: colorScheme.onPrimary,
+                inactiveThumbColor: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildLibraryCard() {
     final colorScheme = Theme.of(context).colorScheme;
     return Material(
@@ -1300,6 +1359,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildCrossfadeCard(),
         const SizedBox(height: 10),
         _buildDiscordRichPresenceCard(),
+        const SizedBox(height: 10),
+        _buildShowActivityCard(),
         const SizedBox(height: 10),
         _buildLibraryCard(),
         const SizedBox(height: 10),

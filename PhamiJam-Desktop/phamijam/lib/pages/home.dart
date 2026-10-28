@@ -11,6 +11,7 @@ import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_interface.dart';
+import 'package:phamijam/pages/friend_activity_page.dart';
 import 'package:phamijam/pages/friend_profile_page.dart';
 import 'package:phamijam/pages/friends_page.dart';
 import 'package:phamijam/pages/fullscreen_video_page.dart';
@@ -150,6 +151,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       unawaited(savedPlaylists.refresh());
       unawaited(profile.refresh());
       unawaited(settings.refreshHiddenPlaylists());
+      unawaited(settings.refreshShowActivityEnabled());
     });
     _friends = context.read<FriendsProvider>();
     _friends.start();
@@ -1015,6 +1017,17 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                             playlist['privacyStatus'] = privacyStatus;
                           });
                         },
+                  onCoverChanged: playlistId == null
+                      ? null
+                      : (customCoverUrl) {
+                          setState(() {
+                            playlist['customCoverUrl'] = customCoverUrl;
+                            playlist['thumbnailUrl'] =
+                                customCoverUrl ??
+                                playlist['originalThumbnailUrl'] ??
+                                playlist['thumbnailUrl'];
+                          });
+                        },
                   onDeleted: playlistId == null
                       ? null
                       : () {
@@ -1525,6 +1538,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (_selectedTab == 'friend_profile') {
       final uid = (_selectedTabExtra?['uid'] as String?) ?? '';
       return FriendProfilePage(uid: uid, onTabSelected: _onSidebarTabSelected);
+    }
+
+    if (_selectedTab == 'friend_activity') {
+      return FriendActivityPage(onTabSelected: _onSidebarTabSelected);
     }
 
     if (_selectedTab == 'search_profiles') {

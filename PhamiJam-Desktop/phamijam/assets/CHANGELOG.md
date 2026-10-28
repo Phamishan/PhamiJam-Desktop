@@ -129,6 +129,10 @@
   - Listen Along fix
   - Added a way to submit app logs
   - Fixed remote control
+- 1.2.3 - 28/10/2026
+  - Added a friend activity feed
+  - Added a setting to hide your activity from friends
+  - Added edit playlist cover image
 
 ## Screenshots:
 

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:phamijam/services/google_auth_service.dart';
+import 'package:phamijam/services/playlist_cover_service.dart';
 
 class YoutubePlaylistService {
   YoutubePlaylistService._();
@@ -136,7 +137,26 @@ class YoutubePlaylistService {
       pageToken = payload['nextPageToken'] as String?;
     } while (pageToken != null);
 
+    Map<String, String> overrides = const {};
+    try {
+      overrides = await PlaylistCoverService.fetchAll();
+    } catch (_) {}
+    for (final playlist in playlists) {
+      _applyCoverOverride(playlist, overrides[playlist['playlistId']]);
+    }
+
     return playlists;
+  }
+
+  static void _applyCoverOverride(
+    Map<String, dynamic> playlist,
+    String? customCoverUrl,
+  ) {
+    playlist['originalThumbnailUrl'] = playlist['thumbnailUrl'];
+    playlist['customCoverUrl'] = customCoverUrl;
+    if (customCoverUrl != null && customCoverUrl.isNotEmpty) {
+      playlist['thumbnailUrl'] = customCoverUrl;
+    }
   }
 
   static Future<Map<String, dynamic>?> fetchPlaylistMetadata(
@@ -156,7 +176,12 @@ class YoutubePlaylistService {
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     final items = (payload['items'] as List?) ?? const [];
     if (items.isEmpty) return null;
-    return _normalizePlaylistItem(items.first as Map);
+    final playlist = _normalizePlaylistItem(items.first as Map);
+    try {
+      final override = await PlaylistCoverService.fetchOne(playlistId);
+      _applyCoverOverride(playlist, override);
+    } catch (_) {}
+    return playlist;
   }
 
   static Future<void> addVideoToPlaylist({

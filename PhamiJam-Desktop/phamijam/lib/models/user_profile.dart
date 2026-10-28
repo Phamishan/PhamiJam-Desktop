@@ -8,6 +8,7 @@ class UserProfile {
   final String? avatarUrl;
   final int gridLayoutVersion;
   final List<GridTile> gridLayout;
+  final bool showActivityEnabled;
 
   const UserProfile({
     this.displayNameOverride,
@@ -17,6 +18,7 @@ class UserProfile {
     this.avatarUrl,
     this.gridLayoutVersion = 1,
     this.gridLayout = const [],
+    this.showActivityEnabled = true,
   });
 
   static const empty = UserProfile();
@@ -29,6 +31,7 @@ class UserProfile {
     'avatarUrl': avatarUrl,
     'gridLayoutVersion': gridLayoutVersion,
     'gridLayout': gridLayout.map((tile) => tile.toMap()).toList(),
+    'showActivityEnabled': showActivityEnabled,
   };
 
   static UserProfile fromMap(dynamic raw) {
@@ -45,6 +48,7 @@ class UserProfile {
       avatarUrl: raw['avatarUrl'] as String?,
       gridLayoutVersion: raw['gridLayoutVersion'] as int? ?? 1,
       gridLayout: tiles,
+      showActivityEnabled: raw['showActivityEnabled'] as bool? ?? true,
     );
   }
 
@@ -55,6 +59,7 @@ class UserProfile {
     String? avatarChoice,
     String? avatarUrl,
     List<GridTile>? gridLayout,
+    bool? showActivityEnabled,
   }) => UserProfile(
     displayNameOverride: displayNameOverride ?? this.displayNameOverride,
     username: username ?? this.username,
@@ -63,5 +68,6 @@ class UserProfile {
     avatarUrl: avatarUrl ?? this.avatarUrl,
     gridLayoutVersion: gridLayoutVersion,
     gridLayout: gridLayout ?? this.gridLayout,
+    showActivityEnabled: showActivityEnabled ?? this.showActivityEnabled,
   );
 }

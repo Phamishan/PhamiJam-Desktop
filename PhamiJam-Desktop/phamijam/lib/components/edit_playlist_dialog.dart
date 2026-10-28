@@ -1,5 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 
 Future<void> showEditPlaylistDialog(
@@ -8,14 +12,20 @@ Future<void> showEditPlaylistDialog(
   required String initialTitle,
   required String initialDescription,
   required String initialPrivacyStatus,
+  String initialThumbnailUrl = '',
+  String? initialCustomCoverUrl,
   required void Function(String title, String description, String privacyStatus)
   onUpdated,
+  void Function(String? customCoverUrl)? onCoverChanged,
 }) {
   final formKey = GlobalKey<FormState>();
   String title = initialTitle;
   String description = initialDescription;
   String privacyStatus = initialPrivacyStatus;
+  String thumbnailUrl = initialThumbnailUrl;
+  String? customCoverUrl = initialCustomCoverUrl;
   bool isSaving = false;
+  bool isUploadingCover = false;
 
   return showDialog<void>(
     context: context,
@@ -23,6 +33,59 @@ Future<void> showEditPlaylistDialog(
       return StatefulBuilder(
         builder: (innerContext, setState) {
           final colorScheme = Theme.of(innerContext).colorScheme;
+
+          Future<void> pickCover() async {
+            final picked = await ImagePicker().pickImage(
+              source: ImageSource.gallery,
+              maxWidth: 1024,
+              maxHeight: 1024,
+              imageQuality: 85,
+            );
+            if (picked == null) return;
+            setState(() => isUploadingCover = true);
+            try {
+              final url = await PlaylistCoverService.upload(
+                playlistId,
+                File(picked.path),
+              );
+              setState(() {
+                thumbnailUrl = url;
+                customCoverUrl = url;
+                isUploadingCover = false;
+              });
+              onCoverChanged?.call(url);
+            } catch (error) {
+              setState(() => isUploadingCover = false);
+              if (innerContext.mounted) {
+                AppFlushbar.error(
+                  innerContext,
+                  "Couldn't update cover image: $error",
+                );
+              }
+            }
+          }
+
+          Future<void> removeCover() async {
+            setState(() => isUploadingCover = true);
+            try {
+              await PlaylistCoverService.remove(playlistId);
+              setState(() {
+                thumbnailUrl = initialThumbnailUrl;
+                customCoverUrl = null;
+                isUploadingCover = false;
+              });
+              onCoverChanged?.call(null);
+            } catch (error) {
+              setState(() => isUploadingCover = false);
+              if (innerContext.mounted) {
+                AppFlushbar.error(
+                  innerContext,
+                  "Couldn't remove cover image: $error",
+                );
+              }
+            }
+          }
+
           return AlertDialog(
             title: const Text('Edit Playlist'),
             content: SingleChildScrollView(
@@ -31,6 +94,62 @@ Future<void> showEditPlaylistDialog(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    Center(
+                      child: GestureDetector(
+                        onTap: isUploadingCover ? null : pickCover,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: SizedBox(
+                                width: 96,
+                                height: 96,
+                                child: thumbnailUrl.isEmpty
+                                    ? Container(
+                                        color: colorScheme.surfaceContainerHigh,
+                                      )
+                                    : Image.network(
+                                        thumbnailUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) => Container(
+                                          color: colorScheme.surfaceContainerHigh,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                            Container(
+                              width: 96,
+                              height: 96,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                color: Colors.black.withValues(alpha: 0.35),
+                              ),
+                              alignment: Alignment.center,
+                              child: isUploadingCover
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.camera_alt_rounded,
+                                      color: Colors.white,
+                                    ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (customCoverUrl != null && customCoverUrl!.isNotEmpty)
+                      TextButton(
+                        onPressed: isUploadingCover ? null : removeCover,
+                        child: const Text('Remove custom cover'),
+                      ),
+                    const SizedBox(height: 8),
                     TextFormField(
                       initialValue: initialTitle,
                       decoration: const InputDecoration(labelText: 'Title'),

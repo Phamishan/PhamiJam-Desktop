@@ -13,6 +13,7 @@ class HomePlaylistCard extends StatefulWidget {
   final VoidCallback? onTogglePin;
   final void Function(String title, String description, String privacyStatus)?
   onEdited;
+  final void Function(String? customCoverUrl)? onCoverChanged;
   final VoidCallback? onDeleted;
 
   const HomePlaylistCard({
@@ -23,6 +24,7 @@ class HomePlaylistCard extends StatefulWidget {
     this.isPinned = false,
     this.onTogglePin,
     this.onEdited,
+    this.onCoverChanged,
     this.onDeleted,
     this.width = 148,
   });
@@ -76,9 +78,12 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
         initialDescription: (widget.playlist['description'] as String?) ?? '',
         initialPrivacyStatus:
             (widget.playlist['privacyStatus'] as String?) ?? 'public',
+        initialThumbnailUrl: (widget.playlist['thumbnailUrl'] as String?) ?? '',
+        initialCustomCoverUrl: widget.playlist['customCoverUrl'] as String?,
         onUpdated: (title, description, privacyStatus) {
           widget.onEdited?.call(title, description, privacyStatus);
         },
+        onCoverChanged: widget.onCoverChanged,
       );
     } else if (value == 'delete') {
       if (playlistId == null) return;

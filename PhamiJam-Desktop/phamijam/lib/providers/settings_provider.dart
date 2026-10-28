@@ -1,5 +1,7 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:phamijam/services/hidden_playlists_service.dart';
+import 'package:phamijam/services/profile_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const String _suggestRemovingSkippedSongsKey =
@@ -11,6 +13,7 @@ const String _discordRichPresenceEnabledKey =
     'phamijam.discord_rich_presence_enabled';
 const String _crossfadeEnabledKey = 'phamijam.crossfade_enabled';
 const String _crossfadeDurationMsKey = 'phamijam.crossfade_duration_ms';
+const String _showActivityEnabledKey = 'phamijam.show_activity_enabled';
 
 enum SearchEngine {
   youtubeMusic,
@@ -30,12 +33,14 @@ class SettingsProvider extends ChangeNotifier {
   bool _discordRichPresenceEnabled = false;
   bool _crossfadeEnabled = false;
   int _crossfadeDurationMs = 4000;
+  bool _showActivityEnabled = true;
 
   bool get suggestRemovingSkippedSongs => _suggestRemovingSkippedSongs;
   SearchEngine get searchEngine => _searchEngine;
   bool get autoplayEnabled => _autoplayEnabled;
   bool get discordRichPresenceEnabled => _discordRichPresenceEnabled;
   bool get crossfadeEnabled => _crossfadeEnabled;
+  bool get showActivityEnabled => _showActivityEnabled;
   int get crossfadeDurationMs => _crossfadeDurationMs;
   Duration get crossfadeDuration =>
       Duration(milliseconds: _crossfadeDurationMs);
@@ -75,7 +80,42 @@ class SettingsProvider extends ChangeNotifier {
     if (savedCrossfadeDurationMs != null) {
       _crossfadeDurationMs = savedCrossfadeDurationMs.clamp(1000, 12000);
     }
+    final savedShowActivity = prefs.getBool(_showActivityEnabledKey);
+    if (savedShowActivity != null) {
+      _showActivityEnabled = savedShowActivity;
+    }
     notifyListeners();
+  }
+
+  Future<void> refreshShowActivityEnabled() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    try {
+      final profile = await ProfileService.fetchProfile(uid);
+      _showActivityEnabled = profile.showActivityEnabled;
+      notifyListeners();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_showActivityEnabledKey, _showActivityEnabled);
+    } catch (error) {
+      debugPrint('SettingsProvider: refreshShowActivityEnabled failed: $error');
+    }
+  }
+
+  Future<void> setShowActivityEnabled(bool value) async {
+    if (value == _showActivityEnabled) return;
+    final previous = _showActivityEnabled;
+    _showActivityEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showActivityEnabledKey, value);
+    try {
+      await ProfileService.setShowActivity(value);
+    } catch (error) {
+      _showActivityEnabled = previous;
+      notifyListeners();
+      await prefs.setBool(_showActivityEnabledKey, previous);
+      rethrow;
+    }
   }
 
   Future<void> setAutoplayEnabled(bool value) async {

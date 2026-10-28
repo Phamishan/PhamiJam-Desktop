@@ -677,6 +677,8 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     required String initialTitle,
     required String initialDescription,
     required String initialPrivacyStatus,
+    String initialThumbnailUrl = '',
+    String? initialCustomCoverUrl,
   }) {
     showEditPlaylistDialog(
       context,
@@ -684,6 +686,8 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       initialTitle: initialTitle,
       initialDescription: initialDescription,
       initialPrivacyStatus: initialPrivacyStatus,
+      initialThumbnailUrl: initialThumbnailUrl,
+      initialCustomCoverUrl: initialCustomCoverUrl,
       onUpdated: (title, description, privacyStatus) {
         if (!mounted) return;
         setState(() {
@@ -700,6 +704,24 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
           _userPlaylists,
         );
         unawaited(_fetchUserPlaylists(forceRefresh: true));
+      },
+      onCoverChanged: (customCoverUrl) {
+        if (!mounted) return;
+        setState(() {
+          for (final playlist in _userPlaylists) {
+            if ((playlist['playlistId'] as String?) == playlistId) {
+              playlist['customCoverUrl'] = customCoverUrl;
+              playlist['thumbnailUrl'] =
+                  customCoverUrl ??
+                  playlist['originalThumbnailUrl'] ??
+                  playlist['thumbnailUrl'];
+              break;
+            }
+          }
+        });
+        _cachedUserPlaylists = List<Map<String, dynamic>>.from(
+          _userPlaylists,
+        );
       },
     );
   }
@@ -892,6 +914,10 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                           initialTitle: title,
                           initialDescription: description,
                           initialPrivacyStatus: privacyStatus,
+                          initialThumbnailUrl:
+                              (playlist['thumbnailUrl'] as String?) ?? '',
+                          initialCustomCoverUrl:
+                              playlist['customCoverUrl'] as String?,
                         );
                       }
 

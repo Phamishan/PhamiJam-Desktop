@@ -42,6 +42,11 @@ class FriendsPage extends StatelessWidget {
                         ),
                       ),
                       IconButton(
+                        icon: const Icon(Icons.dynamic_feed_rounded),
+                        tooltip: 'Activity',
+                        onPressed: () => onTabSelected?.call('friend_activity'),
+                      ),
+                      IconButton(
                         icon: const Icon(Icons.person_search_rounded),
                         onPressed: () => onTabSelected?.call('search_profiles'),
                       ),
