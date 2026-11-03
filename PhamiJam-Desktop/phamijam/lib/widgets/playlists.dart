@@ -10,6 +10,7 @@ import 'package:phamijam/components/edit_playlist_dialog.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
@@ -377,10 +378,38 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     }
   }
 
+  StreamSubscription<Map<String, String>>? _playlistCoverSubscription;
+
   @override
   void initState() {
     super.initState();
     _playlistSearchController = TextEditingController();
+    _playlistCoverSubscription = PlaylistCoverService.watchAll().listen(
+      _applyPlaylistCoverOverrides,
+    );
+  }
+
+  void _applyPlaylistCoverOverrides(Map<String, String> overrides) {
+    void merge(Map<String, dynamic> playlist) {
+      final playlistId = playlist['playlistId'] as String?;
+      if (playlistId == null) return;
+      final customCoverUrl = overrides[playlistId];
+      playlist['customCoverUrl'] = customCoverUrl;
+      playlist['thumbnailUrl'] =
+          customCoverUrl ??
+          playlist['originalThumbnailUrl'] ??
+          playlist['thumbnailUrl'];
+    }
+
+    for (final playlist in _cachedUserPlaylists) {
+      merge(playlist);
+    }
+    if (!mounted || _userPlaylists.isEmpty) return;
+    setState(() {
+      for (final playlist in _userPlaylists) {
+        merge(playlist);
+      }
+    });
   }
 
   @override
@@ -700,9 +729,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
             }
           }
         });
-        _cachedUserPlaylists = List<Map<String, dynamic>>.from(
-          _userPlaylists,
-        );
+        _cachedUserPlaylists = List<Map<String, dynamic>>.from(_userPlaylists);
         unawaited(_fetchUserPlaylists(forceRefresh: true));
       },
       onCoverChanged: (customCoverUrl) {
@@ -719,9 +746,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
             }
           }
         });
-        _cachedUserPlaylists = List<Map<String, dynamic>>.from(
-          _userPlaylists,
-        );
+        _cachedUserPlaylists = List<Map<String, dynamic>>.from(_userPlaylists);
       },
     );
   }
@@ -1004,8 +1029,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                           errorBuilder:
                                               (context, error, stackTrace) =>
                                                   Icon(
-                                                    Icons
-                                                        .playlist_play_rounded,
+                                                    Icons.playlist_play_rounded,
                                                     color:
                                                         colorScheme.onSurface,
                                                   ),
@@ -1032,11 +1056,10 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                   children: [
                                     Container(
                                       decoration: BoxDecoration(
-                                        color: colorScheme.onSurface
-                                            .withValues(alpha: 0.38),
-                                        borderRadius: BorderRadius.circular(
-                                          6,
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.38,
                                         ),
+                                        borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: IconButton(
                                         icon: Icon(
@@ -1072,8 +1095,9 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                                     const SizedBox(width: 8),
                                     Container(
                                       decoration: BoxDecoration(
-                                        color: colorScheme.onSurface
-                                            .withValues(alpha: 0.38),
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.38,
+                                        ),
                                         borderRadius: BorderRadius.circular(6),
                                       ),
                                       child: IconButton(
@@ -1284,6 +1308,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   @override
   void dispose() {
     _playlistSearchController.dispose();
+    _playlistCoverSubscription?.cancel();
     _ytmusic?.close();
     super.dispose();
   }

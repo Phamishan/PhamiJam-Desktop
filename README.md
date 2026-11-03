@@ -133,6 +133,11 @@
   - Added a friend activity feed
   - Added a setting to hide your activity from friends
   - Added edit playlist cover image
+- 1.2.4 - 03/11/2026
+  - Fixed share links
+  - Fixed Listen Along
+  - Fixed playlist cover images not updating on other devices
+  - Added a Listen Along button to Discord Rich Presence
 
 ## Screenshots:
 

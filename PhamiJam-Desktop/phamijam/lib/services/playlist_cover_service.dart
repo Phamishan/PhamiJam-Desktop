@@ -36,6 +36,22 @@ class PlaylistCoverService {
     return result;
   }
 
+  static Stream<Map<String, String>> watchAll() {
+    final collection = _collection;
+    if (collection == null) return const Stream.empty();
+    return collection.snapshots().map((snapshot) {
+      final result = <String, String>{};
+      for (final doc in snapshot.docs) {
+        final playlistId = doc.data()['playlistId'];
+        final url = doc.data()['url'];
+        if (playlistId is String && url is String && url.isNotEmpty) {
+          result[playlistId] = url;
+        }
+      }
+      return result;
+    });
+  }
+
   static Future<String?> fetchOne(String playlistId) async {
     final collection = _collection;
     if (collection == null) return null;

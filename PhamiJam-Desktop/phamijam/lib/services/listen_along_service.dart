@@ -8,6 +8,8 @@ class FriendNowPlaying {
   final Duration position;
   final bool isPlaying;
   final DateTime updatedAt;
+  final Duration? trimStart;
+  final Duration? trimEnd;
 
   const FriendNowPlaying({
     required this.queue,
@@ -15,6 +17,8 @@ class FriendNowPlaying {
     required this.position,
     required this.isPlaying,
     required this.updatedAt,
+    this.trimStart,
+    this.trimEnd,
   });
 
   Map<String, dynamic>? get currentTrack =>
@@ -71,6 +75,8 @@ class ListenAlongService {
     required int queueIndex,
     required Duration position,
     required bool isPlaying,
+    Duration? trimStart,
+    Duration? trimEnd,
   }) async {
     final doc = _ownDoc;
     if (doc == null) return;
@@ -92,6 +98,8 @@ class ListenAlongService {
         'queueIndex': syncableIndex,
         'positionMs': position.inMilliseconds,
         'isPlaying': isPlaying,
+        'trimStartMs': trimStart?.inMilliseconds,
+        'trimEndMs': trimEnd?.inMilliseconds,
         'updatedAt': FieldValue.serverTimestamp(),
       });
     } catch (error) {
@@ -129,12 +137,17 @@ class ListenAlongService {
       final updatedAt = data['updatedAt'];
       if (updatedAt is! Timestamp) return null;
 
+      final trimStartMs = data['trimStartMs'] as int?;
+      final trimEndMs = data['trimEndMs'] as int?;
+
       return FriendNowPlaying(
         queue: queue,
         queueIndex: queueIndex,
         position: Duration(milliseconds: data['positionMs'] as int? ?? 0),
         isPlaying: data['isPlaying'] as bool? ?? false,
         updatedAt: updatedAt.toDate(),
+        trimStart: trimStartMs != null ? Duration(milliseconds: trimStartMs) : null,
+        trimEnd: trimEndMs != null ? Duration(milliseconds: trimEndMs) : null,
       );
     });
   }

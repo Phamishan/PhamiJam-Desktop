@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:dart_discord_presence/dart_discord_presence.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
@@ -16,6 +17,7 @@ import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
 import 'package:phamijam/services/playback_state_service.dart';
 import 'package:phamijam/services/autoplay_service.dart';
+import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/skip_tracking_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
@@ -240,7 +242,13 @@ class PlaybackModel extends ChangeNotifier {
       _listenAlongLastAppliedVideoId = videoId;
       _applyDisplayMetadata(currentTrack);
       setCurrentSongPath('yt:$videoId');
-      await playYouTubeVideoById(videoId, startAt: target);
+      await playYouTubeVideoById(
+        videoId,
+        startAt: target,
+        overrideTrim: true,
+        trimStartOverride: data.trimStart,
+        trimEndOverride: data.trimEnd,
+      );
       unawaited(_fetchAndApplyYouTubeThumbnail(videoId));
       _forceDiscordPresenceRefreshAfterTrackChange();
     } else {
@@ -293,6 +301,8 @@ class PlaybackModel extends ChangeNotifier {
         queueIndex: syncableIndex,
         position: displayedProgress,
         isPlaying: isPlaying,
+        trimStart: _trimStart,
+        trimEnd: _trimEnd,
       ),
     );
   }
@@ -723,6 +733,7 @@ class PlaybackModel extends ChangeNotifier {
     if (_completionHandledForCurrentTrack) return;
     if (!isPlaying) return;
     if (_isRemoteControlling) return;
+    if (_listenAlongFriendUid != null) return;
     if (repeatMode == PlayerRepeatMode.one) return;
     if (_pauseAtTrackEndScheduled) return;
     if (_crossfadeEnabledLookup?.call() != true) return;
@@ -889,6 +900,15 @@ class PlaybackModel extends ChangeNotifier {
     if (!_isNearTrackEnd()) return;
 
     _completionHandledForCurrentTrack = true;
+
+    if (_pauseAtTrackEndScheduled) {
+      _pauseAtTrackEndScheduled = false;
+      _exitListenAlongIfActive();
+      if (isPlaying) await _localTogglePlayPause();
+      return;
+    }
+
+    if (_listenAlongFriendUid != null) return;
     final playlistId = _sourcePlaylistId;
     if (playlistId != null &&
         _currentOrderIndex >= 0 &&
@@ -903,11 +923,6 @@ class PlaybackModel extends ChangeNotifier {
           }
         }
       }
-    }
-    if (_pauseAtTrackEndScheduled) {
-      _pauseAtTrackEndScheduled = false;
-      if (isPlaying) await _localTogglePlayPause();
-      return;
     }
     if (repeatMode == PlayerRepeatMode.one) {
       await _restartCurrentTrack();
@@ -970,7 +985,13 @@ class PlaybackModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> playYouTubeVideoById(String videoId, {Duration? startAt}) async {
+  Future<void> playYouTubeVideoById(
+    String videoId, {
+    Duration? startAt,
+    bool overrideTrim = false,
+    Duration? trimStartOverride,
+    Duration? trimEndOverride,
+  }) async {
     if (_isRemoteControlling) {
       await PlaybackSessionSyncService.sendCommand(
         RemoteCommandType.playTrack,
@@ -984,9 +1005,14 @@ class PlaybackModel extends ChangeNotifier {
       return;
     }
 
-    final trim = _trimLookup?.call(videoId, _sourcePlaylistId);
-    _trimStart = trim != null ? Duration(milliseconds: trim.startMs) : null;
-    _trimEnd = trim != null ? Duration(milliseconds: trim.endMs) : null;
+    if (overrideTrim) {
+      _trimStart = trimStartOverride;
+      _trimEnd = trimEndOverride;
+    } else {
+      final trim = _trimLookup?.call(videoId, _sourcePlaylistId);
+      _trimStart = trim != null ? Duration(milliseconds: trim.startMs) : null;
+      _trimEnd = trim != null ? Duration(milliseconds: trim.endMs) : null;
+    }
     _isSwitchingTrack = true;
 
     _engineTransition = _engineTransition.catchError((_) {}).then((_) async {
@@ -1207,6 +1233,17 @@ class PlaybackModel extends ChangeNotifier {
     );
   }
 
+  List<DiscordButton>? _buildDiscordListenAlongButton() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return null;
+    return [
+      DiscordButton(
+        label: 'Listen Along',
+        url: ShareLinkService.buildListenAlongUrl(uid).toString(),
+      ),
+    ];
+  }
+
   DiscordPresence _buildDiscordPresence() {
     final title = songName.trim().isEmpty ? 'Unknown Song' : songName.trim();
     final artist = artistName.trim().isEmpty
@@ -1232,6 +1269,7 @@ class PlaybackModel extends ChangeNotifier {
       timestamps: isPlaying ? _buildProgressTimestamps() : null,
       largeAsset: largeAsset,
       statusDisplayType: DiscordStatusDisplayType.details,
+      buttons: _buildDiscordListenAlongButton(),
     );
   }
 
@@ -1410,6 +1448,7 @@ class PlaybackModel extends ChangeNotifier {
     _sleepTimer = Timer(duration, () {
       _sleepTimer = null;
       _sleepTimerEndsAt = null;
+      _exitListenAlongIfActive();
       if (isPlaying) unawaited(_localTogglePlayPause());
       notifyListeners();
     });

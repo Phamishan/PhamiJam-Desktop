@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 
-const String shareBaseHost = 'phamijam-share.phamijam.workers.dev';
+const String shareBaseHost = 'phamijam-share.phamishan.workers.dev';
 
 class ShareLinkService {
   ShareLinkService._();
@@ -16,6 +16,11 @@ class ShareLinkService {
   static Uri buildProfileUrl(String uid, {String? username}) => Uri.https(
     shareBaseHost,
     '/u/${(username != null && username.isNotEmpty) ? username : uid}',
+  );
+
+  static Uri buildListenAlongUrl(String uid, {String? username}) => Uri.https(
+    shareBaseHost,
+    '/la/${(username != null && username.isNotEmpty) ? username : uid}',
   );
 
   static Future<void> shareSong(BuildContext context, String videoId) async {

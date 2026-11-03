@@ -35,6 +35,7 @@ import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/presence_service.dart';
 import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
@@ -104,6 +105,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   bool? _taskbarHasTrack;
   bool? _taskbarIsPlaying;
   StreamSubscription<DeepLinkTarget>? _deepLinkSubscription;
+  StreamSubscription<Map<String, String>>? _playlistCoverSubscription;
   static const Duration _resolvedStreamsTtl = Duration(minutes: 20);
   static const Map<String, String> _youtubeHttpHeaders = {
     'User-Agent':
@@ -138,6 +140,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _settings.addListener(_handleSettingsChanged);
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
+    _playlistCoverSubscription = PlaylistCoverService.watchAll().listen(
+      _applyPlaylistCoverOverrides,
+    );
     final likedSongs = context.read<LikedSongsProvider>();
     final playlistPins = context.read<PlaylistPinProvider>();
     final editedSongs = context.read<EditedSongsProvider>();
@@ -299,6 +304,22 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         AppFlushbar.error(context, "Couldn't remove track: $error");
       }
     }
+  }
+
+  void _applyPlaylistCoverOverrides(Map<String, String> overrides) {
+    if (!mounted || _myPlaylists.isEmpty) return;
+    setState(() {
+      for (final playlist in _myPlaylists) {
+        final playlistId = playlist['playlistId'] as String?;
+        if (playlistId == null) continue;
+        final customCoverUrl = overrides[playlistId];
+        playlist['customCoverUrl'] = customCoverUrl;
+        playlist['thumbnailUrl'] =
+            customCoverUrl ??
+            playlist['originalThumbnailUrl'] ??
+            playlist['thumbnailUrl'];
+      }
+    });
   }
 
   Future<void> _loadHomeDashboardData({bool forceRefresh = false}) async {
@@ -893,6 +914,36 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           resolvedUid == ownUid ? 'profile' : 'friend_profile',
           extra: resolvedUid == ownUid ? null : {'uid': resolvedUid},
         );
+        return;
+      }
+
+      if (target.type == DeepLinkType.listenAlong) {
+        final resolvedUid = await ProfileService.resolveProfileLinkId(
+          target.id,
+        );
+        if (!mounted || resolvedUid.isEmpty) return;
+        final ownUid = FirebaseAuth.instance.currentUser?.uid;
+        if (resolvedUid == ownUid) return;
+        if (!_friends.isFriend(resolvedUid)) {
+          _onSidebarTabSelected('friend_profile', extra: {'uid': resolvedUid});
+          AppFlushbar.error(
+            context,
+            'Add them as a friend first to listen along.',
+          );
+          return;
+        }
+        final profile = await ProfileService.fetchProfile(resolvedUid);
+        if (!mounted) return;
+        final displayName =
+            (profile.displayNameOverride?.trim().isNotEmpty ?? false)
+            ? profile.displayNameOverride!.trim()
+            : 'PhamiJam User';
+        await _playback.startListenAlong(
+          resolvedUid,
+          friendDisplayName: displayName,
+        );
+        if (!mounted) return;
+        AppFlushbar.success(context, 'Listening along with $displayName');
         return;
       }
 
@@ -1574,6 +1625,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(PresenceService.goOffline());
     _deepLinkSubscription?.cancel();
+    _playlistCoverSubscription?.cancel();
     _playback.removeListener(_handlePlaybackChanged);
     if (Platform.isWindows) {
       _playback.removeListener(_updateTaskbarThumbnailToolbar);
