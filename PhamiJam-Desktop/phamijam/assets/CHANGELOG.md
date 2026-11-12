@@ -138,6 +138,10 @@
   - Fixed Listen Along
   - Fixed playlist cover images not updating on other devices
   - Added a Listen Along button to Discord Rich Presence
+- 1.2.5 - 12/11/2026
+  - Added mixed playlists
+  - Reduced Firestore usage on friends' profiles and the activity feed
+  - Fixed custom playlist covers not showing on the Playlists page
 
 ## Screenshots:
 

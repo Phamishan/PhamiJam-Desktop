@@ -79,6 +79,8 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
         initialPrivacyStatus:
             (widget.playlist['privacyStatus'] as String?) ?? 'public',
         initialThumbnailUrl: (widget.playlist['thumbnailUrl'] as String?) ?? '',
+        originalThumbnailUrl:
+            widget.playlist['originalThumbnailUrl'] as String?,
         initialCustomCoverUrl: widget.playlist['customCoverUrl'] as String?,
         onUpdated: (title, description, privacyStatus) {
           widget.onEdited?.call(title, description, privacyStatus);
@@ -90,7 +92,8 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
       confirmDeletePlaylist(
         context,
         playlistId: playlistId,
-        playlistTitle: (widget.playlist['title'] as String?) ?? 'Untitled playlist',
+        playlistTitle:
+            (widget.playlist['title'] as String?) ?? 'Untitled playlist',
         onDeleted: () => widget.onDeleted?.call(),
       );
     }

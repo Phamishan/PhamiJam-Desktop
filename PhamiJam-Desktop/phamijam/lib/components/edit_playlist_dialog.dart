@@ -13,6 +13,7 @@ Future<void> showEditPlaylistDialog(
   required String initialDescription,
   required String initialPrivacyStatus,
   String initialThumbnailUrl = '',
+  String? originalThumbnailUrl,
   String? initialCustomCoverUrl,
   required void Function(String title, String description, String privacyStatus)
   onUpdated,
@@ -70,7 +71,7 @@ Future<void> showEditPlaylistDialog(
             try {
               await PlaylistCoverService.remove(playlistId);
               setState(() {
-                thumbnailUrl = initialThumbnailUrl;
+                thumbnailUrl = originalThumbnailUrl ?? initialThumbnailUrl;
                 customCoverUrl = null;
                 isUploadingCover = false;
               });
@@ -113,7 +114,8 @@ Future<void> showEditPlaylistDialog(
                                         thumbnailUrl,
                                         fit: BoxFit.cover,
                                         errorBuilder: (_, _, _) => Container(
-                                          color: colorScheme.surfaceContainerHigh,
+                                          color:
+                                              colorScheme.surfaceContainerHigh,
                                         ),
                                       ),
                               ),
@@ -231,15 +233,18 @@ Future<void> showEditPlaylistDialog(
                             playlistId: playlistId,
                             title: title.trim(),
                             description: description.trim(),
-                            privacyStatus:
-                                privacyStatus == initialPrivacyStatus
+                            privacyStatus: privacyStatus == initialPrivacyStatus
                                 ? null
                                 : privacyStatus,
                           );
                           if (!dialogContext.mounted) return;
                           Navigator.of(dialogContext).pop();
 
-                          onUpdated(title.trim(), description.trim(), privacyStatus);
+                          onUpdated(
+                            title.trim(),
+                            description.trim(),
+                            privacyStatus,
+                          );
 
                           if (context.mounted) {
                             AppFlushbar.success(

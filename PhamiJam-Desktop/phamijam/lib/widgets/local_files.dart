@@ -5,6 +5,7 @@ import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
+import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/app_flushbar.dart';
@@ -714,6 +715,11 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                   icon: const Icon(Icons.queue_music_rounded),
                   label: const Text('Add to queue'),
                 ),
+                MenuItem<String>(
+                  value: 'add_to_playlist',
+                  icon: const Icon(Icons.playlist_add_rounded),
+                  label: const Text('Add to playlist'),
+                ),
               ],
             ),
             onItemSelected: (value) {
@@ -721,6 +727,18 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                 _addLocalSongToQueue(sourceIndex);
               } else if (value == 'add_to_queue') {
                 _appendLocalSongToQueue(sourceIndex);
+              } else if (value == 'add_to_playlist') {
+                showAddSongsToPlaylistDialog(
+                  context,
+                  songs: [
+                    {
+                      'path': songPaths[sourceIndex],
+                      'title': song,
+                      'artist': artist,
+                      'durationSeconds': durationSeconds,
+                    },
+                  ],
+                );
               }
             },
             child: Container(
@@ -844,6 +862,11 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                   icon: const Icon(Icons.queue_music_rounded),
                   label: const Text('Add to queue'),
                 ),
+                MenuItem<String>(
+                  value: 'add_to_playlist',
+                  icon: const Icon(Icons.playlist_add_rounded),
+                  label: const Text('Add to playlist'),
+                ),
               ],
             ),
             onItemSelected: (value) {
@@ -851,6 +874,8 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                 _addDriveSongToQueue(sourceIndex);
               } else if (value == 'add_to_queue') {
                 _appendDriveSongToQueue(sourceIndex);
+              } else if (value == 'add_to_playlist') {
+                showAddSongsToPlaylistDialog(context, songs: [song]);
               }
             },
             child: Container(

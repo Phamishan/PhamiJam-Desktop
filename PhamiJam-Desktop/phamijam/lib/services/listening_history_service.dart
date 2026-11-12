@@ -369,7 +369,29 @@ class ListeningHistoryService {
     return events;
   }
 
+  static final Map<String, _CachedEvents> _friendEventsCache = {};
+  static const Duration _friendEventsTtl = Duration(minutes: 5);
+
   static Future<List<PlayEvent>> eventsSinceForUid(
+    String uid,
+    DateTime since, {
+    DateTime? until,
+  }) async {
+    final key =
+        '$uid|${since.millisecondsSinceEpoch}|${until?.millisecondsSinceEpoch}';
+    final cached = _friendEventsCache[key];
+    if (cached != null &&
+        DateTime.now().difference(cached.fetchedAt) < _friendEventsTtl) {
+      return List<PlayEvent>.of(await cached.future);
+    }
+    final future = _fetchEventsSinceForUid(uid, since, until: until);
+    _friendEventsCache[key] = _CachedEvents(future, DateTime.now());
+    final events = await future;
+    if (events.isEmpty) _friendEventsCache.remove(key);
+    return List<PlayEvent>.of(events);
+  }
+
+  static Future<List<PlayEvent>> _fetchEventsSinceForUid(
     String uid,
     DateTime since, {
     DateTime? until,
@@ -397,6 +419,30 @@ class ListeningHistoryService {
     }
 
     events.sort((a, b) => a.startedAt.compareTo(b.startedAt));
+    return events;
+  }
+
+  static Future<List<PlayEvent>> recentEventsForUid(
+    String uid, {
+    int limit = 5,
+  }) async {
+    final events = <PlayEvent>[];
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .collection('plays')
+          .orderBy('s', descending: true)
+          .limit(limit)
+          .get()
+          .timeout(_queryTimeout);
+      for (final doc in snapshot.docs) {
+        final event = PlayEvent.fromJson(doc.data());
+        if (event != null) events.add(event);
+      }
+    } catch (error) {
+      debugPrint('ListeningHistoryService: recent fetch failed: $error');
+    }
     return events;
   }
 
@@ -474,6 +520,13 @@ class ListeningHistoryService {
     }
     return year;
   }
+}
+
+class _CachedEvents {
+  _CachedEvents(this.future, this.fetchedAt);
+
+  final Future<List<PlayEvent>> future;
+  final DateTime fetchedAt;
 }
 
 class _YearCache {

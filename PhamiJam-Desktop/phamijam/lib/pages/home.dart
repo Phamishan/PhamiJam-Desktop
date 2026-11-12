@@ -44,6 +44,7 @@ import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/widgets/converter.dart';
 import 'package:phamijam/widgets/home_playlist_card.dart';
 import 'package:phamijam/widgets/music_browse_pages.dart';
+import 'package:phamijam/widgets/mixed_playlist_page.dart';
 import 'package:phamijam/widgets/playlist_inspect.dart';
 import 'package:phamijam/widgets/playlists.dart';
 import 'package:phamijam/widgets/liked.dart';
@@ -1589,6 +1590,15 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if (_selectedTab == 'friend_profile') {
       final uid = (_selectedTabExtra?['uid'] as String?) ?? '';
       return FriendProfilePage(uid: uid, onTabSelected: _onSidebarTabSelected);
+    }
+
+    if (_selectedTab == 'mixed_playlist') {
+      final playlistId = (_selectedTabExtra?['playlistId'] as String?) ?? '';
+      return MixedPlaylistPage(
+        key: ValueKey('mixed-$playlistId'),
+        playlistId: playlistId,
+        onBack: () => _onSidebarTabSelected('playlists'),
+      );
     }
 
     if (_selectedTab == 'friend_activity') {

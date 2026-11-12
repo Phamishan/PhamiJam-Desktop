@@ -12,14 +12,13 @@ class RecentlyPlayedTile extends StatelessWidget {
   final String profileUid;
 
   static Future<List<PlayEvent>> _fetchRecent(String uid) async {
-    final since = DateTime.now().subtract(const Duration(days: 180));
-    final events = await ListeningHistoryService.eventsSinceForUid(
+    final events = await ListeningHistoryService.recentEventsForUid(
       uid,
-      since,
+      limit: 25,
     );
     final seen = <String>{};
     final recent = <PlayEvent>[];
-    for (final event in events.reversed) {
+    for (final event in events) {
       if (!seen.add(event.videoId)) continue;
       recent.add(event);
       if (recent.length >= 5) break;

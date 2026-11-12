@@ -35,11 +35,11 @@ class FriendActivityService {
       final profile = await ProfileService.fetchProfile(friend.uid);
       if (!profile.showActivityEnabled) return const [];
 
-      final events = await ListeningHistoryService.eventsSinceForUid(
+      final events = await ListeningHistoryService.recentEventsForUid(
         friend.uid,
-        since,
+        limit: _perFriendLimit,
       );
-      final recent = events.reversed.take(_perFriendLimit);
+      final recent = events.where((e) => e.startedAt.isAfter(since));
       return recent
           .map((event) => FriendActivityItem(friend: friend, event: event))
           .toList();

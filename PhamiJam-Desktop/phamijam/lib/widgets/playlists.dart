@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/services/google_auth_service.dart';
@@ -10,6 +12,8 @@ import 'package:phamijam/components/edit_playlist_dialog.dart';
 import 'package:phamijam/providers/playlist_pin_provider.dart';
 import 'package:phamijam/providers/saved_playlists_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/components/mixed_playlist_dialogs.dart';
+import 'package:phamijam/services/mixed_playlist_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:provider/provider.dart';
@@ -387,29 +391,231 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     _playlistCoverSubscription = PlaylistCoverService.watchAll().listen(
       _applyPlaylistCoverOverrides,
     );
+    _mixedSubscription = MixedPlaylistService.watchAll().listen((playlists) {
+      if (!mounted) return;
+      setState(() => _mixedPlaylists = playlists);
+    }, onError: (_) {});
   }
 
-  void _applyPlaylistCoverOverrides(Map<String, String> overrides) {
-    void merge(Map<String, dynamic> playlist) {
-      final playlistId = playlist['playlistId'] as String?;
-      if (playlistId == null) return;
-      final customCoverUrl = overrides[playlistId];
-      playlist['customCoverUrl'] = customCoverUrl;
-      playlist['thumbnailUrl'] =
-          customCoverUrl ??
-          playlist['originalThumbnailUrl'] ??
-          playlist['thumbnailUrl'];
-    }
+  StreamSubscription<List<Map<String, dynamic>>>? _mixedSubscription;
+  List<Map<String, dynamic>> _mixedPlaylists = [];
 
-    for (final playlist in _cachedUserPlaylists) {
-      merge(playlist);
-    }
-    if (!mounted || _userPlaylists.isEmpty) return;
-    setState(() {
-      for (final playlist in _userPlaylists) {
-        merge(playlist);
+  Future<void> _createMixedPlaylist() async {
+    final name = await showMixedPlaylistNameDialog(context);
+    if (name == null || !mounted) return;
+    try {
+      await MixedPlaylistService.create(name);
+    } catch (error) {
+      if (mounted) {
+        AppFlushbar.error(context, "Couldn't create playlist: $error");
       }
-    });
+    }
+  }
+
+  Future<void> _renameMixedPlaylist(Map<String, dynamic> playlist) async {
+    final name = await showMixedPlaylistNameDialog(
+      context,
+      title: 'Rename playlist',
+      initial: (playlist['title'] as String?) ?? '',
+      actionLabel: 'Save',
+    );
+    if (name == null) return;
+    try {
+      await MixedPlaylistService.rename(playlist['id'] as String, name);
+    } catch (error) {
+      if (mounted) {
+        AppFlushbar.error(context, "Couldn't rename playlist: $error");
+      }
+    }
+  }
+
+  Future<void> _changeMixedCover(String id) async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+    try {
+      await PlaylistCoverService.upload(
+        MixedPlaylistService.coverKey(id),
+        File(picked.path),
+      );
+    } catch (error) {
+      if (mounted) {
+        AppFlushbar.error(context, "Couldn't update cover image: $error");
+      }
+    }
+  }
+
+  Future<void> _removeMixedCover(String id) async {
+    try {
+      await PlaylistCoverService.remove(MixedPlaylistService.coverKey(id));
+    } catch (error) {
+      if (mounted) {
+        AppFlushbar.error(context, "Couldn't remove cover image: $error");
+      }
+    }
+  }
+
+  Future<void> _deleteMixedPlaylist(Map<String, dynamic> playlist) async {
+    final title = (playlist['title'] as String?) ?? 'Untitled playlist';
+    final confirmed = await confirmDeleteMixedPlaylist(context, title);
+    if (!confirmed) return;
+    try {
+      await MixedPlaylistService.delete(playlist['id'] as String);
+    } catch (error) {
+      if (mounted) {
+        AppFlushbar.error(context, "Couldn't delete playlist: $error");
+      }
+    }
+  }
+
+  Widget _buildMixedPlaylistTile(Map<String, dynamic> playlist) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final id = playlist['id'] as String;
+    final title = (playlist['title'] as String?) ?? 'Untitled playlist';
+    final count = (playlist['tracks'] as List?)?.length ?? 0;
+    final customCover = _coverOverrides[MixedPlaylistService.coverKey(id)];
+    final hasCustomCover = customCover != null && customCover.isNotEmpty;
+    final coverUrl = hasCustomCover
+        ? customCover
+        : ((playlist['tracks'] as List?) ?? const [])
+              .whereType<Map>()
+              .map((t) => (t['thumbnailUrl'] as String?) ?? '')
+              .firstWhere((u) => u.isNotEmpty, orElse: () => '');
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: ContextMenuRegion<String>(
+        contextMenu: ContextMenu(
+          borderRadius: BorderRadius.circular(12),
+          entries: [
+            MenuItem<String>(
+              value: 'rename',
+              icon: const Icon(Icons.edit_rounded),
+              label: const Text('Rename playlist'),
+            ),
+            MenuItem<String>(
+              value: 'cover',
+              icon: const Icon(Icons.image_rounded),
+              label: const Text('Change cover image'),
+            ),
+            if (hasCustomCover)
+              MenuItem<String>(
+                value: 'remove_cover',
+                icon: const Icon(Icons.hide_image_rounded),
+                label: const Text('Remove custom cover'),
+              ),
+            MenuItem<String>(
+              value: 'delete',
+              icon: const Icon(Icons.delete_rounded),
+              label: const Text('Delete playlist'),
+            ),
+          ],
+        ),
+        onItemSelected: (value) {
+          if (value == 'rename') {
+            _renameMixedPlaylist(playlist);
+          } else if (value == 'cover') {
+            _changeMixedCover(id);
+          } else if (value == 'remove_cover') {
+            _removeMixedCover(id);
+          } else if (value == 'delete') {
+            _deleteMixedPlaylist(playlist);
+          }
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: ListTile(
+              leading: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: coverUrl.isEmpty
+                      ? Container(
+                          color: colorScheme.primary.withValues(alpha: 0.2),
+                          child: Icon(
+                            Icons.library_music_rounded,
+                            color: colorScheme.primary,
+                          ),
+                        )
+                      : Image.network(
+                          coverUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Container(
+                            color: colorScheme.primary.withValues(alpha: 0.2),
+                            child: Icon(
+                              Icons.library_music_rounded,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+              title: Text(
+                title,
+                style: TextStyle(color: colorScheme.onSurface),
+              ),
+              subtitle: Text(
+                'PhamiJam playlist - $count ${count == 1 ? 'song' : 'songs'}',
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurface.withValues(alpha: 0.38),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.edit_rounded,
+                        color: colorScheme.onSurface,
+                      ),
+                      onPressed: () => _renameMixedPlaylist(playlist),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: colorScheme.error,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.delete_rounded,
+                        color: colorScheme.onError,
+                      ),
+                      onPressed: () => _deleteMixedPlaylist(playlist),
+                    ),
+                  ),
+                ],
+              ),
+              onTap: () => widget.onTabSelected?.call(
+                'mixed_playlist',
+                extra: {'playlistId': id},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Map<String, String> _coverOverrides = {};
+
+  void _applyPlaylistCoverOverrides(Map<String, String> overrides) {
+    if (!mounted) return;
+    setState(() => _coverOverrides = overrides);
   }
 
   @override
@@ -707,6 +913,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     required String initialDescription,
     required String initialPrivacyStatus,
     String initialThumbnailUrl = '',
+    String? originalThumbnailUrl,
     String? initialCustomCoverUrl,
   }) {
     showEditPlaylistDialog(
@@ -716,6 +923,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       initialDescription: initialDescription,
       initialPrivacyStatus: initialPrivacyStatus,
       initialThumbnailUrl: initialThumbnailUrl,
+      originalThumbnailUrl: originalThumbnailUrl,
       initialCustomCoverUrl: initialCustomCoverUrl,
       onUpdated: (title, description, privacyStatus) {
         if (!mounted) return;
@@ -735,18 +943,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       onCoverChanged: (customCoverUrl) {
         if (!mounted) return;
         setState(() {
-          for (final playlist in _userPlaylists) {
-            if ((playlist['playlistId'] as String?) == playlistId) {
-              playlist['customCoverUrl'] = customCoverUrl;
-              playlist['thumbnailUrl'] =
-                  customCoverUrl ??
-                  playlist['originalThumbnailUrl'] ??
-                  playlist['thumbnailUrl'];
-              break;
-            }
+          _coverOverrides = {..._coverOverrides};
+          if (customCoverUrl == null) {
+            _coverOverrides.remove(playlistId);
+          } else {
+            _coverOverrides[playlistId] = customCoverUrl;
           }
         });
-        _cachedUserPlaylists = List<Map<String, dynamic>>.from(_userPlaylists);
       },
     );
   }
@@ -865,18 +1068,80 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
               final sortedPlaylists = pins.sortByPin(visiblePlaylists);
               final saved = context.watch<SavedPlaylistsProvider>().playlists;
 
-              if (sortedPlaylists.isEmpty && saved.isEmpty) {
-                return Center(
-                  child: Text(
-                    'No playlists found',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                );
-              }
+              final mixedQuery = _playlistSearchQuery.trim().toLowerCase();
+              final mixed = mixedQuery.isEmpty
+                  ? _mixedPlaylists
+                  : _mixedPlaylists
+                        .where(
+                          (p) => ((p['title'] as String?) ?? '')
+                              .toLowerCase()
+                              .contains(mixedQuery),
+                        )
+                        .toList();
+              final nothingToShow =
+                  sortedPlaylists.isEmpty && saved.isEmpty && mixed.isEmpty;
 
               return CustomScrollView(
                 slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'PhamiJam playlists',
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: _createMixedPlaylist,
+                            icon: const Icon(Icons.add_rounded),
+                            label: const Text('New mixed playlist'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _buildMixedPlaylistTile(mixed[index]),
+                      childCount: mixed.length,
+                    ),
+                  ),
+                  if (nothingToShow)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 24),
+                        child: Center(
+                          child: Text(
+                            'No playlists found',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (sortedPlaylists.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 16, bottom: 8),
+                        child: Text(
+                          'YouTube playlists',
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
                   SliverList(
                     delegate: SliverChildBuilderDelegate((context, index) {
                       final playlist = sortedPlaylists[index];
@@ -909,6 +1174,11 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
 
                       final playlistId =
                           (playlist['playlistId'] as String?) ?? '';
+                      final originalThumbnailUrl = thumbnailUrl;
+                      final customCover = _coverOverrides[playlistId];
+                      if (customCover != null && customCover.isNotEmpty) {
+                        thumbnailUrl = customCover;
+                      }
                       final isPinned =
                           playlistId.isNotEmpty && pins.isPinned(playlistId);
                       final privacyStatus =
@@ -939,10 +1209,12 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                           initialTitle: title,
                           initialDescription: description,
                           initialPrivacyStatus: privacyStatus,
-                          initialThumbnailUrl:
-                              (playlist['thumbnailUrl'] as String?) ?? '',
+                          initialThumbnailUrl: thumbnailUrl ?? '',
+                          originalThumbnailUrl: originalThumbnailUrl,
                           initialCustomCoverUrl:
-                              playlist['customCoverUrl'] as String?,
+                              (customCover != null && customCover.isNotEmpty)
+                              ? customCover
+                              : null,
                         );
                       }
 
@@ -1309,6 +1581,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   void dispose() {
     _playlistSearchController.dispose();
     _playlistCoverSubscription?.cancel();
+    _mixedSubscription?.cancel();
     _ytmusic?.close();
     super.dispose();
   }
