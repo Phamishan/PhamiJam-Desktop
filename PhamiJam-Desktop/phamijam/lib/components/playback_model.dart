@@ -55,6 +55,8 @@ class PlaybackModel extends ChangeNotifier {
     String videoId, {
     AppAudioPlayer? target,
     Duration? startAt,
+    bool autoPlay,
+    bool silent,
   })?
   _youtubeLoadVideoById;
   Future<void> Function(String videoId)? _youtubePrefetchVideoById;
@@ -683,6 +685,8 @@ class PlaybackModel extends ChangeNotifier {
       String videoId, {
       AppAudioPlayer? target,
       Duration? startAt,
+      bool autoPlay,
+      bool silent,
     })
     loadVideoById,
     required Future<void> Function(String videoId) prefetchVideoById,
@@ -863,6 +867,62 @@ class PlaybackModel extends ChangeNotifier {
           try {
             await player.setVolume(volume / 100);
           } catch (_) {}
+        },
+        prepareMain: (startHint) async {
+          final previousDuration = player.currentDuration;
+          if (nextVideoId.isNotEmpty) {
+            await _youtubeLoadVideoById?.call(
+              nextVideoId,
+              startAt: startHint,
+              autoPlay: false,
+              silent: true,
+            );
+          } else {
+            await player.setFilePath(nextPath, start: startHint);
+            await player.setVolume(0);
+          }
+          await player.waitUntilLoaded(previousDuration);
+        },
+        startMain: (position) async {
+          handoffCompleted = true;
+          _isSwitchingTrack = true;
+          try {
+            if (nextVideoId.isNotEmpty) {
+              final trim = _trimLookup?.call(nextVideoId, _sourcePlaylistId);
+              _trimStart = trim != null
+                  ? Duration(milliseconds: trim.startMs)
+                  : null;
+              _trimEnd = trim != null
+                  ? Duration(milliseconds: trim.endMs)
+                  : null;
+              _engine = PlaybackEngine.youtube;
+              currentYouTubeVideoId = nextVideoId;
+            } else {
+              _trimStart = null;
+              _trimEnd = null;
+              _engine = PlaybackEngine.local;
+              currentYouTubeVideoId = null;
+            }
+            _currentOrderIndex = nextOrderIndex;
+            _refreshQueueWindow();
+            await player.seek(position);
+            await player.play();
+            setCurrentSongPath(
+              nextVideoId.isNotEmpty ? 'yt:$nextVideoId' : nextPath,
+            );
+            if (nextVideoId.isEmpty) {
+              setCoverImageBytes(nextItem['coverImageBytes'] as Uint8List?);
+            }
+            setIsPlaying(true);
+            setProgress(position);
+            notifyListeners();
+            _forceDiscordPresenceRefreshAfterTrackChange();
+            unawaited(_prefetchAhead());
+            _pushSessionIfHosting();
+            _pushNowPlayingIfActive();
+          } finally {
+            _isSwitchingTrack = false;
+          }
         },
         onComplete: (startAt) async {
           handoffCompleted = true;
@@ -1105,7 +1165,7 @@ class PlaybackModel extends ChangeNotifier {
     _playerStateSubscription = player.playerStateStream.listen((state) async {
       final wasPlaying = _wasPlaying;
       _wasPlaying = state.playing;
-      setIsPlaying(state.playing);
+      if (!_crossfade.isActive) setIsPlaying(state.playing);
 
       if (wasPlaying && !state.playing) {
         await _triggerTrackCompletedIfNeeded();

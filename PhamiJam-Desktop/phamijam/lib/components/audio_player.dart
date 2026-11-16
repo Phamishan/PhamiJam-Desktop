@@ -56,6 +56,21 @@ class AppAudioPlayer {
     await _player.open(Media(path, start: start), play: false);
   }
 
+  Duration get currentDuration => _player.state.duration;
+
+  Future<void> waitUntilLoaded(
+    Duration previousDuration, {
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    final watch = Stopwatch()..start();
+    while (watch.elapsed < timeout) {
+      final d = _player.state.duration;
+      if (d > Duration.zero && d != previousDuration) return;
+      if (d > Duration.zero && watch.elapsedMilliseconds > 1500) return;
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+  }
+
   Future<void> stop() => _player.stop();
 
   Future<void> play() => _player.play();

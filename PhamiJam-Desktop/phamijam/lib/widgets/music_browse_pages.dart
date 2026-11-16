@@ -10,6 +10,7 @@ import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/providers/settings_provider.dart';
+import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:provider/provider.dart';
@@ -39,6 +40,31 @@ Widget _wrapSongTileWithContextMenu({
   required String thumbnailUrl,
   int durationSeconds = 0,
 }) {
+  return Consumer<DownloadsProvider>(
+    builder: (context, downloads, _) => _songTileContextMenu(
+      context: context,
+      downloads: downloads,
+      child: child,
+      videoId: videoId,
+      title: title,
+      artist: artist,
+      thumbnailUrl: thumbnailUrl,
+      durationSeconds: durationSeconds,
+    ),
+  );
+}
+
+Widget _songTileContextMenu({
+  required BuildContext context,
+  required DownloadsProvider downloads,
+  required Widget child,
+  required String videoId,
+  required String title,
+  required String artist,
+  required String thumbnailUrl,
+  required int durationSeconds,
+}) {
+  final isDownloaded = downloads.isDownloaded(videoId);
   return ContextMenuRegion<String>(
     contextMenu: ContextMenu(
       borderRadius: BorderRadius.circular(12),
@@ -46,7 +72,7 @@ Widget _wrapSongTileWithContextMenu({
         MenuItem<String>(
           value: 'play_next',
           icon: const Icon(Icons.playlist_play_rounded),
-          label: const Text('Add to play next'),
+          label: const Text('Play next'),
         ),
         MenuItem<String>(
           value: 'add_to_queue',
@@ -57,6 +83,13 @@ Widget _wrapSongTileWithContextMenu({
           value: 'add_to_playlist',
           icon: const Icon(Icons.playlist_add_rounded),
           label: const Text('Add to playlist'),
+        ),
+        MenuItem<String>(
+          value: isDownloaded ? 'remove_download' : 'download',
+          icon: Icon(
+            isDownloaded ? Icons.download_done_rounded : Icons.download_rounded,
+          ),
+          label: Text(isDownloaded ? 'Remove download' : 'Download'),
         ),
         MenuItem<String>(
           value: 'edit_trim',
@@ -77,6 +110,19 @@ Widget _wrapSongTileWithContextMenu({
       }
       if (value == 'share') {
         ShareLinkService.shareSong(context, videoId);
+        return;
+      }
+      if (value == 'download') {
+        downloads.download(
+          videoId: videoId,
+          songName: title,
+          artistName: artist,
+          durationSeconds: durationSeconds,
+        );
+        return;
+      }
+      if (value == 'remove_download') {
+        downloads.remove(videoId);
         return;
       }
       if (value == 'play_next') {

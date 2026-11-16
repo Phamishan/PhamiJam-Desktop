@@ -708,7 +708,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                 MenuItem<String>(
                   value: 'play_next',
                   icon: const Icon(Icons.playlist_play_rounded),
-                  label: const Text('Add to play next'),
+                  label: const Text('Play next'),
                 ),
                 MenuItem<String>(
                   value: 'add_to_queue',
@@ -855,7 +855,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
                 MenuItem<String>(
                   value: 'play_next',
                   icon: const Icon(Icons.playlist_play_rounded),
-                  label: const Text('Add to play next'),
+                  label: const Text('Play next'),
                 ),
                 MenuItem<String>(
                   value: 'add_to_queue',

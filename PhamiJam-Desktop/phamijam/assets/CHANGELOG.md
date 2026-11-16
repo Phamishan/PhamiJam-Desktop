@@ -142,6 +142,12 @@
   - Added mixed playlists
   - Reduced Firestore usage on friends' profiles and the activity feed
   - Fixed custom playlist covers not showing on the Playlists page
+- 1.2.6 - 16/11/2026
+  - Added Download to song menus on search, artist and album pages
+  - Added Edit and Delete to the playlist page
+  - Added a confirmation before signing out
+  - Fixed crossfade pausing for a moment between songs
+  - Renamed "Add to play next" to "Play next" and "Liked" to "Liked Songs"
 
 ## Screenshots:
 

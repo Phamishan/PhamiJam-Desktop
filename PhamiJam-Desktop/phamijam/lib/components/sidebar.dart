@@ -67,7 +67,7 @@ class Sidebar extends StatelessWidget {
                     color: colorScheme.onSurface,
                   ),
                   title: Text(
-                    'Liked',
+                    'Liked Songs',
                     style: TextStyle(color: colorScheme.onSurface),
                   ),
                   onTap: () {

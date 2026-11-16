@@ -761,6 +761,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     String path, {
     AppAudioPlayer? target,
     Duration? startAt,
+    bool autoPlay = true,
+    bool silent = false,
   }) async {
     final effectiveTarget = target ?? player;
     final isMain = target == null;
@@ -769,13 +771,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       path,
       start: start != null && start > Duration.zero ? start : null,
     );
-    if (isMain) {
+    if (isMain && !silent) {
       final effectivePercent = _playback.effectiveVolumePercent;
       await effectiveTarget.setVolume(effectivePercent / 100);
       _playback.setIsMuted(_playback.currentSliderValue == 0);
     } else {
       await effectiveTarget.setVolume(0);
     }
+    if (!autoPlay) return;
     await Future<void>.delayed(const Duration(milliseconds: 50));
     await effectiveTarget.play();
   }
@@ -785,6 +788,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     Map<String, String>? headers,
     AppAudioPlayer? target,
     Duration? startAt,
+    bool autoPlay = true,
+    bool silent = false,
   }) async {
     final effectiveTarget = target ?? player;
     final isMain = target == null;
@@ -795,13 +800,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       start: start != null && start > Duration.zero ? start : null,
     );
 
-    if (isMain) {
+    if (isMain && !silent) {
       final effectivePercent = _playback.effectiveVolumePercent;
       await effectiveTarget.setVolume(effectivePercent / 100);
       _playback.setIsMuted(_playback.currentSliderValue == 0);
     } else {
       await effectiveTarget.setVolume(0);
     }
+    if (!autoPlay) return;
     await Future<void>.delayed(const Duration(milliseconds: 50));
     await effectiveTarget.play();
   }
@@ -809,9 +815,15 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   void _bindYouTubeEngineToPlayback() {
     _playback.bindYouTubeCallbacks(
       loadVideoById:
-          (videoId, {AppAudioPlayer? target, Duration? startAt}) async {
+          (
+            videoId, {
+            AppAudioPlayer? target,
+            Duration? startAt,
+            bool autoPlay = true,
+            bool silent = false,
+          }) async {
             final effectiveTarget = target ?? player;
-            if (target == null) {
+            if (target == null && autoPlay) {
               try {
                 await player.pause();
               } catch (_) {}
@@ -826,6 +838,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 localPath,
                 target: target,
                 startAt: startAt,
+                autoPlay: autoPlay,
+                silent: silent,
               );
               return;
             }
@@ -840,6 +854,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   headers: _youtubeHttpHeaders,
                   target: target,
                   startAt: startAt,
+                  autoPlay: autoPlay,
+                  silent: silent,
                 );
                 return;
               } catch (error) {
@@ -854,6 +870,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   streamUrl,
                   target: target,
                   startAt: startAt,
+                  autoPlay: autoPlay,
+                  silent: silent,
                 );
                 return;
               } catch (error) {
@@ -1135,7 +1153,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                       (
                         value: 'play_next',
                         icon: Icons.playlist_play_rounded,
-                        label: 'Add to play next',
+                        label: 'Play next',
                       ),
                       (
                         value: 'add_to_queue',
@@ -1668,6 +1686,33 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sign out?'),
+        content: const Text(
+          "You'll need to sign in again to sync your playlists and library.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _performLogout();
+  }
+
+  Future<void> _performLogout() async {
     _friends.stop();
     unawaited(PresenceService.goOffline());
     try {

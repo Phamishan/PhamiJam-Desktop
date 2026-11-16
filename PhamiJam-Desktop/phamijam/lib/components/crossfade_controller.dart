@@ -21,6 +21,8 @@ class CrossfadeController {
     required Duration Function() remainingOnMain,
     required Future<void> Function(double volume0to100) setMainVolume,
     required Future<void> Function(Duration startAt) onComplete,
+    Future<void> Function(Duration startHint)? prepareMain,
+    Future<void> Function(Duration position)? startMain,
     void Function(Duration position)? onProgress,
   }) async {
     cancel();
@@ -98,13 +100,32 @@ class CrossfadeController {
     debugPrint(
       '[crossfade] ramp complete in ${stopwatch.elapsedMilliseconds}ms, handing off at $startAt',
     );
+
+    if (prepareMain != null && startMain != null) {
+      final seamless = await _seamlessHandoff(
+        fadePlayer: fadePlayer,
+        targetVolume: targetVolume,
+        setMainVolume: setMainVolume,
+        prepareMain: prepareMain,
+        startMain: startMain,
+        onProgress: onProgress,
+      );
+      if (seamless) return;
+      if (!_active || !identical(_fadePlayer, fadePlayer)) {
+        debugPrint('[crossfade] cancelled during seamless handoff');
+        return;
+      }
+      debugPrint('[crossfade] seamless handoff failed, falling back');
+    }
+
+    final fallbackStartAt = fadePlayer.position;
     _fadePlayer = null;
     _restoreMainVolume = null;
     try {
       await fadePlayer.stop();
     } catch (_) {}
     try {
-      await onComplete(startAt);
+      await onComplete(fallbackStartAt);
       await setMainVolume(targetVolume);
     } catch (error, stackTrace) {
       debugPrint('[crossfade] onComplete FAILED: $error\n$stackTrace');
@@ -113,6 +134,71 @@ class CrossfadeController {
     }
     debugPrint('[crossfade] handoff complete');
     unawaited(_safeDispose(fadePlayer));
+  }
+
+  static const Duration _seekCompensation = Duration(milliseconds: 120);
+  static const Duration _crossRamp = Duration(milliseconds: 150);
+
+  Future<bool> _seamlessHandoff({
+    required AppAudioPlayer fadePlayer,
+    required double targetVolume,
+    required Future<void> Function(double volume0to100) setMainVolume,
+    required Future<void> Function(Duration startHint) prepareMain,
+    required Future<void> Function(Duration position) startMain,
+    void Function(Duration position)? onProgress,
+  }) async {
+    final progressTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      onProgress?.call(fadePlayer.position);
+    });
+    final prepareWatch = Stopwatch()..start();
+    try {
+      await prepareMain(
+        fadePlayer.position,
+      ).timeout(const Duration(seconds: 12));
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[crossfade] prepareMain FAILED after ${prepareWatch.elapsedMilliseconds}ms: $error\n$stackTrace',
+      );
+      progressTimer.cancel();
+      return false;
+    }
+    progressTimer.cancel();
+    if (!_active || !identical(_fadePlayer, fadePlayer)) return false;
+    debugPrint(
+      '[crossfade] main prepared in ${prepareWatch.elapsedMilliseconds}ms',
+    );
+
+    try {
+      await setMainVolume(0);
+      await startMain(fadePlayer.position + _seekCompensation);
+    } catch (error, stackTrace) {
+      debugPrint('[crossfade] startMain FAILED: $error\n$stackTrace');
+      return false;
+    }
+    if (!_active || !identical(_fadePlayer, fadePlayer)) return false;
+
+    final rampWatch = Stopwatch()..start();
+    final rampMs = _crossRamp.inMilliseconds;
+    while (rampWatch.elapsedMilliseconds < rampMs) {
+      if (!_active || !identical(_fadePlayer, fadePlayer)) return true;
+      final t = (rampWatch.elapsedMilliseconds / rampMs).clamp(0.0, 1.0);
+      unawaited(setMainVolume(sin(t * pi / 2) * targetVolume));
+      unawaited(
+        _safeSetVolume(fadePlayer, cos(t * pi / 2) * targetVolume / 100),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    await setMainVolume(targetVolume);
+
+    _fadePlayer = null;
+    _restoreMainVolume = null;
+    try {
+      await fadePlayer.stop();
+    } catch (_) {}
+    _active = false;
+    debugPrint('[crossfade] seamless handoff complete');
+    unawaited(_safeDispose(fadePlayer));
+    return true;
   }
 
   Future<void> _safeSetVolume(AppAudioPlayer fadePlayer, double volume) async {

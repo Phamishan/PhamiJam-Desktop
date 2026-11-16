@@ -364,7 +364,7 @@ class _LikedPageState extends State<LikedPage> {
                   MenuItem<String>(
                     value: 'play_next',
                     icon: const Icon(Icons.playlist_play_rounded),
-                    label: const Text('Add to play next'),
+                    label: const Text('Play next'),
                   ),
                   MenuItem<String>(
                     value: 'add_to_queue',

@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
+import 'package:phamijam/components/delete_playlist_dialog.dart';
+import 'package:phamijam/components/edit_playlist_dialog.dart';
 import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/components/app_flushbar.dart';
@@ -15,6 +17,7 @@ import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
+import 'package:phamijam/widgets/playlists.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -359,6 +362,78 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         color: _isFeaturedOnProfile
             ? colorScheme.primary
             : colorScheme.onSurface,
+      ),
+    );
+  }
+
+  Future<void> _handleEditPlaylist() async {
+    final playlistId = _playlistId;
+    if (playlistId == null || playlistId.isEmpty) return;
+    Map<String, dynamic>? meta;
+    try {
+      meta = await YoutubePlaylistService.fetchPlaylistMetadata(playlistId);
+    } catch (_) {}
+    if (!mounted) return;
+    await showEditPlaylistDialog(
+      context,
+      playlistId: playlistId,
+      initialTitle: (meta?['title'] as String?) ?? _displayPlaylistTitle,
+      initialDescription: (meta?['description'] as String?) ?? '',
+      initialPrivacyStatus:
+          (meta?['privacyStatus'] as String?) ??
+          _playlistPrivacyStatus ??
+          'public',
+      initialThumbnailUrl:
+          (meta?['thumbnailUrl'] as String?) ??
+          (widget.extra?['thumbnailUrl'] as String?) ??
+          '',
+      originalThumbnailUrl: meta?['originalThumbnailUrl'] as String?,
+      initialCustomCoverUrl: meta?['customCoverUrl'] as String?,
+      onUpdated: (title, description, privacyStatus) {
+        if (!mounted) return;
+        setState(() {
+          _resolvedPlaylistTitle = title;
+          _playlistPrivacyStatus = privacyStatus;
+        });
+        PlaylistsPage.resetCache();
+      },
+    );
+  }
+
+  void _handleDeletePlaylist() {
+    final playlistId = _playlistId;
+    if (playlistId == null || playlistId.isEmpty) return;
+    confirmDeletePlaylist(
+      context,
+      playlistId: playlistId,
+      playlistTitle: _displayPlaylistTitle,
+      onDeleted: () {
+        PlaylistsPage.resetCache();
+        if (mounted) _handleBack();
+      },
+    );
+  }
+
+  Widget _buildEditButton() {
+    if (!_isOwnedByUser || !_hasRealPlaylistId) return const SizedBox.shrink();
+    return IconButton(
+      tooltip: 'Edit playlist',
+      onPressed: _handleEditPlaylist,
+      icon: Icon(
+        Icons.edit_rounded,
+        color: Theme.of(context).colorScheme.onSurface,
+      ),
+    );
+  }
+
+  Widget _buildDeleteButton() {
+    if (!_isOwnedByUser || !_hasRealPlaylistId) return const SizedBox.shrink();
+    return IconButton(
+      tooltip: 'Delete playlist',
+      onPressed: _handleDeletePlaylist,
+      icon: Icon(
+        Icons.delete_rounded,
+        color: Theme.of(context).colorScheme.error,
       ),
     );
   }
@@ -953,6 +1028,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
               _buildPinButton(),
               _buildFeatureButton(),
               _buildShareButton(),
+              _buildEditButton(),
+              _buildDeleteButton(),
               const SizedBox(width: 12),
               ElevatedButton.icon(
                 onPressed: () => _loadSongs(forceRefresh: true),
@@ -1039,6 +1116,8 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                   _buildPinButton(),
                   _buildFeatureButton(),
                   _buildShareButton(),
+                  _buildEditButton(),
+                  _buildDeleteButton(),
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
                     onPressed: () => _loadSongs(forceRefresh: true),
@@ -1202,7 +1281,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                               MenuItem<String>(
                                 value: 'play_next',
                                 icon: const Icon(Icons.playlist_play_rounded),
-                                label: const Text('Add to play next'),
+                                label: const Text('Play next'),
                               ),
                               MenuItem<String>(
                                 value: 'add_to_queue',
