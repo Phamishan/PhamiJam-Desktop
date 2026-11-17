@@ -1,8 +1,8 @@
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:phamijam/widgets/artist_line.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
@@ -20,6 +20,7 @@ import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/widgets/playlists.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class _PlaylistInspectCacheEntry {
   const _PlaylistInspectCacheEntry({
@@ -326,6 +327,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         return response.bodyBytes;
       }
     } catch (error) {
+      Log.e('library', 'download image bytes failed', error);
       debugPrint('Failed to download image from $imageUrl: $error');
     }
     return null;
@@ -372,7 +374,9 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     Map<String, dynamic>? meta;
     try {
       meta = await YoutubePlaylistService.fetchPlaylistMetadata(playlistId);
-    } catch (_) {}
+    } catch (error) {
+      Log.w('library', 'handle edit playlist failed', error);
+    }
     if (!mounted) return;
     await showEditPlaylistDialog(
       context,
@@ -417,7 +421,6 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   Widget _buildEditButton() {
     if (!_isOwnedByUser || !_hasRealPlaylistId) return const SizedBox.shrink();
     return IconButton(
-      tooltip: 'Edit playlist',
       onPressed: _handleEditPlaylist,
       icon: Icon(
         Icons.edit_rounded,
@@ -429,7 +432,6 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
   Widget _buildDeleteButton() {
     if (!_isOwnedByUser || !_hasRealPlaylistId) return const SizedBox.shrink();
     return IconButton(
-      tooltip: 'Delete playlist',
       onPressed: _handleDeletePlaylist,
       icon: Icon(
         Icons.delete_rounded,
@@ -678,6 +680,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
           playlistId,
         );
       } catch (apiError) {
+        Log.e('library', 'load songs failed', apiError);
         debugPrint(
           'Authenticated playlist fetch failed, falling back to public scrape: $apiError',
         );
@@ -727,6 +730,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         errorMessage: null,
       );
     } catch (error) {
+      Log.e('library', 'load songs failed', error);
       if (!mounted) return;
       setState(() {
         _errorMessage = 'Failed to load songs from YouTube.\n$error';
@@ -807,6 +811,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         }
       }
     } catch (error) {
+      Log.e('library', 'play you tube song at index failed', error);
       debugPrint('YouTube audio playback failed for $videoId: $error');
       if (!mounted) return;
       AppFlushbar.error(context, 'Failed to play audio: $error');
@@ -875,6 +880,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       });
       AppFlushbar.success(context, 'Removed "$title" from playlist');
     } catch (error) {
+      Log.e('library', 'remove song from playlist failed', error);
       if (!mounted) return;
       setState(() => _removingVideoId = null);
       AppFlushbar.error(context, 'Failed to remove song: $error');
@@ -938,7 +944,9 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
       final ids = await ProfileService.fetchProfilePlaylistIds(user.uid);
       if (!mounted) return;
       setState(() => _isFeaturedOnProfile = ids.contains(playlistId));
-    } catch (_) {}
+    } catch (error) {
+      Log.w('library', 'load featured status failed', error);
+    }
   }
 
   Future<void> _handleToggleFeatured() async {
@@ -958,6 +966,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         wasFeatured ? 'Removed from your profile' : 'Featured on your profile',
       );
     } catch (error) {
+      Log.e('library', 'handle toggle featured failed', error);
       if (!mounted) return;
       setState(() => _isFeaturedOnProfile = wasFeatured);
       AppFlushbar.error(context, "Couldn't update your profile: $error");
@@ -1460,39 +1469,31 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                 subtitle:
                                     (artistId.isNotEmpty &&
                                         widget.onOpenArtist != null)
-                                    ? MouseRegion(
-                                        cursor: SystemMouseCursors.click,
-                                        child: RichText(
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          text: TextSpan(
-                                            text: artist,
-                                            style: DefaultTextStyle.of(context)
-                                                .style
-                                                .merge(
-                                                  TextStyle(
-                                                    color: colorScheme
-                                                        .onSurfaceVariant,
-                                                    decoration: TextDecoration
-                                                        .underline,
-                                                  ),
-                                                ),
-                                            recognizer: TapGestureRecognizer()
-                                              ..onTap = () =>
-                                                  widget.onOpenArtist!(
-                                                    artistId,
-                                                    artist,
-                                                  ),
-                                          ),
+                                    ? ArtistLine(
+                                        videoId: videoId,
+                                        artist: artist,
+                                        title: title,
+                                        onTap: () => widget.onOpenArtist!(
+                                          artistId,
+                                          artist,
                                         ),
+                                        style: DefaultTextStyle.of(context)
+                                            .style
+                                            .copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
                                       )
-                                    : Text(
-                                        artist,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: colorScheme.onSurfaceVariant,
-                                        ),
+                                    : ArtistLine(
+                                        videoId: videoId,
+                                        artist: artist,
+                                        title: title,
+                                        style: DefaultTextStyle.of(context)
+                                            .style
+                                            .copyWith(
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
                                       ),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,

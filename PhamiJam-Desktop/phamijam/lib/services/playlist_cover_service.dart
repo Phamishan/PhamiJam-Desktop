@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class PlaylistCoverService {
   PlaylistCoverService._();
@@ -90,7 +91,9 @@ class PlaylistCoverService {
       await FirebaseStorage.instance
           .ref('playlistCovers/$uid/${_docId(playlistId)}.jpg')
           .delete();
-    } catch (_) {}
+    } catch (error) {
+      Log.w('library', 'remove failed', error);
+    }
     await collection.doc(_docId(playlistId)).delete();
   }
 }

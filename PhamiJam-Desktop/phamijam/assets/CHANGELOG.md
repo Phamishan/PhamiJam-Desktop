@@ -148,6 +148,13 @@
   - Added a confirmation before signing out
   - Fixed crossfade pausing for a moment between songs
   - Renamed "Add to play next" to "Play next" and "Liked" to "Liked Songs"
+- 1.2.7 - 17/11/2026
+  - Added featured artists next to the artist name on songs
+  - Added saving your Jamstats as an image
+  - Made PhamiJam playlists look and work like YouTube playlists
+  - Hidden playlists no longer show when adding a song to a playlist
+  - Fixed synced lyrics
+  - Improved the log sent from Settings
 
 ## Screenshots:
 

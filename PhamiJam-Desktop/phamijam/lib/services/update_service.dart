@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:phamijam/models/app_update_info.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class UpdateService {
   UpdateService._();
@@ -13,11 +14,13 @@ class UpdateService {
   static const String _installerAssetName = 'phamijam_setup.exe';
 
   static Future<AppUpdateInfo?> checkForUpdate() async {
+    Log.i('update', 'checking for updates');
     final response = await http.get(
       Uri.parse('https://api.github.com/repos/$_repo/releases/latest'),
       headers: const {'Accept': 'application/vnd.github+json'},
     );
     if (response.statusCode != 200) {
+      Log.e('update', 'update check failed (HTTP ${response.statusCode})');
       throw Exception('Failed to check for updates (${response.statusCode}).');
     }
 
@@ -35,10 +38,19 @@ class UpdateService {
         break;
       }
     }
-    if (downloadUrl == null) return null;
+    if (downloadUrl == null) {
+      Log.w('update', 'latest release $latestVersion has no installer asset');
+      return null;
+    }
 
     final packageInfo = await PackageInfo.fromPlatform();
-    if (!_isNewer(latestVersion, packageInfo.version)) return null;
+    final newer = _isNewer(latestVersion, packageInfo.version);
+    Log.i(
+      'update',
+      'latest $latestVersion, installed ${packageInfo.version}: '
+          '${newer ? 'update available' : 'up to date'}',
+    );
+    if (!newer) return null;
 
     return AppUpdateInfo(
       latestVersion: latestVersion,
@@ -74,9 +86,11 @@ class UpdateService {
     void Function(double progress)? onProgress,
   }) async {
     final client = http.Client();
+    Log.i('update', 'downloading installer');
     try {
       final response = await client.send(http.Request('GET', Uri.parse(url)));
       if (response.statusCode != 200) {
+        Log.e('update', 'installer download failed (HTTP ${response.statusCode})');
         throw Exception('Failed to download update (${response.statusCode}).');
       }
 
@@ -96,6 +110,7 @@ class UpdateService {
           })
           .pipe(sink);
       await sink.close();
+      Log.i('update', 'installer downloaded ($received bytes)');
 
       return file.path;
     } finally {
@@ -104,6 +119,7 @@ class UpdateService {
   }
 
   static Future<void> runInstallerAndExit(String installerPath) async {
+    Log.i('update', 'starting installer and exiting');
     await Process.start(installerPath, [
       '/VERYSILENT',
       '/SUPPRESSMSGBOX',

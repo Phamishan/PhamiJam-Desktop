@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class FeaturedPlaylistsTile extends StatelessWidget {
   const FeaturedPlaylistsTile({
@@ -21,7 +22,8 @@ class FeaturedPlaylistsTile extends StatelessWidget {
       ids.map((id) async {
         try {
           return await YoutubePlaylistService.fetchPlaylistMetadata(id);
-        } catch (_) {
+        } catch (error) {
+          Log.w('profile', 'operation failed', error);
           return null;
         }
       }),

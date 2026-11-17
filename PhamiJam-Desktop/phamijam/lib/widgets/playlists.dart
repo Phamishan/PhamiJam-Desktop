@@ -18,6 +18,7 @@ import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class PlaylistsPage extends StatefulWidget {
   final void Function(String, {Map<String, dynamic>? extra})? onTabSelected;
@@ -237,7 +238,9 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
         if (message != null && message.isNotEmpty) {
           detail = ' - $message';
         }
-      } catch (_) {}
+      } catch (error) {
+        Log.w('library', 'normalize playlist item failed', error);
+      }
       throw Exception(
         'Failed to load mine playlists: ${response.statusCode}$detail',
       );
@@ -311,6 +314,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
         _hasLoadedOnce = true;
         return;
       } catch (mineError) {
+        Log.e('library', 'fetch user playlists failed', mineError);
         debugPrint('YouTube mine playlists failed: $mineError');
       }
 
@@ -361,6 +365,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       _cachedChannelId = _channelId;
       _hasLoadedOnce = true;
     } catch (e) {
+      Log.e('library', 'fetch user playlists failed', e);
       debugPrint('Error fetching playlists: $e');
       if (!mounted) return;
       setState(() {
@@ -406,6 +411,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     try {
       await MixedPlaylistService.create(name);
     } catch (error) {
+      Log.e('library', 'create mixed playlist failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't create playlist: $error");
       }
@@ -423,6 +429,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     try {
       await MixedPlaylistService.rename(playlist['id'] as String, name);
     } catch (error) {
+      Log.e('library', 'rename mixed playlist failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't rename playlist: $error");
       }
@@ -443,6 +450,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
         File(picked.path),
       );
     } catch (error) {
+      Log.e('library', 'change mixed cover failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't update cover image: $error");
       }
@@ -453,6 +461,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     try {
       await PlaylistCoverService.remove(MixedPlaylistService.coverKey(id));
     } catch (error) {
+      Log.e('library', 'remove mixed cover failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't remove cover image: $error");
       }
@@ -466,6 +475,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     try {
       await MixedPlaylistService.delete(playlist['id'] as String);
     } catch (error) {
+      Log.e('library', 'delete mixed playlist failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't delete playlist: $error");
       }
@@ -674,7 +684,9 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
         if (message != null && message.isNotEmpty) {
           detail = ': $message';
         }
-      } catch (_) {}
+      } catch (error) {
+        Log.w('library', 'initialize ytmusic failed', error);
+      }
 
       throw Exception(
         'Failed to create playlist (${response.statusCode})$detail',
@@ -684,7 +696,8 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     try {
       final payload = jsonDecode(response.body) as Map<String, dynamic>;
       return _normalizePlaylistItem(payload);
-    } catch (_) {
+    } catch (error) {
+      Log.w('library', 'initialize ytmusic failed', error);
       return <String, dynamic>{
         'title': title,
         'description': description,
@@ -804,6 +817,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                           'Playlist created successfully.',
                         );
                       } catch (e) {
+                        Log.e('library', 'show create playlist dialog failed', e);
                         if (!mounted) return;
                         AppFlushbar.error(this.context, '$e');
                         setState(() {

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:phamijam/services/liked_songs_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class LikedSongsProvider extends ChangeNotifier {
   bool isLoading = false;
@@ -21,6 +22,7 @@ class LikedSongsProvider extends ChangeNotifier {
         ..clear()
         ..addAll(liked.map((s) => s['videoId'] as String));
     } catch (error) {
+      Log.e('library', 'refresh failed', error);
       debugPrint('LikedSongsProvider: refresh failed: $error');
     } finally {
       isLoading = false;
@@ -44,6 +46,7 @@ class LikedSongsProvider extends ChangeNotifier {
         await LikedSongsService.like(song);
       }
     } catch (error) {
+      Log.e('library', 'toggle like failed', error);
       _applyLikeState(videoId: videoId, song: song, liked: alreadyLiked);
       notifyListeners();
       rethrow;

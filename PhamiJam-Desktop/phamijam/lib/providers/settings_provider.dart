@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:phamijam/services/hidden_playlists_service.dart';
 import 'package:phamijam/services/profile_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:phamijam/services/log_service.dart';
 
 const String _suggestRemovingSkippedSongsKey =
     'phamijam.suggest_removing_skipped_songs';
@@ -97,6 +98,7 @@ class SettingsProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_showActivityEnabledKey, _showActivityEnabled);
     } catch (error) {
+      Log.e('settings', 'refresh show activity enabled failed', error);
       debugPrint('SettingsProvider: refreshShowActivityEnabled failed: $error');
     }
   }
@@ -111,6 +113,7 @@ class SettingsProvider extends ChangeNotifier {
     try {
       await ProfileService.setShowActivity(value);
     } catch (error) {
+      Log.e('settings', 'set show activity enabled failed', error);
       _showActivityEnabled = previous;
       notifyListeners();
       await prefs.setBool(_showActivityEnabledKey, previous);
@@ -178,6 +181,7 @@ class SettingsProvider extends ChangeNotifier {
         _hiddenPlaylistIds.toList(),
       );
     } catch (error) {
+      Log.e('settings', 'refresh hidden playlists failed', error);
       debugPrint('SettingsProvider: refreshHiddenPlaylists failed: $error');
     }
   }
@@ -205,6 +209,7 @@ class SettingsProvider extends ChangeNotifier {
         await HiddenPlaylistsService.unhide(playlistId);
       }
     } catch (error) {
+      Log.e('settings', 'set playlist hidden failed', error);
       _hiddenPlaylistIds = {..._hiddenPlaylistIds};
       if (hidden) {
         _hiddenPlaylistIds.remove(playlistId);

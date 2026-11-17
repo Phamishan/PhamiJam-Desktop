@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class AutoplayService {
   AutoplayService._();
@@ -59,6 +60,7 @@ class AutoplayService {
       }
       return continuation;
     } catch (error) {
+      Log.e('autoplay', 'operation failed', error);
       debugPrint('AutoplayService: fetchAutoplayContinuation failed: $error');
       return [];
     }

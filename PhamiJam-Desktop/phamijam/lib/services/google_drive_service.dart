@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
+import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/drive_duration_cache_service.dart';
 import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
@@ -19,7 +20,10 @@ class GoogleDriveService {
     final requiresAuth = await DriveFolderService.getRequiresAuth();
     if (!requiresAuth) return const {};
     final token = await GoogleDriveAuthService.ensureAccessToken();
-    if (token == null || token.isEmpty) return const {};
+    if (token == null || token.isEmpty) {
+      Log.w('drive', 'folder needs sign-in but no Drive access token available');
+      return const {};
+    }
     return {'Authorization': 'Bearer $token'};
   }
 
@@ -40,6 +44,14 @@ class GoogleDriveService {
 
     final response = await http.get(uri, headers: headers);
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      Log.e(
+        'drive',
+        'listing folder failed (${response.statusCode}, '
+            'auth ${headers.isEmpty ? 'none' : 'token'})',
+        response.body.length > 300
+            ? response.body.substring(0, 300)
+            : response.body,
+      );
       throw Exception(
         'Failed to list Google Drive folder (${response.statusCode}).',
       );
@@ -48,6 +60,7 @@ class GoogleDriveService {
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     final files = (payload['files'] as List? ?? const [])
         .whereType<Map<String, dynamic>>();
+    Log.i('drive', 'folder listing returned ${files.length} audio files');
 
     return Future.wait(files.map(_songFromFile));
   }
@@ -65,6 +78,7 @@ class GoogleDriveService {
     );
     final listResponse = await http.get(listUri, headers: headers);
     if (listResponse.statusCode < 200 || listResponse.statusCode >= 300) {
+      Log.e('drive', 'searching for PhamiJam folder failed (${listResponse.statusCode})');
       throw Exception(
         'Failed to search Google Drive (${listResponse.statusCode}).',
       );
@@ -75,8 +89,12 @@ class GoogleDriveService {
         .whereType<Map<String, dynamic>>();
     if (existing.isNotEmpty) {
       final id = existing.first['id'] as String?;
-      if (id != null && id.isNotEmpty) return id;
+      if (id != null && id.isNotEmpty) {
+        Log.i('drive', 'found existing PhamiJam folder');
+        return id;
+      }
     }
+    Log.i('drive', 'no PhamiJam folder found, creating one');
 
     final createResponse = await http.post(
       Uri.parse('$_driveApiBase/files'),
@@ -87,6 +105,7 @@ class GoogleDriveService {
       }),
     );
     if (createResponse.statusCode < 200 || createResponse.statusCode >= 300) {
+      Log.e('drive', 'creating PhamiJam folder failed (${createResponse.statusCode})');
       throw Exception(
         'Failed to create the PhamiJam Drive folder '
         '(${createResponse.statusCode}).',
@@ -147,11 +166,16 @@ class GoogleDriveService {
     try {
       final response = await http.get(uri);
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        Log.w('drive', 'cannot access folder (HTTP ${response.statusCode})');
         return false;
       }
       final payload = jsonDecode(response.body) as Map<String, dynamic>;
-      return payload['mimeType'] == 'application/vnd.google-apps.folder';
-    } catch (_) {
+      final isFolder =
+          payload['mimeType'] == 'application/vnd.google-apps.folder';
+      if (!isFolder) Log.w('drive', 'link is not a folder');
+      return isFolder;
+    } catch (error) {
+      Log.w('drive', 'checking folder access failed', error);
       return false;
     }
   }

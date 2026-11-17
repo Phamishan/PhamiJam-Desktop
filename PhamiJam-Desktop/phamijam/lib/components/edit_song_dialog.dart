@@ -5,6 +5,7 @@ import 'package:phamijam/models/edited_song_trim.dart';
 import 'package:phamijam/providers/edited_songs_provider.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 Future<void> showEditSongDialog(
   BuildContext context, {
@@ -107,7 +108,8 @@ class _EditSongDialogState extends State<_EditSongDialog> {
         _loadingDuration = false;
         _initRange();
       });
-    } catch (_) {
+    } catch (error) {
+      Log.w('edits', 'fetch duration failed', error);
       if (!mounted) return;
       setState(() => _loadingDuration = false);
     }
@@ -135,6 +137,7 @@ class _EditSongDialogState extends State<_EditSongDialog> {
       await context.read<EditedSongsProvider>().saveTrim(trim);
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
+      Log.e('edits', 'save failed', error);
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(
@@ -152,6 +155,7 @@ class _EditSongDialogState extends State<_EditSongDialog> {
       );
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
+      Log.e('edits', 'remove failed', error);
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(

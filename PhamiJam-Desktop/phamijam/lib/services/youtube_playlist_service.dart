@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:phamijam/services/google_auth_service.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
 
 class YoutubePlaylistService {
@@ -12,6 +13,7 @@ class YoutubePlaylistService {
       forceRefresh: forceRefresh,
     );
     if (accessToken == null || accessToken.isEmpty) {
+      Log.e('youtube', 'no Google access token available for request');
       throw Exception('Google access token not found. Please sign in again.');
     }
     return accessToken;
@@ -23,8 +25,10 @@ class YoutubePlaylistService {
       uri,
       headers: {'Authorization': 'Bearer $accessToken'},
     );
+    _logIfFailed('GET', uri, response);
 
     if (response.statusCode == 401) {
+      Log.w('youtube', 'GET ${uri.path} got 401, refreshing token and retrying');
       accessToken = await _getAccessToken(forceRefresh: true);
       response = await http.get(
         uri,
@@ -47,8 +51,10 @@ class YoutubePlaylistService {
       },
       body: body,
     );
+    _logIfFailed('POST', uri, response);
 
     if (response.statusCode == 401) {
+      Log.w('youtube', 'POST ${uri.path} got 401, refreshing token and retrying');
       accessToken = await _getAccessToken(forceRefresh: true);
       response = await http.post(
         uri,
@@ -68,8 +74,10 @@ class YoutubePlaylistService {
       uri,
       headers: {'Authorization': 'Bearer $accessToken'},
     );
+    _logIfFailed('DELETE', uri, response);
 
     if (response.statusCode == 401) {
+      Log.w('youtube', 'DELETE ${uri.path} got 401, refreshing token and retrying');
       accessToken = await _getAccessToken(forceRefresh: true);
       response = await http.delete(
         uri,
@@ -77,6 +85,19 @@ class YoutubePlaylistService {
       );
     }
     return response;
+  }
+
+  static void _logIfFailed(String method, Uri uri, http.Response response) {
+    if (response.statusCode >= 200 && response.statusCode < 300) return;
+    if (response.statusCode == 401) return;
+    final body = response.body.length > 400
+        ? '${response.body.substring(0, 400)}…'
+        : response.body;
+    Log.e(
+      'youtube',
+      '$method ${uri.path} failed (${response.statusCode})',
+      body,
+    );
   }
 
   static String _bestThumbnailUrl(Map<String, dynamic> snippet) {

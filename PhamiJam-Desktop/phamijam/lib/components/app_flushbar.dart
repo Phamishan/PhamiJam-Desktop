@@ -1,5 +1,6 @@
 import 'package:another_flushbar/flushbar.dart';
 import 'package:flutter/material.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class AppFlushbar {
   const AppFlushbar._();
@@ -24,6 +25,7 @@ class AppFlushbar {
   }
 
   static void success(BuildContext context, String message) {
+    Log.i('ui', 'shown to user: $message');
     final colorScheme = Theme.of(context).colorScheme;
     show(
       context,
@@ -35,6 +37,7 @@ class AppFlushbar {
   }
 
   static void error(BuildContext context, String message) {
+    Log.w('ui', 'error shown to user: $message');
     final colorScheme = Theme.of(context).colorScheme;
     show(
       context,
@@ -46,6 +49,7 @@ class AppFlushbar {
   }
 
   static void info(BuildContext context, String message) {
+    Log.i('ui', 'shown to user: $message');
     final colorScheme = Theme.of(context).colorScheme;
     show(
       context,

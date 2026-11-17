@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:phamijam/services/saved_playlists_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 String? extractPlaylistId(String input) {
   final trimmed = input.trim();
@@ -34,6 +35,7 @@ class SavedPlaylistsProvider extends ChangeNotifier {
       _playlistIds = await SavedPlaylistsService.fetchAll();
       await Future.wait(_playlistIds.map(_fetchMetadata));
     } catch (error) {
+      Log.e('library', 'refresh failed', error);
       debugPrint('SavedPlaylistsProvider: refresh failed: $error');
     } finally {
       isLoading = false;
@@ -52,6 +54,7 @@ class SavedPlaylistsProvider extends ChangeNotifier {
         notifyListeners();
       }
     } catch (error) {
+      Log.e('library', 'fetch metadata failed', error);
       debugPrint('SavedPlaylistsProvider: metadata fetch failed: $error');
     }
   }
@@ -68,7 +71,8 @@ class SavedPlaylistsProvider extends ChangeNotifier {
     Map<String, dynamic>? playlist;
     try {
       playlist = await YoutubePlaylistService.fetchPlaylistMetadata(playlistId);
-    } catch (_) {
+    } catch (error) {
+      Log.w('library', 'save from input failed', error);
       return "Couldn't load that playlist. Check the link and try again.";
     }
     if (playlist == null) {
@@ -93,6 +97,7 @@ class SavedPlaylistsProvider extends ChangeNotifier {
     try {
       await SavedPlaylistsService.unsave(playlistId);
     } catch (error) {
+      Log.e('library', 'unsave failed', error);
       _playlistIds = previousIds;
       if (previousPlaylist != null) {
         _playlists[playlistId] = previousPlaylist;

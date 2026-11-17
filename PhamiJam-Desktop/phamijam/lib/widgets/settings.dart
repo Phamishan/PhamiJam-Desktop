@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -21,7 +20,7 @@ import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const String _logSubmissionEmail = 'phamishan93@gmail.com';
+const String _logSubmissionEmail = 'phamishan@phamishan.dk';
 const int _maxLogEmailBodyChars = 6000;
 
 enum _UpdateState {
@@ -1146,36 +1145,41 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _submitLog() async {
-    final logText = await LogService.instance.fullLogText();
-    if (logText.trim().isEmpty) {
+    Log.i('settings', 'submit log pressed');
+    final fullReport = await LogService.instance.buildReport();
+    if (fullReport.trim().isEmpty) {
       if (mounted) AppFlushbar.error(context, 'No log recorded yet.');
       return;
     }
 
-    final body = logText.length > _maxLogEmailBodyChars
-        ? '(showing the most recent part of the log)\n\n'
-              '${logText.substring(logText.length - _maxLogEmailBodyChars)}'
-        : logText;
+    await Clipboard.setData(ClipboardData(text: fullReport));
+    final body = await LogService.instance.buildReport(
+      maxChars: _maxLogEmailBodyChars,
+    );
 
     final mailtoUri = Uri(
       scheme: 'mailto',
       path: _logSubmissionEmail,
       queryParameters: {
         'subject': 'PhamiJam Desktop log - ${DateTime.now().toIso8601String()}',
-        'body': 'Platform: ${Platform.operatingSystem}\n\n$body',
+        'body': body,
       },
     );
 
     final launched = await launchUrl(mailtoUri);
-    if (!launched) {
-      await Clipboard.setData(ClipboardData(text: logText));
-      if (mounted) {
-        AppFlushbar.error(
-          context,
-          'No email app found - log copied to clipboard instead. '
-          'Paste it into an email to $_logSubmissionEmail.',
-        );
-      }
+    if (!mounted) return;
+    if (launched) {
+      AppFlushbar.success(
+        context,
+        'Email opened. The full log is also on your clipboard - paste it '
+        'into the email if you can.',
+      );
+    } else {
+      AppFlushbar.error(
+        context,
+        'No email app found - the full log is on your clipboard. '
+        'Paste it into an email to $_logSubmissionEmail.',
+      );
     }
   }
 

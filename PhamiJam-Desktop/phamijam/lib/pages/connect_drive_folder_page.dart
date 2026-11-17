@@ -7,6 +7,7 @@ import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:webview_windows/webview_windows.dart';
+import 'package:phamijam/services/log_service.dart';
 
 enum _ConnectMode { chooser, pastedLink, oauth }
 
@@ -68,6 +69,7 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
       if (!mounted) return;
       setState(() => _isWebviewReady = true);
     } catch (error) {
+      Log.e('drive', 'initialize failed', error);
       if (!mounted) return;
       setState(
         () => _errorMessage = "Couldn't connect to Google Drive: $error",
@@ -120,6 +122,7 @@ class _ConnectDriveFolderPageState extends State<ConnectDriveFolderPage> {
       AppFlushbar.success(context, 'Google Drive folder connected.');
       Navigator.of(context).pop(true);
     } catch (error) {
+      Log.e('drive', 'handle auth code failed', error);
       if (!mounted) return;
       setState(() {
         _settingUpFolder = false;

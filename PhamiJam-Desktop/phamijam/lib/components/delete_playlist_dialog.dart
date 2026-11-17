@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 Future<void> confirmDeletePlaylist(
   BuildContext context, {
@@ -44,6 +45,7 @@ Future<void> confirmDeletePlaylist(
       AppFlushbar.success(context, 'Playlist deleted successfully.');
     }
   } catch (e) {
+    Log.e('library', 'operation failed', e);
     if (context.mounted) {
       AppFlushbar.error(context, '$e');
     }

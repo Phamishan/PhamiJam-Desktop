@@ -10,6 +10,7 @@ import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/widgets/profile_grid/profile_grid_view.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key, this.onTabSelected});
@@ -74,6 +75,7 @@ class _ProfilePageState extends State<ProfilePage> {
         _saving = false;
       });
     } catch (error) {
+      Log.e('profile', 'save edit failed', error);
       if (!mounted) return;
       setState(() => _saving = false);
       AppFlushbar.error(context, "Couldn't save your layout: $error");
@@ -333,6 +335,7 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
         });
         return;
       } catch (error) {
+        Log.e('profile', 'save failed', error);
         setState(() {
           _saving = false;
           _usernameError = "Couldn't save username: $error";
@@ -348,6 +351,7 @@ class _EditProfileDialogState extends State<_EditProfileDialog> {
       );
       if (mounted) Navigator.of(context).pop();
     } catch (error) {
+      Log.e('profile', 'save failed', error);
       if (mounted) {
         setState(() => _saving = false);
         AppFlushbar.error(context, "Couldn't save profile info: $error");

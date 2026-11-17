@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:google_sign_in_all_platforms/google_sign_in_all_platforms.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:http/http.dart' as http;
 
 class GoogleAuthService {
@@ -58,11 +59,13 @@ class GoogleAuthService {
   ) async {
     final refreshToken = credentials.refreshToken;
     if (refreshToken == null || refreshToken.isEmpty) {
+      Log.w('auth', 'token refresh skipped: no refresh token stored');
       return null;
     }
 
     final clientId = dotenv.env['CLIENT_ID'];
     if (clientId == null || clientId.isEmpty) {
+      Log.e('auth', 'token refresh skipped: CLIENT_ID missing from .env');
       return null;
     }
 
@@ -79,14 +82,21 @@ class GoogleAuthService {
     );
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      Log.w(
+        'auth',
+        'token refresh rejected (${response.statusCode}): '
+            '${response.body.length > 200 ? response.body.substring(0, 200) : response.body}',
+      );
       return null;
     }
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     final refreshedAccessToken = payload['access_token'] as String?;
     if (refreshedAccessToken == null || refreshedAccessToken.isEmpty) {
+      Log.w('auth', 'token refresh response had no access token');
       return null;
     }
+    Log.i('auth', 'access token refreshed');
 
     final expiresInSeconds = (payload['expires_in'] as num?)?.toInt();
     final expiresAt = expiresInSeconds == null
@@ -109,16 +119,22 @@ class GoogleAuthService {
     try {
       final lightweightCredentials = await googleSignIn.lightweightSignIn();
       if (lightweightCredentials != null) {
+        Log.i('auth', 'restored session with lightweight sign-in');
         return lightweightCredentials;
       }
-    } catch (_) {}
+    } catch (error) {
+      Log.w('auth', 'lightweight sign-in failed', error);
+    }
 
     try {
       final silentCredentials = await googleSignIn.silentSignIn();
       if (silentCredentials != null) {
+        Log.i('auth', 'restored session with silent sign-in');
         return silentCredentials;
       }
-    } catch (_) {}
+    } catch (error) {
+      Log.w('auth', 'silent sign-in failed', error);
+    }
 
     return null;
   }
@@ -179,21 +195,35 @@ class GoogleAuthService {
       }
     }
 
+    Log.i('auth', 'falling back to interactive Google sign-in');
     final onlineCredentials = await googleSignIn.signInOnline();
     _updateCredentials(onlineCredentials);
     if (!_hasRequiredScopes(onlineCredentials?.scopes)) {
+      Log.w(
+        'auth',
+        'sign-in finished without the required scopes '
+            '(got ${onlineCredentials?.scopes.length ?? 0} scopes)',
+      );
       return null;
     }
     return _accessToken;
   }
 
   static Future<GoogleSignInCredentials?> signIn() async {
+    Log.i('auth', 'Google sign-in started');
     final credentials = await googleSignIn.signInOnline();
+    Log.i(
+      'auth',
+      credentials == null
+          ? 'Google sign-in returned nothing'
+          : 'Google sign-in completed (${credentials.scopes.length} scopes)',
+    );
     _updateCredentials(credentials);
     return credentials;
   }
 
   static Future<GoogleSignInCredentials?> signInFresh() async {
+    Log.i('auth', 'fresh Google sign-in (sign out first)');
     await signOut();
     final credentials = await googleSignIn.signInOnline();
     _updateCredentials(credentials);
@@ -201,6 +231,7 @@ class GoogleAuthService {
   }
 
   static Future<void> signOut() async {
+    Log.i('auth', 'Google sign-out');
     await googleSignIn.signOut();
     _accessToken = null;
     _credentials = null;

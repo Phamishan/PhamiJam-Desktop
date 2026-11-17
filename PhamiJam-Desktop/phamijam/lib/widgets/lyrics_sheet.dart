@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/services/lyrics_service.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class LyricsSheet extends StatefulWidget {
   const LyricsSheet({super.key});
@@ -104,7 +105,8 @@ class _LyricsSheetState extends State<LyricsSheet> {
             ? 'No lyrics found for this song.'
             : null;
       });
-    } catch (_) {
+    } catch (error) {
+      Log.w('lyrics', 'load failed', error);
       if (!mounted) return;
       setState(() {
         _loading = false;

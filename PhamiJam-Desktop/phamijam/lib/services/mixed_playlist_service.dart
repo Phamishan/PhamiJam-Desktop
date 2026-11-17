@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class MixedPlaylistService {
   MixedPlaylistService._();
@@ -99,7 +100,9 @@ class MixedPlaylistService {
     await collection.doc(id).delete();
     try {
       await PlaylistCoverService.remove(coverKey(id));
-    } catch (_) {}
+    } catch (error) {
+      Log.w('library', 'delete failed', error);
+    }
   }
 
   static String trackKey(Map<String, dynamic> track) {

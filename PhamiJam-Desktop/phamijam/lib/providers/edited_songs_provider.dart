@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:phamijam/models/edited_song_trim.dart';
 import 'package:phamijam/services/edited_songs_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class EditedSongsProvider extends ChangeNotifier {
   Map<String, EditedSongTrim> _trims = {};
@@ -36,6 +37,7 @@ class EditedSongsProvider extends ChangeNotifier {
         for (final trim in list) _key(trim.videoId, trim.playlistId): trim,
       };
     } catch (error) {
+      Log.e('edits', 'refresh failed', error);
       debugPrint('EditedSongsProvider: refresh failed: $error');
     } finally {
       isLoading = false;
@@ -53,6 +55,7 @@ class EditedSongsProvider extends ChangeNotifier {
     try {
       await EditedSongsService.setTrim(trim);
     } catch (error) {
+      Log.e('edits', 'save trim failed', error);
       _trims = {..._trims};
       if (previous != null) {
         _trims[key] = previous;
@@ -74,6 +77,7 @@ class EditedSongsProvider extends ChangeNotifier {
     try {
       await EditedSongsService.removeTrim(videoId, playlistId);
     } catch (error) {
+      Log.e('edits', 'remove trim failed', error);
       _trims = {..._trims, key: previous};
       notifyListeners();
       rethrow;

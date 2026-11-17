@@ -16,6 +16,7 @@ import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/enums.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
+import 'package:phamijam/services/log_service.dart';
 
 String _formatDurationSeconds(int seconds) {
   final minutes = seconds ~/ 60;
@@ -1724,6 +1725,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
         return response.bodyBytes;
       }
     } catch (error) {
+      Log.e('browse', 'download image bytes failed', error);
       debugPrint('Failed to download image from $imageUrl: $error');
     }
     return null;
@@ -1772,6 +1774,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
         _playback.markCurrentSourceIndex(index);
       }
     } catch (error) {
+      Log.e('browse', 'play album track at index failed', error);
       debugPrint('Album playback failed for $videoId: $error');
       if (!mounted) return;
       AppFlushbar.error(context, 'Failed to play audio: $error');

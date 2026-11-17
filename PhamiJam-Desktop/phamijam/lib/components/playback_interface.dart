@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:phamijam/widgets/artist_line.dart';
 import 'package:flutter/services.dart';
 import 'package:marquee/marquee.dart';
 import 'package:audio_video_progress_bar/audio_video_progress_bar.dart';
@@ -21,6 +22,7 @@ class PlaybackInterface extends StatefulWidget {
   final VoidCallback onShuffle;
   final VoidCallback onUnshuffle;
   final String artist;
+  final String? videoId;
   final String songName;
   final List<dynamic> queue;
   final VoidCallback onQueuePressed;
@@ -50,6 +52,7 @@ class PlaybackInterface extends StatefulWidget {
     required this.onUnshuffle,
     required this.artist,
     required this.songName,
+    this.videoId,
     required this.queue,
     required this.onQueuePressed,
     this.onArtistTap,
@@ -256,34 +259,17 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
                                       ),
                                     ),
                             ),
-                            widget.onArtistTap == null
-                                ? Text(
-                                    widget.artist,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: colorScheme.onSurfaceVariant,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  )
-                                : MouseRegion(
-                                    cursor: SystemMouseCursors.click,
-                                    child: GestureDetector(
-                                      onTap: widget.onArtistTap,
-                                      child: Text(
-                                        widget.artist,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: colorScheme.onSurfaceVariant,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500,
-                                          decoration: TextDecoration.underline,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
+                            ArtistLine(
+                              artist: widget.artist,
+                              title: widget.songName,
+                              videoId: widget.videoId,
+                              onTap: widget.onArtistTap,
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ],
                         ),
                       ),

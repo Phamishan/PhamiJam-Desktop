@@ -35,6 +35,7 @@ import 'package:phamijam/services/drive_folder_service.dart';
 import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/presence_service.dart';
 import 'package:phamijam/services/profile_service.dart';
@@ -161,6 +162,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     });
     _friends = context.read<FriendsProvider>();
     _friends.start();
+    _registerLogSnapshots();
     WidgetsBinding.instance.addObserver(this);
     PresenceService.startHeartbeat();
     final pendingDeepLink = widget.pendingDeepLink;
@@ -615,9 +617,47 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     return KeyEventResult.handled;
   }
 
+  void _registerLogSnapshots() {
+    final log = LogService.instance;
+    final settings = context.read<SettingsProvider>();
+    final downloads = context.read<DownloadsProvider>();
+    log.registerSnapshot(
+      'Player',
+      () => [
+        'song: "${_playback.songName}" by ${_playback.artistName} '
+            '[${_playback.currentSongPath ?? 'none'}]',
+        'playing: ${_playback.isPlaying}, engine: ${_playback.engine.name}',
+        'position: ${_playback.progress.inSeconds}s / '
+            '${_playback.duration?.inSeconds ?? 0}s',
+        'queue: ${_playback.queue.length} upcoming',
+        'shuffle: ${_playback.isShuffled}, repeat: ${_playback.repeatMode.name}',
+        'sleep timer: ${_playback.hasSleepTimer ? 'on' : 'off'}',
+        'listen along: ${_playback.isListeningAlong}, '
+            'remote controlling: ${_playback.isRemoteControlling}',
+        'current tab: $_selectedTab',
+      ].join('\n'),
+    );
+    log.registerSnapshot(
+      'Settings',
+      () => [
+        'search engine: ${settings.searchEngine.name}',
+        'autoplay: ${settings.autoplayEnabled}',
+        'crossfade: ${settings.crossfadeEnabled} (${settings.crossfadeDurationMs} ms)',
+        'Discord rich presence: ${settings.discordRichPresenceEnabled}',
+        'show activity: ${settings.showActivityEnabled}',
+        'suggest removing skipped: ${settings.suggestRemovingSkippedSongs}',
+      ].join('\n'),
+    );
+    log.registerSnapshot(
+      'Downloads',
+      () => '${downloads.totalTracks} items, ${downloads.totalSizeBytes} bytes',
+    );
+  }
+
   Future<void> _resumeRestoredSong() async {
     final path = _playback.currentSongPath;
     if (path == null || path.isEmpty) return;
+    Log.i('player', 'resuming last played song from home');
 
     try {
       if (path.startsWith('yt:')) {
@@ -638,23 +678,30 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         artist: _playback.artistName,
         coverImageBytes: _playback.coverImageBytes,
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
+      Log.e('player', 'resuming last played song failed', error, stackTrace);
       if (!mounted) return;
       AppFlushbar.error(context, "Couldn't resume the last played song.");
     }
   }
 
   Future<YTMusic> _ensureYtMusic() {
-    _ytmusicFuture ??= YTMusic.create().then((ytmusic) {
-      _ytmusic = ytmusic;
-      return ytmusic;
-    });
+    _ytmusicFuture ??= YTMusic.create()
+        .then((ytmusic) {
+          _ytmusic = ytmusic;
+          return ytmusic;
+        })
+        .catchError((Object error) {
+          Log.e('search', 'could not start YouTube Music client', error);
+          throw error;
+        });
     return _ytmusicFuture!;
   }
 
   Future<void> _submitSearch() async {
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
+    Log.i('search', 'search submitted (query length ${query.length})');
 
     await _ensureYtMusic();
     if (!mounted) return;
@@ -679,9 +726,21 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     }
 
     final resolveFuture = (() async {
-      final manifest = await _youtubeExplode.videos.streamsClient.getManifest(
-        videoId,
-      );
+      final resolveWatch = Stopwatch()..start();
+      yt.StreamManifest manifest;
+      try {
+        manifest = await _youtubeExplode.videos.streamsClient.getManifest(
+          videoId,
+        );
+      } catch (error) {
+        Log.e(
+          'resolver',
+          'manifest fetch failed for $videoId after '
+              '${resolveWatch.elapsedMilliseconds} ms',
+          error,
+        );
+        rethrow;
+      }
 
       final candidates = <String>[];
 
@@ -732,8 +791,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       }
 
       if (deduped.isEmpty) {
+        Log.e('resolver', 'no playable streams in manifest for $videoId');
         throw Exception('No playable streams found for this video.');
       }
+      Log.i(
+        'resolver',
+        'resolved $videoId in ${resolveWatch.elapsedMilliseconds} ms '
+            '(${deduped.length} candidates)',
+      );
 
       _resolvedStreamsCache[videoId] = _YouTubeResolvedStreams(
         urls: deduped,
@@ -834,6 +899,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
             final localPath = _downloads.localPathFor(videoId);
             if (localPath != null) {
+              Log.i('audio', 'playing downloaded file for $videoId');
               await _openDownloadedFile(
                 localPath,
                 target: target,
@@ -846,8 +912,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
             final streamUrls = await _resolvePlayableYouTubeStreamUrls(videoId);
             Object? lastError;
+            var candidateNumber = 0;
 
             for (final streamUrl in streamUrls) {
+              candidateNumber++;
               try {
                 await _openYouTubeStream(
                   streamUrl,
@@ -857,9 +925,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   autoPlay: autoPlay,
                   silent: silent,
                 );
+                Log.i(
+                  'audio',
+                  'candidate $candidateNumber/${streamUrls.length} opened for '
+                      '$videoId (with headers)',
+                );
                 return;
               } catch (error) {
                 lastError = error;
+                Log.w(
+                  'audio',
+                  'candidate $candidateNumber/${streamUrls.length} failed with '
+                      'headers for $videoId',
+                  error,
+                );
                 try {
                   await effectiveTarget.stop();
                 } catch (_) {}
@@ -873,15 +952,31 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                   autoPlay: autoPlay,
                   silent: silent,
                 );
+                Log.i(
+                  'audio',
+                  'candidate $candidateNumber/${streamUrls.length} opened for '
+                      '$videoId (without headers)',
+                );
                 return;
               } catch (error) {
                 lastError = error;
+                Log.w(
+                  'audio',
+                  'candidate $candidateNumber/${streamUrls.length} failed '
+                      'without headers for $videoId',
+                  error,
+                );
                 try {
                   await effectiveTarget.stop();
                 } catch (_) {}
               }
             }
 
+            Log.e(
+              'audio',
+              'all ${streamUrls.length} stream candidates failed for $videoId',
+              lastError,
+            );
             throw Exception(
               'Failed to open any playable stream for this video. $lastError',
             );
@@ -901,6 +996,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     Map<String, dynamic>? extra,
   }) async {
     if (!mounted) return;
+    Log.i('nav', 'tab: $_selectedTab -> $tab');
     setState(() {
       _selectedTab = tab;
       _selectedTabExtra = extra;
@@ -908,6 +1004,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   Future<void> _handleDeepLink(DeepLinkTarget target) async {
+    Log.i('deeplink', 'opening ${target.type.name} link');
     try {
       if (target.type == DeepLinkType.song) {
         final video = await YoutubeDataService.fetchVideoById(target.id);
@@ -978,7 +1075,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           'thumbnailUrl': playlist['thumbnailUrl'],
         },
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
+      Log.e('deeplink', 'opening shared link failed', error, stackTrace);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't open the shared link.");
       }
@@ -2073,7 +2171,13 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               ? (remoteTrack?['artistId'] as String?)
               : playback.currentArtistId;
 
+          final songPath = playback.currentSongPath ?? '';
+          final currentVideoId = remote != null
+              ? (remoteTrack?['videoId'] as String?)
+              : (songPath.startsWith('yt:') ? songPath.substring(3) : null);
+
           return PlaybackInterface(
+            videoId: currentVideoId,
             artist: remote != null
                 ? (remoteTrack?['artistName'] as String? ?? '')
                 : playback.artistName,

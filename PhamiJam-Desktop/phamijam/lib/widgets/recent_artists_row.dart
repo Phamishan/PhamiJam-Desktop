@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:phamijam/models/play_event.dart';
 import 'package:phamijam/services/youtube_channel_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class _RecentArtist {
   final String channelId;
@@ -70,7 +71,9 @@ class _RecentArtistsRowState extends State<RecentArtistsRow> {
       );
       if (!mounted) return;
       setState(() => _channels = channels);
-    } catch (_) {}
+    } catch (error) {
+      Log.w('library', 'load channels failed', error);
+    }
   }
 
   @override

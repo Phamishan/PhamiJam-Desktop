@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:phamijam/widgets/artist_line.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
@@ -14,6 +14,7 @@ import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 enum _LikedSort {
   custom,
@@ -171,6 +172,7 @@ class _LikedPageState extends State<LikedPage> {
         return response.bodyBytes;
       }
     } catch (error) {
+      Log.e('library', 'download image bytes failed', error);
       debugPrint('Failed to download image from $imageUrl: $error');
     }
     return null;
@@ -263,6 +265,7 @@ class _LikedPageState extends State<LikedPage> {
       _playback.setPlaylistQueue(songs, startIndex: index);
       _registerQueueHandlers(List<Map<String, dynamic>>.from(songs));
     } catch (error) {
+      Log.e('library', 'play song at index failed', error);
       debugPrint('Playback failed for $videoId: $error');
       if (!mounted) return;
       AppFlushbar.error(context, 'Failed to play audio: $error');
@@ -502,30 +505,20 @@ class _LikedPageState extends State<LikedPage> {
                     ),
                     subtitle:
                         (artistId.isNotEmpty && widget.onOpenArtist != null)
-                        ? MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: RichText(
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              text: TextSpan(
-                                text: artist,
-                                style: DefaultTextStyle.of(context).style.merge(
-                                  TextStyle(
-                                    color: colorScheme.onSurfaceVariant,
-                                    decoration: TextDecoration.underline,
-                                  ),
-                                ),
-                                recognizer: TapGestureRecognizer()
-                                  ..onTap = () =>
-                                      widget.onOpenArtist!(artistId, artist),
-                              ),
+                        ? ArtistLine(
+                            videoId: videoId,
+                            artist: artist,
+                            title: title,
+                            onTap: () => widget.onOpenArtist!(artistId, artist),
+                            style: DefaultTextStyle.of(context).style.copyWith(
+                              color: colorScheme.onSurfaceVariant,
                             ),
                           )
-                        : Text(
-                            artist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
+                        : ArtistLine(
+                            videoId: videoId,
+                            artist: artist,
+                            title: title,
+                            style: DefaultTextStyle.of(context).style.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),
                           ),

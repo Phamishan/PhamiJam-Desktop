@@ -6,6 +6,7 @@ import 'package:phamijam/services/google_auth_service.dart';
 import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/widgets/playlists.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class Login extends StatefulWidget {
   const Login({super.key});
@@ -38,6 +39,7 @@ class _LoginState extends State<Login> {
   }
 
   Future<void> _signInWithGoogle() async {
+    Log.i('auth', 'Sign in with Google pressed');
     if (!mounted) return;
     setState(() {
       _isLoading = true;
@@ -88,7 +90,9 @@ class _LoginState extends State<Login> {
               return;
             }
           }
-        } catch (_) {}
+        } catch (error) {
+          Log.w('auth', 'sign in with google failed', error);
+        }
       }
 
       debugPrint('Error signing in with Google: $error');
@@ -104,6 +108,7 @@ class _LoginState extends State<Login> {
         );
       }
     } catch (error) {
+      Log.e('auth', 'sign in with google failed', error);
       debugPrint('Error signing in with Google: $error');
       if (mounted) {
         setState(() {
@@ -115,19 +120,26 @@ class _LoginState extends State<Login> {
   }
 
   Future<void> _signOut() async {
+    Log.i('auth', 'sign out from login page');
     try {
       await GoogleAuthService.signOut().timeout(const Duration(seconds: 5));
-    } catch (_) {}
+    } catch (error) {
+      Log.w('auth', 'sign out failed', error);
+    }
     try {
       await GoogleDriveAuthService.signOut().timeout(
         const Duration(seconds: 5),
       );
-    } catch (_) {}
+    } catch (error) {
+      Log.w('auth', 'sign out failed', error);
+    }
     try {
       await DriveFolderService.clearFolderId().timeout(
         const Duration(seconds: 5),
       );
-    } catch (_) {}
+    } catch (error) {
+      Log.w('auth', 'sign out failed', error);
+    }
     await _auth.signOut();
     PlaylistsPage.resetCache();
     if (!mounted) return;

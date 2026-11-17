@@ -8,6 +8,7 @@ import 'package:phamijam/models/friend_activity_item.dart';
 import 'package:phamijam/providers/friends_provider.dart';
 import 'package:phamijam/services/friend_activity_service.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class FriendActivityPage extends StatefulWidget {
   const FriendActivityPage({super.key, this.onTabSelected});
@@ -43,6 +44,7 @@ class _FriendActivityPageState extends State<FriendActivityPage> {
         _loading = false;
       });
     } catch (error) {
+      Log.e('friends', 'refresh failed', error);
       if (!mounted) return;
       setState(() {
         _error = "Couldn't load activity.";
@@ -56,7 +58,9 @@ class _FriendActivityPageState extends State<FriendActivityPage> {
     try {
       final response = await http.get(Uri.parse(imageUrl));
       if (response.statusCode == 200) return response.bodyBytes;
-    } catch (_) {}
+    } catch (error) {
+      Log.w('friends', 'download image bytes failed', error);
+    }
     return null;
   }
 
@@ -73,6 +77,7 @@ class _FriendActivityPageState extends State<FriendActivityPage> {
       playback.setCoverImageBytes(cover);
       await playback.playYouTubeVideoById(event.videoId);
     } catch (error) {
+      Log.e('friends', 'play failed', error);
       if (mounted) AppFlushbar.error(context, "Couldn't play this song.");
     }
   }

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/components/mixed_playlist_dialogs.dart';
+import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:phamijam/services/mixed_playlist_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
+import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 Future<void> showAddToPlaylistDialog(
   BuildContext context, {
@@ -72,12 +75,14 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
     var mixedFailed = false;
     try {
       youtube = await youtubeFuture;
-    } catch (_) {
+    } catch (error) {
+      Log.w('library', 'load failed', error);
       youtubeFailed = true;
     }
     try {
       mixed = await mixedFuture;
-    } catch (_) {
+    } catch (error) {
+      Log.w('library', 'load failed', error);
       mixedFailed = true;
     }
     if (!mounted) return;
@@ -102,6 +107,7 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
         _selectedKeys.add('$_mixedPrefix$id');
       });
     } catch (error) {
+      Log.e('library', 'create mixed playlist failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't create playlist: $error");
       }
@@ -130,7 +136,8 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
             videoId: videoId,
           );
         }
-      } catch (_) {
+      } catch (error) {
+        Log.w('library', 'submit failed', error);
         failures.add(lastTitle);
       }
     }
@@ -145,7 +152,8 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
       lastTitle = (playlist['title'] as String?) ?? 'playlist';
       try {
         await MixedPlaylistService.addTracks(id, tracks);
-      } catch (_) {
+      } catch (error) {
+        Log.w('library', 'submit failed', error);
         failures.add(lastTitle);
       }
     }
@@ -215,6 +223,15 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
   }
 
   Widget _buildList(ColorScheme colorScheme) {
+    final settings = context.watch<SettingsProvider>();
+    final youtubePlaylists = _youtubePlaylists
+        .where(
+          (p) => !settings.isPlaylistHidden((p['playlistId'] as String?) ?? ''),
+        )
+        .toList();
+    final mixedPlaylists = _mixedPlaylists
+        .where((p) => !settings.isPlaylistHidden((p['id'] as String?) ?? ''))
+        .toList();
     return ListView(
       shrinkWrap: true,
       children: [
@@ -228,7 +245,7 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
             )
-          else if (_youtubePlaylists.isEmpty)
+          else if (youtubePlaylists.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
@@ -237,7 +254,7 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
               ),
             )
           else
-            for (final playlist in _youtubePlaylists)
+            for (final playlist in youtubePlaylists)
               _playlistTile(
                 key: '$_youtubePrefix${playlist['playlistId'] ?? ''}',
                 enabled: ((playlist['playlistId'] as String?) ?? '').isNotEmpty,
@@ -257,7 +274,7 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
             ),
           )
         else
-          for (final playlist in _mixedPlaylists)
+          for (final playlist in mixedPlaylists)
             _playlistTile(
               key: '$_mixedPrefix${playlist['id']}',
               enabled: true,

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class DriveFolderService {
@@ -59,6 +60,7 @@ class DriveFolderService {
   }) async {
     final doc = _settingsDoc;
     if (doc == null || folderId.isEmpty) return;
+    Log.i('drive', 'saving Drive folder (requiresAuth=$requiresAuth)');
     await doc.set({
       'driveFolderId': folderId,
       'driveFolderRequiresAuth': requiresAuth,
@@ -70,6 +72,7 @@ class DriveFolderService {
   }
 
   static Future<void> clearFolderId() async {
+    Log.i('drive', 'clearing saved Drive folder');
     final doc = _settingsDoc;
     if (doc != null) {
       await doc.set({

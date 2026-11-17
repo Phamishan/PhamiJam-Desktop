@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:phamijam/services/playlist_pin_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class PlaylistPinProvider extends ChangeNotifier {
   List<String> _pinnedOrder = [];
@@ -15,6 +16,7 @@ class PlaylistPinProvider extends ChangeNotifier {
     try {
       _pinnedOrder = await PlaylistPinService.fetchAll();
     } catch (error) {
+      Log.e('library', 'refresh failed', error);
       debugPrint('PlaylistPinProvider: refresh failed: $error');
     } finally {
       isLoading = false;
@@ -62,6 +64,7 @@ class PlaylistPinProvider extends ChangeNotifier {
         await PlaylistPinService.pin(playlistId);
       }
     } catch (error) {
+      Log.e('library', 'toggle pin failed', error);
       _pinnedOrder = wasPinned
           ? [playlistId, ..._pinnedOrder]
           : _pinnedOrder.where((id) => id != playlistId).toList();
@@ -76,6 +79,7 @@ class PlaylistPinProvider extends ChangeNotifier {
     try {
       await PlaylistPinService.unpin(playlistId);
     } catch (error) {
+      Log.e('library', 'clear pin failed', error);
       debugPrint('PlaylistPinProvider: clearPin failed: $error');
     }
   }

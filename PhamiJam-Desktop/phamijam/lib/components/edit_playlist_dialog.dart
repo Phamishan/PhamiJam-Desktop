@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 Future<void> showEditPlaylistDialog(
   BuildContext context, {
@@ -56,6 +57,7 @@ Future<void> showEditPlaylistDialog(
               });
               onCoverChanged?.call(url);
             } catch (error) {
+              Log.e('library', 'function failed', error);
               setState(() => isUploadingCover = false);
               if (innerContext.mounted) {
                 AppFlushbar.error(
@@ -77,6 +79,7 @@ Future<void> showEditPlaylistDialog(
               });
               onCoverChanged?.call(null);
             } catch (error) {
+              Log.e('library', 'function failed', error);
               setState(() => isUploadingCover = false);
               if (innerContext.mounted) {
                 AppFlushbar.error(
@@ -253,6 +256,7 @@ Future<void> showEditPlaylistDialog(
                             );
                           }
                         } catch (e) {
+                          Log.e('library', 'function failed', e);
                           if (!context.mounted) return;
                           AppFlushbar.error(context, '$e');
                           setState(() => isSaving = false);

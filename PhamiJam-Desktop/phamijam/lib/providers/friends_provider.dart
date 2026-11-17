@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:phamijam/models/friend.dart';
 import 'package:phamijam/models/friend_request.dart';
 import 'package:phamijam/services/friends_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class FriendsProvider extends ChangeNotifier {
   List<Friend> friends = [];
@@ -81,6 +82,7 @@ class FriendsProvider extends ChangeNotifier {
         toPhotoUrl: toPhotoUrl,
       );
     } catch (error) {
+      Log.e('friends', 'send friend request failed', error);
       sent = previous;
       notifyListeners();
       rethrow;
@@ -94,6 +96,7 @@ class FriendsProvider extends ChangeNotifier {
     try {
       await FriendsService.cancelSentRequest(toUid);
     } catch (error) {
+      Log.e('friends', 'cancel sent request failed', error);
       sent = previous;
       notifyListeners();
       rethrow;
@@ -120,6 +123,7 @@ class FriendsProvider extends ChangeNotifier {
         fromPhotoUrl: request.otherPhotoUrl,
       );
     } catch (error) {
+      Log.e('friends', 'accept friend request failed', error);
       received = previousReceived;
       friends = previousFriends;
       notifyListeners();
@@ -134,6 +138,7 @@ class FriendsProvider extends ChangeNotifier {
     try {
       await FriendsService.declineFriendRequest(fromUid);
     } catch (error) {
+      Log.e('friends', 'decline friend request failed', error);
       received = previous;
       notifyListeners();
       rethrow;
@@ -147,6 +152,7 @@ class FriendsProvider extends ChangeNotifier {
     try {
       await FriendsService.unfriend(friendUid);
     } catch (error) {
+      Log.e('friends', 'unfriend failed', error);
       friends = previous;
       notifyListeners();
       rethrow;

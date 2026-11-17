@@ -43,21 +43,26 @@ void _applyGrpcDnsResolverWorkaround() {
     setEnvironmentVariable(name, value);
     calloc.free(name);
     calloc.free(value);
-  } catch (_) {}
+  } catch (error) {
+    Log.w('startup', 'could not apply gRPC DNS workaround', error);
+  }
 }
 
 Future<void> _recoverFromCorruptedPreferences() async {
   if (!Platform.isWindows) return;
   try {
     await SharedPreferences.getInstance();
-  } catch (_) {
+  } catch (error) {
+    Log.e('startup', 'saved settings file is corrupted, resetting it', error);
     try {
       final supportDir = await getApplicationSupportDirectory();
       final file = File('${supportDir.path}\\shared_preferences.json');
       if (await file.exists()) {
         await file.delete();
       }
-    } catch (_) {}
+    } catch (deleteError) {
+      Log.e('startup', 'could not delete corrupted settings file', deleteError);
+    }
   }
 }
 
@@ -67,10 +72,23 @@ void main(List<String> args) async {
   await LogService.instance.init();
   await _recoverFromCorruptedPreferences();
   MediaKit.ensureInitialized();
+  Log.i('startup', 'initializing Firebase');
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseAuth.instance.authStateChanges().listen(
+    (user) => LogService.instance.setUser(user?.uid),
+    onError: (Object error) => Log.e('auth', 'auth state stream error', error),
+  );
   await dotenv.load(fileName: '.env');
+  Log.i('startup', 'config loaded, launching UI');
   unawaited(ProtocolHandlerService.registerIfNeeded());
   final pendingDeepLink = DeepLinkService.parseLaunchArgs(args);
+  if (args.isNotEmpty) {
+    Log.i(
+      'startup',
+      'launched with ${args.length} argument(s), deep link: '
+          '${pendingDeepLink?.type.name ?? 'none'}',
+    );
+  }
   runApp(
     MultiProvider(
       providers: [
@@ -109,6 +127,7 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       title: 'PhamiJam',
       debugShowCheckedModeBanner: false,
+      navigatorObservers: [LogNavigatorObserver()],
       theme: AppTheme.light(accentColor: themeProvider.accentColor),
       darkTheme: AppTheme.dark(accentColor: themeProvider.accentColor),
       themeMode: themeProvider.flutterThemeMode,
@@ -123,6 +142,9 @@ class _MyAppState extends State<MyApp> {
 
           if (snapshot.hasData) {
             return Home(pendingDeepLink: widget.pendingDeepLink);
+          }
+          if (snapshot.hasError) {
+            Log.e('auth', 'auth stream error', snapshot.error);
           }
 
           return const Login();

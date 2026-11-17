@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:webview_windows/webview_windows.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class ConverterPage extends StatefulWidget {
   const ConverterPage({super.key});
@@ -55,6 +56,7 @@ class _ConverterPageState extends State<ConverterPage> {
         _isLoading = false;
       });
     } catch (error) {
+      Log.e('converter', 'initialize webview failed', error);
       if (!mounted) {
         return;
       }

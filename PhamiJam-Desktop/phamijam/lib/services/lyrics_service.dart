@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:phamijam/services/log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ytmusicapi_dart/models/lyrics.dart' as ytm;
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
@@ -45,6 +46,7 @@ class LyricsService {
   }) async {
     if (_cache.containsKey(videoId)) return _cache[videoId];
 
+    Log.i('lyrics', 'looking up lyrics for $videoId');
     SongLyrics? result;
     try {
       final ytmusic = await YTMusic.create();
@@ -68,13 +70,25 @@ class LyricsService {
                 .toList();
           }
           source = timed?['source'] as String?;
-        } catch (_) {}
+        } catch (error) {
+          Log.w(
+            'lyrics',
+            'YouTube Music synced lyrics failed for $videoId',
+            error,
+          );
+        }
 
         String? plainText;
         try {
           final plain = await ytmusic.getLyrics(browseId);
           plainText = plain?['lyrics'] as String?;
-        } catch (_) {}
+        } catch (error) {
+          Log.w(
+            'lyrics',
+            'YouTube Music plain lyrics failed for $videoId',
+            error,
+          );
+        }
 
         if (synced != null || plainText != null) {
           result = SongLyrics(
@@ -84,22 +98,40 @@ class LyricsService {
           );
         }
       }
-    } catch (_) {
+    } catch (error) {
+      Log.w('lyrics', 'YouTube Music lookup failed for $videoId', error);
       result = null;
     }
+    Log.i(
+      'lyrics',
+      'YouTube Music: ${result == null ? 'nothing' : (result.hasSynced ? 'synced' : 'plain only')}',
+    );
 
-    if ((result == null || !result.hasAny) &&
+    if ((result == null || !result.hasSynced) &&
         title != null &&
         title.trim().isNotEmpty) {
       try {
-        result = await _fetchFromLrclib(
+        final lrclib = await _fetchFromLrclib(
           title: title,
           artist: artist ?? '',
           durationSeconds: durationSeconds,
         );
-      } catch (_) {}
+        Log.i(
+          'lyrics',
+          'LRCLIB: ${lrclib == null ? 'nothing' : (lrclib.hasSynced ? 'synced' : 'plain only')}',
+        );
+        if (lrclib != null && (lrclib.hasSynced || result == null)) {
+          result = lrclib;
+        }
+      } catch (error) {
+        Log.w('lyrics', 'LRCLIB lookup failed for $videoId', error);
+      }
     }
 
+    Log.i(
+      'lyrics',
+      'final for $videoId: ${result == null ? 'none found' : (result.hasSynced ? 'synced (${result.source ?? 'unknown source'})' : 'plain text (${result.source ?? 'unknown source'})')}',
+    );
     _cache[videoId] = result;
     return result;
   }
@@ -208,18 +240,23 @@ class LyricsService {
         .toList();
     if (candidates.isEmpty) return null;
 
+    bool hasSynced(Map<String, dynamic> r) =>
+        (r['syncedLyrics'] as String?)?.trim().isNotEmpty ?? false;
+
     Map<String, dynamic> best = candidates.first;
     if (durationSeconds != null && durationSeconds > 0) {
-      candidates.sort((a, b) {
-        final da = ((a['duration'] as num?)?.toInt() ?? 0) - durationSeconds;
-        final db = ((b['duration'] as num?)?.toInt() ?? 0) - durationSeconds;
-        return da.abs().compareTo(db.abs());
-      });
-      best = candidates.first;
-      final bestDuration = (best['duration'] as num?)?.toInt() ?? 0;
-      if ((bestDuration - durationSeconds).abs() > toleranceSeconds) {
-        return null;
-      }
+      int diff(Map<String, dynamic> r) =>
+          (((r['duration'] as num?)?.toInt() ?? 0) - durationSeconds).abs();
+      final withinTolerance =
+          candidates.where((r) => diff(r) <= toleranceSeconds).toList()
+            ..sort((a, b) {
+              final bySynced = (hasSynced(b) ? 1 : 0) - (hasSynced(a) ? 1 : 0);
+              return bySynced != 0 ? bySynced : diff(a).compareTo(diff(b));
+            });
+      if (withinTolerance.isEmpty) return null;
+      best = withinTolerance.first;
+    } else {
+      best = candidates.firstWhere(hasSynced, orElse: () => candidates.first);
     }
 
     final syncedLyricsRaw = best['syncedLyrics'] as String?;

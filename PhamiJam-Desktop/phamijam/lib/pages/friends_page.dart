@@ -7,6 +7,7 @@ import 'package:phamijam/providers/friends_provider.dart';
 import 'package:phamijam/services/listen_along_service.dart';
 import 'package:phamijam/services/presence_service.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class FriendsPage extends StatelessWidget {
   const FriendsPage({super.key, this.onTabSelected});
@@ -43,7 +44,6 @@ class FriendsPage extends StatelessWidget {
                       ),
                       IconButton(
                         icon: const Icon(Icons.dynamic_feed_rounded),
-                        tooltip: 'Activity',
                         onPressed: () => onTabSelected?.call('friend_activity'),
                       ),
                       IconButton(
@@ -202,6 +202,7 @@ class _ReceivedRequestTileState extends State<_ReceivedRequestTile> {
         await provider.declineFriendRequest(widget.request.otherUid);
       }
     } catch (error) {
+      Log.e('friends', 'respond failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't respond to request: $error");
       }
@@ -260,6 +261,7 @@ class _SentRequestTileState extends State<_SentRequestTile> {
         widget.request.otherUid,
       );
     } catch (error) {
+      Log.e('friends', 'cancel failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't cancel request: $error");
       }
@@ -319,6 +321,7 @@ class _FriendTile extends StatelessWidget {
     try {
       await context.read<FriendsProvider>().unfriend(friend.uid);
     } catch (error) {
+      Log.e('friends', 'unfriend failed', error);
       if (context.mounted) {
         AppFlushbar.error(context, "Couldn't remove friend: $error");
       }
@@ -360,7 +363,10 @@ class _FriendTile extends StatelessWidget {
 
             return ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: _Avatar(photoUrl: friend.photoUrl, online: presence.online),
+              leading: _Avatar(
+                photoUrl: friend.photoUrl,
+                online: presence.online,
+              ),
               title: Text(friend.displayName),
               subtitle: Text(
                 subtitle,
@@ -383,9 +389,6 @@ class _FriendTile extends StatelessWidget {
                             playback.isListeningAlong &&
                             playback.listenAlongFriendUid == friend.uid;
                         return IconButton(
-                          tooltip: isListeningToThisFriend
-                              ? 'Stop listening along'
-                              : 'Listen along',
                           icon: Icon(
                             isListeningToThisFriend
                                 ? Icons.headphones_rounded
@@ -408,7 +411,6 @@ class _FriendTile extends StatelessWidget {
                       },
                     ),
                   PopupMenuButton<String>(
-                    tooltip: '',
                     onSelected: (value) {
                       if (value == 'unfriend') _unfriend(context);
                     },

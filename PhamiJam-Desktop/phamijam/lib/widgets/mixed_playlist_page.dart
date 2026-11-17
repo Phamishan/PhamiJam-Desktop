@@ -1,18 +1,46 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/mixed_playlist_dialogs.dart';
 import 'package:phamijam/components/playback_model.dart';
+import 'package:phamijam/providers/liked_songs_provider.dart';
+import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:phamijam/services/mixed_playlist_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
+import 'package:phamijam/services/share_link_service.dart';
+import 'package:phamijam/widgets/artist_line.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
+
+enum _MixedSort { custom, titleAz, artistAz, durationShort, durationLong }
+
+extension on _MixedSort {
+  String get label {
+    switch (this) {
+      case _MixedSort.custom:
+        return 'Playlist order';
+      case _MixedSort.titleAz:
+        return 'Title (A–Z)';
+      case _MixedSort.artistAz:
+        return 'Artist (A–Z)';
+      case _MixedSort.durationShort:
+        return 'Duration (shortest first)';
+      case _MixedSort.durationLong:
+        return 'Duration (longest first)';
+    }
+  }
+}
 
 class MixedPlaylistPage extends StatefulWidget {
   const MixedPlaylistPage({super.key, required this.playlistId, this.onBack});
@@ -35,6 +63,9 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
   bool _missing = false;
   int? _loadingIndex;
   final Map<String, bool> _localExists = {};
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  _MixedSort _sort = _MixedSort.custom;
 
   List<Map<String, dynamic>> get _tracks =>
       (_playlist?['tracks'] as List<Map<String, dynamic>>?) ?? const [];
@@ -84,6 +115,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
   void dispose() {
     _subscription?.cancel();
     _coverSubscription?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -102,6 +134,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
         File(picked.path),
       );
     } catch (error) {
+      Log.e('library', 'change cover failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't update cover image: $error");
       }
@@ -117,6 +150,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
         MixedPlaylistService.coverKey(widget.playlistId),
       );
     } catch (error) {
+      Log.e('library', 'remove cover failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't remove cover image: $error");
       }
@@ -172,7 +206,9 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     try {
       final response = await http.get(Uri.parse(imageUrl));
       if (response.statusCode == 200) return response.bodyBytes;
-    } catch (_) {}
+    } catch (error) {
+      Log.w('library', 'download image bytes failed', error);
+    }
     return null;
   }
 
@@ -283,17 +319,11 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
         _playback.markCurrentSourceIndex(index);
       }
     } catch (error) {
+      Log.e('library', 'play from failed', error);
       if (mounted) AppFlushbar.error(context, 'Failed to play: $error');
     } finally {
       if (syncQueue && mounted) setState(() => _loadingIndex = null);
     }
-  }
-
-  Future<void> _playAll() async {
-    final tracks = List<Map<String, dynamic>>.from(_tracks);
-    final first = tracks.indexWhere(_isPlayable);
-    if (first < 0) return;
-    await _playFrom(tracks, first, syncQueue: true);
   }
 
   Future<void> _playTrack(int index) async {
@@ -316,6 +346,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     try {
       await MixedPlaylistService.rename(widget.playlistId, name);
     } catch (error) {
+      Log.e('library', 'rename failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't rename playlist: $error");
       }
@@ -329,6 +360,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
       await MixedPlaylistService.delete(widget.playlistId);
       if (mounted) widget.onBack?.call();
     } catch (error) {
+      Log.e('library', 'delete failed', error);
       if (mounted) {
         AppFlushbar.error(context, "Couldn't delete playlist: $error");
       }
@@ -341,6 +373,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
       await MixedPlaylistService.removeTrackAt(widget.playlistId, index);
       if (mounted) AppFlushbar.success(context, 'Removed "$title"');
     } catch (error) {
+      Log.e('library', 'remove track failed', error);
       if (mounted) AppFlushbar.error(context, "Couldn't remove song: $error");
     }
   }
@@ -367,12 +400,539 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     }
   }
 
+  String _formatDuration(int totalSeconds) {
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:'
+          '${seconds.toString().padLeft(2, '0')}';
+    }
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  int _durationSecondsOf(Map<String, dynamic> track) =>
+      (((track['durationMs'] as int?) ?? 0) / 1000).round();
+
+  bool _isYoutube(Map<String, dynamic> track) =>
+      _sourceOf(track) == 'youtube' &&
+      ((track['videoId'] as String?) ?? '').isNotEmpty;
+
+  Map<String, dynamic> _songMap(Map<String, dynamic> track) => {
+    'videoId': (track['videoId'] as String?) ?? '',
+    'path': (track['path'] as String?) ?? '',
+    'title': (track['title'] as String?) ?? '',
+    'artist': (track['artist'] as String?) ?? '',
+    'artistId': (track['artistId'] as String?) ?? '',
+    'thumbnailUrl': (track['thumbnailUrl'] as String?) ?? '',
+    'durationSeconds': _durationSecondsOf(track),
+  };
+
+  List<MapEntry<int, Map<String, dynamic>>> get _visibleTracks {
+    final tracks = _tracks;
+    final query = _searchQuery.trim().toLowerCase();
+    var entries = [
+      for (var i = 0; i < tracks.length; i++) MapEntry(i, tracks[i]),
+    ];
+    if (query.isNotEmpty) {
+      entries = entries.where((e) {
+        final title = ((e.value['title'] as String?) ?? '').toLowerCase();
+        final artist = ((e.value['artist'] as String?) ?? '').toLowerCase();
+        return title.contains(query) || artist.contains(query);
+      }).toList();
+    }
+    int byText(
+      String key,
+      MapEntry<int, Map<String, dynamic>> a,
+      MapEntry<int, Map<String, dynamic>> b,
+    ) => ((a.value[key] as String?) ?? '').toLowerCase().compareTo(
+      ((b.value[key] as String?) ?? '').toLowerCase(),
+    );
+    switch (_sort) {
+      case _MixedSort.custom:
+        break;
+      case _MixedSort.titleAz:
+        entries.sort((a, b) => byText('title', a, b));
+      case _MixedSort.artistAz:
+        entries.sort((a, b) => byText('artist', a, b));
+      case _MixedSort.durationShort:
+        entries.sort(
+          (a, b) => _durationSecondsOf(
+            a.value,
+          ).compareTo(_durationSecondsOf(b.value)),
+        );
+      case _MixedSort.durationLong:
+        entries.sort(
+          (a, b) => _durationSecondsOf(
+            b.value,
+          ).compareTo(_durationSecondsOf(a.value)),
+        );
+    }
+    return entries;
+  }
+
+  Future<void> _playOrPause(bool isPlaying, bool isShuffled) async {
+    if (isPlaying) {
+      await _playback.togglePlayPause();
+      return;
+    }
+    final tracks = List<Map<String, dynamic>>.from(_tracks);
+    final playable = [
+      for (var i = 0; i < tracks.length; i++)
+        if (_isPlayable(tracks[i])) i,
+    ];
+    if (playable.isEmpty) return;
+    final target = isShuffled
+        ? playable[Random().nextInt(playable.length)]
+        : playable.first;
+    await _playFrom(tracks, target, syncQueue: true);
+  }
+
+  Widget _buildMenuButton() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final hasCover = _customCoverUrl != null && _customCoverUrl!.isNotEmpty;
+    return PopupMenuButton<String>(
+      enabled: !_uploadingCover,
+      icon: _uploadingCover
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(Icons.edit_rounded, color: colorScheme.onSurface),
+      onSelected: (value) {
+        if (value == 'rename') {
+          _rename();
+        } else if (value == 'cover') {
+          _changeCover();
+        } else if (value == 'remove_cover') {
+          _removeCover();
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: 'rename', child: Text('Rename')),
+        const PopupMenuItem(value: 'cover', child: Text('Change cover image')),
+        if (hasCover)
+          const PopupMenuItem(
+            value: 'remove_cover',
+            child: Text('Remove cover image'),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMetadataRow(List<Map<String, dynamic>> tracks) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final totalSeconds = tracks.fold<int>(
+      0,
+      (sum, t) => sum + _durationSecondsOf(t),
+    );
+    final style = TextStyle(color: colorScheme.onSurfaceVariant);
+    return Wrap(
+      spacing: 16,
+      runSpacing: 8,
+      children: [
+        Text('PhamiJam playlist', style: style),
+        Text('${tracks.length} songs', style: style),
+        Text(_formatDuration(totalSeconds), style: style),
+      ],
+    );
+  }
+
+  Widget _buildControlButtons(List<Map<String, dynamic>> tracks) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final state = context.select<PlaybackModel, (bool, bool, PlayerRepeatMode)>(
+      (p) => (p.isPlaying, p.isShuffled, p.repeatMode),
+    );
+    final isPlaying = state.$1;
+    final isShuffled = state.$2;
+    final repeatMode = state.$3;
+
+    return Row(
+      children: [
+        IconButton(
+          onPressed: tracks.any(_isPlayable)
+              ? () => _playOrPause(isPlaying, isShuffled)
+              : null,
+          icon: Icon(
+            isPlaying ? Icons.pause_circle_rounded : Icons.play_circle_rounded,
+            color: colorScheme.primary,
+          ),
+        ),
+        IconButton(
+          onPressed: _playback.toggleShuffle,
+          icon: Icon(
+            isShuffled ? Icons.shuffle_on_rounded : Icons.shuffle_rounded,
+            color: colorScheme.primary,
+          ),
+        ),
+        IconButton(
+          onPressed: _playback.cycleRepeatMode,
+          icon: Icon(switch (repeatMode) {
+            PlayerRepeatMode.off => Icons.repeat_rounded,
+            PlayerRepeatMode.all => Icons.repeat_on_rounded,
+            PlayerRepeatMode.one => Icons.repeat_one_on_rounded,
+          }, color: colorScheme.primary),
+        ),
+        if (tracks.any(_isYoutube)) _buildDownloadAllButton(tracks),
+      ],
+    );
+  }
+
+  Widget _buildDownloadAllButton(List<Map<String, dynamic>> tracks) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final downloads = context.watch<DownloadsProvider>();
+    final youtube = tracks.where(_isYoutube).toList();
+    final ids = youtube.map((t) => t['videoId'] as String).toList();
+    final allDownloaded = ids.every(downloads.isDownloaded);
+    final anyDownloading = ids.any(downloads.isDownloading);
+
+    if (anyDownloading) {
+      return IconButton(
+        onPressed: downloads.cancelAllDownloads,
+        icon: SizedBox(
+          width: 20,
+          height: 20,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              const CircularProgressIndicator(strokeWidth: 2),
+              Icon(
+                Icons.stop_rounded,
+                size: 12,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return IconButton(
+      onPressed: allDownloaded
+          ? null
+          : () => downloads.downloadTracks([
+              for (final t in youtube)
+                {
+                  'videoId': t['videoId'],
+                  'songName': t['title'],
+                  'artistName': t['artist'],
+                  'artistId': t['artistId'],
+                  'durationSeconds': _durationSecondsOf(t),
+                },
+            ]),
+      icon: Icon(
+        allDownloaded ? Icons.download_done_rounded : Icons.download_rounded,
+        color: colorScheme.primary,
+      ),
+    );
+  }
+
+  Widget _buildSearchAndSort() {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _searchQuery = value),
+            style: TextStyle(color: colorScheme.onSurface),
+            decoration: InputDecoration(
+              hintText: 'Search songs...',
+              hintStyle: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.6),
+                fontSize: 14,
+              ),
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              suffixIcon: _searchQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: Icon(
+                        Icons.close_rounded,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    ),
+              filled: true,
+              fillColor: colorScheme.onSurface.withValues(alpha: 0.26),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 0,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        PopupMenuButton<_MixedSort>(
+          initialValue: _sort,
+          onSelected: (value) => setState(() => _sort = value),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          icon: Icon(
+            _sort == _MixedSort.custom
+                ? Icons.sort_rounded
+                : Icons.filter_list_rounded,
+            color: _sort == _MixedSort.custom
+                ? colorScheme.onSurfaceVariant
+                : colorScheme.primary,
+          ),
+          itemBuilder: (context) => [
+            for (final option in _MixedSort.values)
+              PopupMenuItem(
+                value: option,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: option == _sort
+                      ? Icon(Icons.check_rounded, color: colorScheme.primary)
+                      : const SizedBox(width: 24),
+                  title: Text(option.label),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRow(
+    BuildContext context,
+    int sourceIndex,
+    Map<String, dynamic> track,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final playable = _isPlayable(track);
+    final isCurrent =
+        context.select<PlaybackModel, String?>((p) => p.currentSongPath) ==
+        _expectedPath(track);
+    final title = (track['title'] as String?) ?? 'Unknown song';
+    final artist = (track['artist'] as String?) ?? '';
+    final thumbnailUrl = (track['thumbnailUrl'] as String?) ?? '';
+    final videoId = (track['videoId'] as String?) ?? '';
+    final isYoutube = _isYoutube(track);
+    final durationSeconds = _durationSecondsOf(track);
+    final downloads = context.watch<DownloadsProvider>();
+    final likedSongs = context.watch<LikedSongsProvider>();
+    final isDownloaded = isYoutube && downloads.isDownloaded(videoId);
+    final isDownloading = isYoutube && downloads.isDownloading(videoId);
+    final isLiked = isYoutube && likedSongs.isLiked(videoId);
+
+    final subtitleStyle = DefaultTextStyle.of(
+      context,
+    ).style.copyWith(color: colorScheme.onSurfaceVariant);
+
+    return ContextMenuRegion<String>(
+      contextMenu: ContextMenu(
+        borderRadius: BorderRadius.circular(12),
+        entries: [
+          if (playable) ...[
+            MenuItem<String>(
+              value: 'play_next',
+              icon: const Icon(Icons.playlist_play_rounded),
+              label: const Text('Play next'),
+            ),
+            MenuItem<String>(
+              value: 'add_to_queue',
+              icon: const Icon(Icons.queue_music_rounded),
+              label: const Text('Add to queue'),
+            ),
+          ],
+          MenuItem<String>(
+            value: 'add_to_playlist',
+            icon: const Icon(Icons.playlist_add_rounded),
+            label: const Text('Add to playlist'),
+          ),
+          if (isYoutube) ...[
+            MenuItem<String>(
+              value: isDownloaded ? 'remove_download' : 'download',
+              icon: Icon(
+                isDownloaded
+                    ? Icons.download_done_rounded
+                    : Icons.download_rounded,
+              ),
+              label: Text(isDownloaded ? 'Remove download' : 'Download'),
+            ),
+            MenuItem<String>(
+              value: 'edit_trim',
+              icon: const Icon(Icons.content_cut_rounded),
+              label: const Text('Edit song'),
+            ),
+            MenuItem<String>(
+              value: 'share',
+              icon: const Icon(Icons.share_rounded),
+              label: const Text('Share'),
+            ),
+          ],
+          MenuItem<String>(
+            value: 'remove_from_playlist',
+            icon: const Icon(Icons.playlist_remove_rounded),
+            label: const Text('Remove from playlist'),
+          ),
+        ],
+      ),
+      onItemSelected: (value) {
+        switch (value) {
+          case 'play_next':
+            _playback.addToQueue(_queueItem(track));
+          case 'add_to_queue':
+            _playback.appendToQueue(_queueItem(track));
+          case 'add_to_playlist':
+            showAddSongsToPlaylistDialog(context, songs: [_songMap(track)]);
+          case 'download':
+            downloads.download(
+              videoId: videoId,
+              songName: title,
+              artistName: artist,
+              artistId: (track['artistId'] as String?) ?? '',
+              durationSeconds: durationSeconds,
+            );
+          case 'remove_download':
+            downloads.remove(videoId);
+          case 'edit_trim':
+            showEditSongDialog(
+              context,
+              videoId: videoId,
+              title: title,
+              artist: artist,
+              thumbnailUrl: thumbnailUrl,
+              durationSeconds: durationSeconds,
+            );
+          case 'share':
+            ShareLinkService.shareSong(context, videoId);
+          case 'remove_from_playlist':
+            _removeTrack(sourceIndex);
+        }
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: isCurrent
+              ? colorScheme.surfaceContainerHigh
+              : colorScheme.surface,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: ListTile(
+            enabled: playable,
+            leading: thumbnailUrl.isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Image.network(
+                      thumbnailUrl,
+                      width: 56,
+                      height: 56,
+                      cacheWidth: 112,
+                      cacheHeight: 112,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Icon(
+                        _sourceIcon(track),
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  )
+                : SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: Icon(
+                      _sourceIcon(track),
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+            title: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: colorScheme.onSurface),
+            ),
+            subtitle: isYoutube
+                ? ArtistLine(
+                    videoId: videoId,
+                    artist: artist.isEmpty ? 'Unknown artist' : artist,
+                    title: title,
+                    style: subtitleStyle,
+                  )
+                : Text(
+                    '${artist.isEmpty ? '' : '$artist · '}${_sourceLabel(track)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: subtitleStyle,
+                  ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isYoutube)
+                  IconButton(
+                    onPressed: () => likedSongs.toggleLike(_songMap(track)),
+                    icon: Icon(
+                      isLiked
+                          ? Icons.favorite_rounded
+                          : Icons.favorite_border_rounded,
+                      color: isLiked
+                          ? colorScheme.onSurface
+                          : colorScheme.onSurfaceVariant,
+                      size: 18,
+                    ),
+                    splashRadius: 18,
+                  ),
+                const SizedBox(width: 4),
+                if (_loadingIndex == sourceIndex)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (isDownloading)
+                  IconButton(
+                    onPressed: () => downloads.cancelDownload(videoId),
+                    splashRadius: 14,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 18,
+                      minHeight: 18,
+                    ),
+                    icon: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          const CircularProgressIndicator(strokeWidth: 2),
+                          Icon(
+                            Icons.stop_rounded,
+                            size: 10,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    _formatDuration(durationSeconds),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+              ],
+            ),
+            onTap: playable ? () => _playTrack(sourceIndex) : null,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final currentPath = context.select<PlaybackModel, String?>(
-      (p) => p.currentSongPath,
-    );
 
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_missing) {
@@ -391,6 +951,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     }
 
     final tracks = _tracks;
+    final visible = _visibleTracks;
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -399,129 +960,39 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
           Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
                 onPressed: widget.onBack,
-              ),
-              GestureDetector(
-                onTap: _uploadingCover ? null : _changeCover,
-                child: Tooltip(
-                  message: 'Change cover image',
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: Builder(
-                            builder: (context) {
-                              final firstThumb = tracks
-                                  .map(
-                                    (t) => (t['thumbnailUrl'] as String?) ?? '',
-                                  )
-                                  .firstWhere(
-                                    (u) => u.isNotEmpty,
-                                    orElse: () => '',
-                                  );
-                              final cover =
-                                  (_customCoverUrl != null &&
-                                      _customCoverUrl!.isNotEmpty)
-                                  ? _customCoverUrl!
-                                  : firstThumb;
-                              return cover.isEmpty
-                                  ? Container(
-                                      color: colorScheme.surfaceContainerHigh,
-                                      child: Icon(
-                                        Icons.library_music_rounded,
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
-                                    )
-                                  : Image.network(
-                                      cover,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, _, _) => Container(
-                                        color: colorScheme.surfaceContainerHigh,
-                                      ),
-                                    );
-                            },
-                          ),
-                        ),
-                      ),
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          color: Colors.black.withValues(alpha: 0.3),
-                        ),
-                        alignment: Alignment.center,
-                        child: _uploadingCover
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.camera_alt_rounded,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                      ),
-                    ],
-                  ),
+                icon: Icon(
+                  Icons.arrow_back_rounded,
+                  color: colorScheme.onSurface,
                 ),
               ),
-              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   _title,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
                     color: colorScheme.onSurface,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 18,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (_customCoverUrl != null && _customCoverUrl!.isNotEmpty)
-                IconButton(
-                  tooltip: 'Remove custom cover',
-                  icon: const Icon(Icons.hide_image_rounded),
-                  onPressed: _uploadingCover ? null : _removeCover,
-                ),
+              _buildMenuButton(),
               IconButton(
-                tooltip: 'Rename',
-                icon: const Icon(Icons.edit_rounded),
-                onPressed: _rename,
-              ),
-              IconButton(
-                tooltip: 'Delete playlist',
-                icon: Icon(Icons.delete_rounded, color: colorScheme.error),
                 onPressed: _delete,
+                icon: Icon(Icons.delete_rounded, color: colorScheme.error),
               ),
             ],
           ),
-          Padding(
-            padding: const EdgeInsets.only(left: 12, bottom: 8),
-            child: Text(
-              'PhamiJam playlist · ${tracks.length} '
-              '${tracks.length == 1 ? 'song' : 'songs'}',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 12, bottom: 8),
-            child: ElevatedButton.icon(
-              onPressed: tracks.any(_isPlayable) ? _playAll : null,
-              icon: const Icon(Icons.play_arrow_rounded),
-              label: const Text('Play all'),
-              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
-            ),
-          ),
+          const SizedBox(height: 8),
+          _buildMetadataRow(tracks),
+          if (tracks.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _buildControlButtons(tracks),
+            const SizedBox(height: 8),
+            _buildSearchAndSort(),
+          ],
+          const SizedBox(height: 12),
           Expanded(
             child: tracks.isEmpty
                 ? Center(
@@ -532,105 +1003,26 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
                       style: TextStyle(color: colorScheme.onSurfaceVariant),
                     ),
                   )
+                : visible.isEmpty
+                ? Center(
+                    child: Text(
+                      'No songs match your search.',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 16,
+                      ),
+                    ),
+                  )
                 : ListView.separated(
-                    itemCount: tracks.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 4),
-                    itemBuilder: (context, index) {
-                      final track = tracks[index];
-                      final playable = _isPlayable(track);
-                      final isCurrent = currentPath == _expectedPath(track);
-                      final thumbnailUrl =
-                          (track['thumbnailUrl'] as String?) ?? '';
-                      final artist = (track['artist'] as String?) ?? '';
-                      return Material(
-                        color: isCurrent
-                            ? colorScheme.primary.withValues(alpha: 0.18)
-                            : colorScheme.surfaceContainer,
-                        borderRadius: BorderRadius.circular(8),
-                        child: ListTile(
-                          enabled: playable,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          leading: ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: SizedBox(
-                              width: 44,
-                              height: 44,
-                              child: thumbnailUrl.isEmpty
-                                  ? Container(
-                                      color: colorScheme.surfaceContainerHigh,
-                                      child: Icon(
-                                        _sourceIcon(track),
-                                        color: colorScheme.onSurfaceVariant,
-                                      ),
-                                    )
-                                  : Image.network(
-                                      thumbnailUrl,
-                                      fit: BoxFit.cover,
-                                      cacheWidth: 88,
-                                      cacheHeight: 88,
-                                      errorBuilder: (_, _, _) => Container(
-                                        color: colorScheme.surfaceContainerHigh,
-                                      ),
-                                    ),
-                            ),
-                          ),
-                          title: Text(
-                            (track['title'] as String?) ?? 'Unknown song',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: colorScheme.onSurface),
-                          ),
-                          subtitle: Text(
-                            '${artist.isEmpty ? '' : '$artist · '}'
-                            '${_sourceLabel(track)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          trailing: _loadingIndex == index
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : PopupMenuButton<String>(
-                                  tooltip: '',
-                                  onSelected: (value) {
-                                    if (value == 'next' && playable) {
-                                      _playback.addToQueue(_queueItem(track));
-                                    } else if (value == 'queue' && playable) {
-                                      _playback.appendToQueue(
-                                        _queueItem(track),
-                                      );
-                                    } else if (value == 'remove') {
-                                      _removeTrack(index);
-                                    }
-                                  },
-                                  itemBuilder: (context) => const [
-                                    PopupMenuItem(
-                                      value: 'next',
-                                      child: Text('Play next'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'queue',
-                                      child: Text('Add to queue'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'remove',
-                                      child: Text('Remove from playlist'),
-                                    ),
-                                  ],
-                                ),
-                          onTap: playable ? () => _playTrack(index) : null,
-                        ),
-                      );
-                    },
+                    itemCount: visible.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) => Builder(
+                      builder: (context) => _buildRow(
+                        context,
+                        visible[index].key,
+                        visible[index].value,
+                      ),
+                    ),
                   ),
           ),
         ],

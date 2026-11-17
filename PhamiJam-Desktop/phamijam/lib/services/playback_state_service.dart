@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class SavedQueueState {
   const SavedQueueState({
@@ -117,7 +118,8 @@ class PlaybackStateService {
         repeatMode: decoded['repeatMode'] as String? ?? 'off',
         position: Duration(milliseconds: decoded['positionMs'] as int? ?? 0),
       );
-    } catch (_) {
+    } catch (error) {
+      Log.w('player', 'load queue failed', error);
       return null;
     }
   }

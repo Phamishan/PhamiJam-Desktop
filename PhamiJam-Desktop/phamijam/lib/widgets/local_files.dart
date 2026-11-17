@@ -13,6 +13,7 @@ import 'package:phamijam/pages/connect_drive_folder_page.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 enum _LocalFilesSource { thisComputer, googleDrive }
 
@@ -229,6 +230,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
         }
       }
     } catch (e) {
+      Log.e('localfiles', 'scan files pressed failed', e);
       debugPrint('Failed to list files: $e');
     }
 
@@ -256,7 +258,9 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
         }
         currentCover = _pickPreferredCover(metadata.pictures);
         currentDurationSeconds = metadata.duration?.inSeconds ?? 0;
-      } catch (_) {}
+      } catch (error) {
+        Log.w('localfiles', 'scan files pressed failed', error);
+      }
 
       foundSongNames.add(currentTitle);
       foundArtistNames.add(currentArtist);
@@ -416,6 +420,7 @@ class _LocalFilesPageState extends State<LocalFilesPage> {
         _driveError = null;
       });
     } catch (error) {
+      Log.e('localfiles', 'refresh drive songs failed', error);
       if (!mounted) return;
       setState(() {
         _isLoadingDriveSongs = false;

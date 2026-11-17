@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:phamijam/models/grid_tile.dart';
 import 'package:phamijam/models/user_profile.dart';
 import 'package:phamijam/services/profile_service.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class ProfileProvider extends ChangeNotifier {
   UserProfile profile = UserProfile.empty;
@@ -27,6 +28,7 @@ class ProfileProvider extends ChangeNotifier {
       profile = await ProfileService.fetchProfile(user.uid);
       await _backfillFromAuthIfNeeded(user);
     } catch (error) {
+      Log.e('profile', 'refresh failed', error);
       debugPrint('ProfileProvider: refresh failed: $error');
     } finally {
       isLoading = false;
@@ -76,6 +78,7 @@ class ProfileProvider extends ChangeNotifier {
         avatarUrl: avatarUrl,
       );
     } catch (error) {
+      Log.e('profile', 'update profile failed', error);
       profile = previous;
       notifyListeners();
       rethrow;
@@ -89,6 +92,7 @@ class ProfileProvider extends ChangeNotifier {
     try {
       await ProfileService.claimUsername(username);
     } catch (error) {
+      Log.e('profile', 'set username failed', error);
       profile = previous;
       notifyListeners();
       rethrow;
@@ -102,6 +106,7 @@ class ProfileProvider extends ChangeNotifier {
     try {
       await ProfileService.saveGridLayout(tiles);
     } catch (error) {
+      Log.e('profile', 'save grid layout failed', error);
       profile = profile.copyWith(gridLayout: previous);
       notifyListeners();
       rethrow;

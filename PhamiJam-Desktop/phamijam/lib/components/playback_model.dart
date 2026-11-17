@@ -14,6 +14,7 @@ import 'package:phamijam/services/google_drive_service.dart'
     show driveTrackIdPrefix;
 import 'package:phamijam/services/listen_along_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/playback_session_sync_service.dart';
 import 'package:phamijam/services/playback_state_service.dart';
 import 'package:phamijam/services/autoplay_service.dart';
@@ -171,6 +172,7 @@ class PlaybackModel extends ChangeNotifier {
     required String friendDisplayName,
   }) async {
     if (friendUid.isEmpty) return;
+    Log.i('listenalong', 'start listening along with friend');
     _exitRemoteControl();
     _crossfade.cancel();
     await _listenAlongSub?.cancel();
@@ -188,6 +190,7 @@ class PlaybackModel extends ChangeNotifier {
 
   void stopListenAlong() {
     if (_listenAlongFriendUid == null) return;
+    Log.i('listenalong', 'stop listening along');
     unawaited(_listenAlongSub?.cancel());
     _listenAlongSub = null;
     _listenAlongFriendUid = null;
@@ -326,6 +329,7 @@ class PlaybackModel extends ChangeNotifier {
 
   Future<void> enterRemoteControl() async {
     if (_remoteSession == null) return;
+    Log.i('remote', 'now controlling another device');
     _crossfade.cancel();
     if (isPlaying) await _localTogglePlayPause();
     _isRemoteControlling = true;
@@ -334,6 +338,7 @@ class PlaybackModel extends ChangeNotifier {
 
   void _exitRemoteControl() {
     if (!_isRemoteControlling) return;
+    Log.i('remote', 'stopped controlling another device');
     _isRemoteControlling = false;
     notifyListeners();
   }
@@ -342,6 +347,7 @@ class PlaybackModel extends ChangeNotifier {
     final session = _remoteSession;
     final track = session?.currentTrack;
     if (session == null || track == null) return;
+    Log.i('remote', 'taking over the other device session locally');
     _isRemoteControlling = false;
     isShuffled = session.shuffle;
     repeatMode = PlayerRepeatMode.values.firstWhere(
@@ -420,6 +426,10 @@ class PlaybackModel extends ChangeNotifier {
   Future<void> _handleIncomingCommands(List<RemoteCommand> commands) async {
     if (commands.isNotEmpty) _crossfade.cancel();
     for (final command in commands) {
+      Log.i(
+        'remote',
+        'received command ${command.type.name} from other device',
+      );
       await PlaybackSessionSyncService.ackCommand(command.id);
       switch (command.type) {
         case RemoteCommandType.play:
@@ -515,6 +525,12 @@ class PlaybackModel extends ChangeNotifier {
 
       needsResumeLoad = true;
       _restoredResumePosition = savedQueue.position;
+      Log.i(
+        'player',
+        'restored saved queue: ${_playlistItems.length} songs, position '
+            '${_currentOrderIndex + 1}, current "$songName", '
+            'shuffle=$isShuffled, repeat=${repeatMode.name}',
+      );
       notifyListeners();
 
       if (restoredVideoId != null) {
@@ -555,7 +571,9 @@ class PlaybackModel extends ChangeNotifier {
       await prefs.setString(_prefsArtistNameKey, artistName);
       await prefs.setString(_prefsArtistIdKey, currentArtistId ?? '');
       await prefs.setString(_prefsSongPathKey, currentSongPath ?? '');
-    } catch (_) {}
+    } catch (error) {
+      Log.w('player', 'could not save last played song', error);
+    }
   }
 
   void _persistQueueState() {
@@ -583,6 +601,10 @@ class PlaybackModel extends ChangeNotifier {
     needsResumeLoad = false;
     final resumePosition = _restoredResumePosition;
     _restoredResumePosition = null;
+    Log.i(
+      'player',
+      'resuming saved queue at ${resumePosition?.inSeconds ?? 0}s: "$songName"',
+    );
 
     await _playBySourceIndex(_playOrder[_currentOrderIndex]);
     _forceDiscordPresenceRefreshAfterTrackChange();
@@ -771,8 +793,10 @@ class PlaybackModel extends ChangeNotifier {
     final nextPath = (nextItem['path'] as String?) ?? '';
     if (nextVideoId.isEmpty && nextPath.isEmpty) return;
 
-    debugPrint(
-      '[crossfade] trigger fired: remaining=$remaining crossfadeDuration=$crossfadeDuration nextVideoId=$nextVideoId nextPath=$nextPath',
+    Log.i(
+      'crossfade',
+      'trigger fired: remaining=$remaining duration=$crossfadeDuration '
+          'next=${nextVideoId.isNotEmpty ? nextVideoId : 'local file'}',
     );
     _recordOutgoingTrackCompleted();
     unawaited(
@@ -939,7 +963,16 @@ class PlaybackModel extends ChangeNotifier {
           _pushNowPlayingIfActive();
         },
       );
+    } catch (error, stackTrace) {
+      Log.e('crossfade', 'crossfade failed', error, stackTrace);
+      rethrow;
     } finally {
+      Log.i(
+        'crossfade',
+        handoffCompleted
+            ? 'crossfade finished'
+            : 'crossfade aborted, restoring',
+      );
       if (!handoffCompleted) {
         songName = previousSongName;
         artistName = previousArtistName;
@@ -960,8 +993,10 @@ class PlaybackModel extends ChangeNotifier {
     if (!_isNearTrackEnd()) return;
 
     _completionHandledForCurrentTrack = true;
+    Log.i('player', 'track ended: "$songName"');
 
     if (_pauseAtTrackEndScheduled) {
+      Log.i('player', 'sleep timer (end of track) paused playback');
       _pauseAtTrackEndScheduled = false;
       _exitListenAlongIfActive();
       if (isPlaying) await _localTogglePlayPause();
@@ -985,6 +1020,7 @@ class PlaybackModel extends ChangeNotifier {
       }
     }
     if (repeatMode == PlayerRepeatMode.one) {
+      Log.i('player', 'repeat one: replaying current track');
       await _restartCurrentTrack();
       unawaited(
         Future<void>.delayed(const Duration(milliseconds: 150), () {
@@ -1074,6 +1110,12 @@ class PlaybackModel extends ChangeNotifier {
       _trimEnd = trim != null ? Duration(milliseconds: trim.endMs) : null;
     }
     _isSwitchingTrack = true;
+    final loadWatch = Stopwatch()..start();
+    Log.i(
+      'player',
+      'loading "$songName" [$videoId] start=${(startAt ?? _trimStart)?.inSeconds ?? 0}s'
+          '${_trimStart != null ? ' trim=${_trimStart!.inSeconds}-${_trimEnd?.inSeconds}s' : ''}',
+    );
 
     _engineTransition = _engineTransition.catchError((_) {}).then((_) async {
       try {
@@ -1095,8 +1137,18 @@ class PlaybackModel extends ChangeNotifier {
         final effectiveStart = startAt ?? _trimStart;
         try {
           await _youtubeLoadVideoById?.call(videoId, startAt: effectiveStart);
-        } catch (error) {
-          debugPrint('PlaybackModel: failed to load video $videoId: $error');
+          Log.i(
+            'player',
+            'loaded [$videoId] in ${loadWatch.elapsedMilliseconds} ms '
+                '(duration ${duration?.inSeconds ?? 0}s)',
+          );
+        } catch (error, stackTrace) {
+          Log.e(
+            'player',
+            'load FAILED for [$videoId] after ${loadWatch.elapsedMilliseconds} ms',
+            error,
+            stackTrace,
+          );
         }
         if (effectiveStart != null && effectiveStart > Duration.zero) {
           try {
@@ -1165,6 +1217,13 @@ class PlaybackModel extends ChangeNotifier {
     _playerStateSubscription = player.playerStateStream.listen((state) async {
       final wasPlaying = _wasPlaying;
       _wasPlaying = state.playing;
+      if (wasPlaying != state.playing) {
+        Log.i(
+          'player',
+          '${state.playing ? 'playing' : 'paused/stopped'}: "$songName" '
+              'at ${progress.inSeconds}s (engine ${_engine.name})',
+        );
+      }
       if (!_crossfade.isActive) setIsPlaying(state.playing);
 
       if (wasPlaying && !state.playing) {
@@ -1236,11 +1295,11 @@ class PlaybackModel extends ChangeNotifier {
           'Connected to Discord as ${connectedUser.globalName ?? connectedUser.username}',
         );
       } else {
-        debugPrint('Connected to Discord presence');
+        Log.i('discord', 'connected to Discord presence');
       }
       await _syncDiscordPresence(force: true);
     } catch (error) {
-      debugPrint('Discord presence initialization failed: $error');
+      Log.w('discord', 'presence initialization failed', error);
       await discordRpc.dispose();
     }
   }
@@ -1252,7 +1311,7 @@ class PlaybackModel extends ChangeNotifier {
 
     if (!isConnected) {
       if (allowReconnect && _hasDiscordPresenceTarget) {
-        debugPrint('Discord disconnected, retrying on track switch');
+        Log.w('discord', 'disconnected, retrying on track switch');
         _discordReconnectFuture ??=
             _initializeDiscordPresence(forceReconnect: true).whenComplete(() {
               _discordReconnectFuture = null;
@@ -1380,7 +1439,7 @@ class PlaybackModel extends ChangeNotifier {
       await discordRpc.setPresence(presence);
       _lastDiscordPresenceSignature = signature;
     } catch (error) {
-      debugPrint('Discord presence update failed: $error');
+      Log.w('discord', 'presence update failed', error);
       if (error.toString().contains('Not connected to Discord')) {
         _discordRpcReady = false;
         _discordReconnectFuture ??=
@@ -1481,13 +1540,17 @@ class PlaybackModel extends ChangeNotifier {
         seedVideoId,
         excludeVideoIds: excludeIds,
       );
+      Log.i(
+        'autoplay',
+        'fetched ${continuation.length} songs after $seedVideoId',
+      );
       if (continuation.isEmpty) return false;
       for (final track in continuation) {
         appendToQueue(track);
       }
       return true;
     } catch (error) {
-      debugPrint('PlaybackModel: autoplay continuation failed: $error');
+      Log.e('autoplay', 'continuation failed', error);
       return false;
     }
   }
@@ -1505,7 +1568,9 @@ class PlaybackModel extends ChangeNotifier {
     _sleepTimer?.cancel();
     _pauseAtTrackEndScheduled = false;
     _sleepTimerEndsAt = DateTime.now().add(duration);
+    Log.i('player', 'sleep timer set for ${duration.inMinutes} min');
     _sleepTimer = Timer(duration, () {
+      Log.i('player', 'sleep timer fired, pausing');
       _sleepTimer = null;
       _sleepTimerEndsAt = null;
       _exitListenAlongIfActive();
@@ -1516,6 +1581,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void startSleepTimerEndOfTrack() {
+    Log.i('player', 'sleep timer set to end of track');
     _sleepTimer?.cancel();
     _sleepTimer = null;
     _sleepTimerEndsAt = null;
@@ -1524,6 +1590,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void cancelSleepTimer() {
+    Log.i('player', 'sleep timer cancelled');
     _sleepTimer?.cancel();
     _sleepTimer = null;
     _sleepTimerEndsAt = null;
@@ -1571,6 +1638,11 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void setPlaylistQueue(List<dynamic> items, {required int startIndex}) {
+    Log.i(
+      'player',
+      'new queue: ${items.length} songs, start index $startIndex, '
+          'shuffle=$isShuffled',
+    );
     _crossfade.cancel();
     unawaited(_recordPotentialSkip());
     _sourcePlaylistId = null;
@@ -1640,6 +1712,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void addToQueue(dynamic item) {
+    Log.i('queue', 'play next: ${_describeItem(item)}');
     _exitRemoteControl();
     _exitListenAlongIfActive();
     _playlistItems = List<dynamic>.from(_playlistItems)..add(item);
@@ -1663,6 +1736,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   void appendToQueue(dynamic item) {
+    Log.i('queue', 'add to queue: ${_describeItem(item)}');
     _exitRemoteControl();
     _exitListenAlongIfActive();
     _playlistItems = List<dynamic>.from(_playlistItems)..add(item);
@@ -1693,6 +1767,7 @@ class PlaybackModel extends ChangeNotifier {
     if (oldOrderIndex < 0 || oldOrderIndex >= _playOrder.length) return;
     if (newOrderIndex < 0 || newOrderIndex >= _playOrder.length) return;
     if (oldOrderIndex == newOrderIndex) return;
+    Log.i('queue', 'reorder queue $oldQueueIndex -> $newQueueIndex');
     final updated = List<int>.from(_playOrder);
     final sourceIndex = updated.removeAt(oldOrderIndex);
     updated.insert(newOrderIndex, sourceIndex);
@@ -1706,6 +1781,7 @@ class PlaybackModel extends ChangeNotifier {
   void clearUpNextQueue() {
     if (_isRemoteControlling) return;
     if (_playOrder.isEmpty || _currentOrderIndex < 0) return;
+    Log.i('queue', 'clear up-next queue');
     final currentSourceIndex = _playOrder[_currentOrderIndex];
     _playOrder = <int>[currentSourceIndex];
     _currentOrderIndex = 0;
@@ -1720,6 +1796,7 @@ class PlaybackModel extends ChangeNotifier {
     if (_playOrder.isEmpty || _currentOrderIndex < 0) return;
     final orderIndex = _currentOrderIndex + queueIndex;
     if (orderIndex < 0 || orderIndex >= _playOrder.length) return;
+    Log.i('queue', 'remove from queue (position $queueIndex)');
     _playOrder = List<int>.from(_playOrder)..removeAt(orderIndex);
     _refreshQueueWindow();
     unawaited(_prefetchAhead());
@@ -1748,6 +1825,7 @@ class PlaybackModel extends ChangeNotifier {
     if (_isRemoteControlling) return;
     if (queueIndex < 0 || queueIndex >= queue.length) return;
     if (_currentOrderIndex < 0) return;
+    Log.i('player', 'play from queue position $queueIndex');
     _crossfade.cancel();
     _exitListenAlongIfActive();
     await _recordPotentialSkip();
@@ -1780,6 +1858,7 @@ class PlaybackModel extends ChangeNotifier {
     if (!_pastPreviousRestartThreshold) {
       await _recordPotentialSkip();
     }
+    Log.i('player', 'previous pressed');
     await _localPlayPrevious();
   }
 
@@ -1810,6 +1889,7 @@ class PlaybackModel extends ChangeNotifier {
       return;
     }
     await _recordPotentialSkip();
+    Log.i('player', 'next pressed');
     await _localPlayNext();
   }
 
@@ -1818,6 +1898,7 @@ class PlaybackModel extends ChangeNotifier {
       var nextOrderIndex = _normalizeOrderIndex(_currentOrderIndex + 1);
       if (nextOrderIndex == null) {
         final appended = await _tryAppendAutoplayContinuation();
+        Log.i('player', 'end of queue, autoplay appended songs: $appended');
         if (appended) {
           nextOrderIndex = _normalizeOrderIndex(_currentOrderIndex + 1);
         } else if (repeatMode == PlayerRepeatMode.all) {
@@ -1826,7 +1907,10 @@ class PlaybackModel extends ChangeNotifier {
             wrapAround: true,
           );
         }
-        if (nextOrderIndex == null) return;
+        if (nextOrderIndex == null) {
+          Log.i('player', 'end of queue, nothing more to play');
+          return;
+        }
       }
 
       _currentOrderIndex = nextOrderIndex;
@@ -1901,6 +1985,10 @@ class PlaybackModel extends ChangeNotifier {
     final path = (item['path'] as String?) ?? '';
     if (path.isNotEmpty) {
       final localCover = item['coverImageBytes'] as Uint8List?;
+      Log.i(
+        'player',
+        'playing local/Drive file "${item['songName'] ?? item['title']}"',
+      );
       await switchToLocalEngine();
       await player.setFilePath(path, start: startAt);
       if (startAt == null) {
@@ -1939,6 +2027,7 @@ class PlaybackModel extends ChangeNotifier {
     _crossfade.cancel();
     _exitListenAlongIfActive();
     final clamped = _clampToTrim(value);
+    Log.i('player', 'seek to ${clamped.inSeconds}s');
     setProgress(clamped);
     if (_engine == PlaybackEngine.youtube) {
       await _youtubeSeek?.call(clamped);
@@ -1961,6 +2050,7 @@ class PlaybackModel extends ChangeNotifier {
   }
 
   Future<void> _localTogglePlayPause() async {
+    Log.i('player', isPlaying ? 'pause pressed' : 'play pressed');
     if (_engine == PlaybackEngine.youtube) {
       if (isPlaying) {
         await _youtubePause?.call();
@@ -1987,6 +2077,7 @@ class PlaybackModel extends ChangeNotifier {
     if (_isRemoteControlling) return;
     _exitListenAlongIfActive();
     isShuffled = !isShuffled;
+    Log.i('player', 'shuffle ${isShuffled ? 'on' : 'off'}');
     if (_playlistItems.isNotEmpty) {
       final fallbackSourceIndex =
           _playOrder.isNotEmpty && _currentOrderIndex >= 0
@@ -2007,6 +2098,7 @@ class PlaybackModel extends ChangeNotifier {
     _exitListenAlongIfActive();
     repeatMode = PlayerRepeatMode
         .values[(repeatMode.index + 1) % PlayerRepeatMode.values.length];
+    Log.i('player', 'repeat ${repeatMode.name}');
     if (_playlistItems.isNotEmpty) {
       _refreshQueueWindow();
     }
@@ -2273,4 +2365,13 @@ class PlaybackModel extends ChangeNotifier {
     unawaited(_discordRpc?.dispose());
     super.dispose();
   }
+}
+
+String _describeItem(dynamic item) {
+  if (item is! Map) return 'unknown item';
+  final title = (item['songName'] ?? item['title'] ?? 'Unknown').toString();
+  final id = (item['videoId'] as String?)?.isNotEmpty == true
+      ? item['videoId']
+      : ((item['path'] as String?)?.isNotEmpty == true ? 'file' : '?');
+  return '"$title" [$id]';
 }

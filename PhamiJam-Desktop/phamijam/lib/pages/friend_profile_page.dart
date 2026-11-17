@@ -11,6 +11,7 @@ import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/widgets/profile.dart';
 import 'package:phamijam/widgets/profile_grid/profile_grid_view.dart';
 import 'package:provider/provider.dart';
+import 'package:phamijam/services/log_service.dart';
 
 class FriendProfilePage extends StatelessWidget {
   const FriendProfilePage({super.key, required this.uid, this.onTabSelected});
@@ -54,7 +55,11 @@ class FriendProfilePage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _FriendHeader(uid: uid, profile: profile, displayName: displayName),
+                _FriendHeader(
+                  uid: uid,
+                  profile: profile,
+                  displayName: displayName,
+                ),
                 const SizedBox(height: 12),
                 _RelationshipActionRow(
                   uid: uid,
@@ -142,7 +147,8 @@ class _FriendHeader extends StatelessWidget {
                     CircleAvatar(
                       radius: 28,
                       backgroundColor: colorScheme.primary,
-                      backgroundImage: (avatarUrl != null && avatarUrl.isNotEmpty)
+                      backgroundImage:
+                          (avatarUrl != null && avatarUrl.isNotEmpty)
                           ? NetworkImage(avatarUrl)
                           : null,
                       child: (avatarUrl == null || avatarUrl.isEmpty)
@@ -219,9 +225,6 @@ class _FriendHeader extends StatelessWidget {
                           playback.isListeningAlong &&
                           playback.listenAlongFriendUid == uid;
                       return IconButton.filledTonal(
-                        tooltip: isListeningToThisFriend
-                            ? 'Stop listening along'
-                            : 'Listen along',
                         icon: Icon(
                           isListeningToThisFriend
                               ? Icons.headphones_rounded
@@ -272,6 +275,7 @@ class _RelationshipActionRowState extends State<_RelationshipActionRow> {
     try {
       await action();
     } catch (error) {
+      Log.e('friends', 'run failed', error);
       if (mounted) AppFlushbar.error(context, '$errorMessage: $error');
     } finally {
       if (mounted) setState(() => _busy = false);
