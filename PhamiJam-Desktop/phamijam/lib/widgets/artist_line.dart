@@ -23,6 +23,11 @@ String? featuredArtistsFromTitle(String title, {String? mainArtist}) {
   return raw;
 }
 
+bool _isMissingArtist(String artist) {
+  final value = artist.trim().toLowerCase();
+  return value.isEmpty || value == 'unknown artist';
+}
+
 String? featuredFromCredits(List<String> credits, String mainArtist) {
   final main = _norm(mainArtist);
   final others = credits.where((name) {
@@ -88,16 +93,18 @@ class _ArtistLineState extends State<ArtistLine> {
   Widget build(BuildContext context) {
     final style = widget.style;
     final credits = _credits;
+    final hasCredits = credits != null && credits.isNotEmpty;
+    final mainName = _isMissingArtist(widget.artist) && hasCredits
+        ? credits.first
+        : widget.artist;
     final featured =
-        (credits != null && credits.isNotEmpty
-            ? featuredFromCredits(credits, widget.artist)
-            : null) ??
-        featuredArtistsFromTitle(widget.title, mainArtist: widget.artist);
+        (hasCredits ? featuredFromCredits(credits, mainName) : null) ??
+        featuredArtistsFromTitle(widget.title, mainArtist: mainName);
     final text = Text.rich(
       TextSpan(
         children: [
           TextSpan(
-            text: widget.artist,
+            text: mainName,
             style: widget.onTap == null
                 ? null
                 : const TextStyle(decoration: TextDecoration.underline),

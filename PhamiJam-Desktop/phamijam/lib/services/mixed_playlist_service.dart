@@ -162,6 +162,50 @@ class MixedPlaylistService {
     return added.length;
   }
 
+  static Future<int> repairMissingMetadata(
+    String id,
+    Map<String, Map<String, dynamic>> details,
+  ) async {
+    final collection = _collection;
+    if (collection == null || details.isEmpty) return 0;
+    final doc = collection.doc(id);
+    final snapshot = await doc.get();
+    if (!snapshot.exists) return 0;
+    final tracks = List<Map<String, dynamic>>.from(
+      _parse(snapshot)['tracks'] as List<Map<String, dynamic>>,
+    );
+    var fixed = 0;
+    for (var i = 0; i < tracks.length; i++) {
+      final track = Map<String, dynamic>.from(tracks[i]);
+      final videoId = (track['videoId'] as String?) ?? '';
+      final info = details[videoId];
+      if (info == null) continue;
+      var changed = false;
+      for (final key in const ['artist', 'artistId', 'thumbnailUrl']) {
+        final current = (track[key] as String?) ?? '';
+        final next = (info[key] as String?) ?? '';
+        if (current.isEmpty && next.isNotEmpty) {
+          track[key] = next;
+          changed = true;
+        }
+      }
+      if (changed) {
+        tracks[i] = track;
+        fixed++;
+      }
+    }
+    if (fixed == 0) return 0;
+    await doc.update({
+      'tracks': tracks,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    Log.i(
+      'library',
+      'repaired details for $fixed songs in a PhamiJam playlist',
+    );
+    return fixed;
+  }
+
   static Future<void> removeTrackAt(String id, int index) async {
     final collection = _collection;
     if (collection == null) return;

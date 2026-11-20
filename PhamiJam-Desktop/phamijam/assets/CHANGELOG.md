@@ -155,6 +155,8 @@
   - Hidden playlists no longer show when adding a song to a playlist
   - Fixed synced lyrics
   - Improved the log sent from Settings
+- 1.2.8 - 20/11/2026
+  - Fixed songs in PhamiJam playlists missing their artist and cover art
 
 ## Screenshots:
 

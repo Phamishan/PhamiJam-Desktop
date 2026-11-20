@@ -19,6 +19,7 @@ import 'package:phamijam/services/google_drive_service.dart';
 import 'package:phamijam/services/mixed_playlist_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
+import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:phamijam/widgets/artist_line.dart';
 import 'package:provider/provider.dart';
 import 'package:phamijam/services/log_service.dart';
@@ -100,6 +101,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
           _missing = playlist == null;
           _loading = false;
         });
+        if (playlist != null) unawaited(_repairMissingDetails(playlist));
       },
       onError: (_) {
         if (!mounted) return;
@@ -117,6 +119,41 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     _coverSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  final Set<String> _repairAttempted = {};
+
+  Future<void> _repairMissingDetails(Map<String, dynamic> playlist) async {
+    final tracks = (playlist['tracks'] as List<Map<String, dynamic>>);
+    final missing = <String>[];
+    for (final track in tracks) {
+      if (_sourceOf(track) != 'youtube') continue;
+      final videoId = (track['videoId'] as String?) ?? '';
+      if (videoId.isEmpty || _repairAttempted.contains(videoId)) continue;
+      final artist = (track['artist'] as String?) ?? '';
+      final thumb = (track['thumbnailUrl'] as String?) ?? '';
+      if (artist.isEmpty || thumb.isEmpty) missing.add(videoId);
+    }
+    if (missing.isEmpty) return;
+    Log.i('library', 'repairing details for ${missing.length} songs');
+    final details = <String, Map<String, dynamic>>{};
+    for (final videoId in missing.take(25)) {
+      _repairAttempted.add(videoId);
+      try {
+        final info = await YoutubeDataService.fetchVideoById(videoId);
+        if (info != null) details[videoId] = info;
+      } catch (error) {
+        Log.w('library', 'could not look up details for a song', error);
+      }
+    }
+    try {
+      await MixedPlaylistService.repairMissingMetadata(
+        widget.playlistId,
+        details,
+      );
+    } catch (error) {
+      Log.w('library', 'saving repaired song details failed', error);
+    }
   }
 
   Future<void> _changeCover() async {
@@ -717,9 +754,12 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
         _expectedPath(track);
     final title = (track['title'] as String?) ?? 'Unknown song';
     final artist = (track['artist'] as String?) ?? '';
-    final thumbnailUrl = (track['thumbnailUrl'] as String?) ?? '';
     final videoId = (track['videoId'] as String?) ?? '';
     final isYoutube = _isYoutube(track);
+    var thumbnailUrl = (track['thumbnailUrl'] as String?) ?? '';
+    if (thumbnailUrl.isEmpty && isYoutube) {
+      thumbnailUrl = 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+    }
     final durationSeconds = _durationSecondsOf(track);
     final downloads = context.watch<DownloadsProvider>();
     final likedSongs = context.watch<LikedSongsProvider>();

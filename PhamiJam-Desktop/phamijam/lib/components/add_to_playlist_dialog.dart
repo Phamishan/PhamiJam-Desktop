@@ -4,6 +4,7 @@ import 'package:phamijam/components/mixed_playlist_dialogs.dart';
 import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/google_drive_service.dart';
 import 'package:phamijam/services/mixed_playlist_service.dart';
+import 'package:phamijam/services/youtube_data_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:provider/provider.dart';
 import 'package:phamijam/services/log_service.dart';
@@ -114,6 +115,49 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
     }
   }
 
+  Future<List<Map<String, dynamic>>> _fillMissingDetails(
+    List<Map<String, dynamic>> songs,
+  ) async {
+    final result = <Map<String, dynamic>>[];
+    for (final original in songs) {
+      final song = Map<String, dynamic>.from(original);
+      final videoId = (song['videoId'] as String?) ?? '';
+      final isYoutube =
+          videoId.isNotEmpty &&
+          !videoId.startsWith(driveTrackIdPrefix) &&
+          ((song['path'] as String?) ?? '').isEmpty;
+      if (isYoutube) {
+        final hasArtist =
+            ((song['artist'] ?? song['artistName']) as String?)?.isNotEmpty ??
+            false;
+        final hasThumb = ((song['thumbnailUrl'] as String?) ?? '').isNotEmpty;
+        if (!hasArtist || !hasThumb) {
+          try {
+            final info = await YoutubeDataService.fetchVideoById(videoId);
+            if (info != null) {
+              if (!hasArtist) {
+                song['artist'] = info['artist'];
+                song['artistId'] =
+                    (song['artistId'] as String?)?.isNotEmpty == true
+                    ? song['artistId']
+                    : info['artistId'];
+              }
+              if (!hasThumb) song['thumbnailUrl'] = info['thumbnailUrl'];
+            }
+          } catch (error) {
+            Log.w('library', 'looking up song details failed', error);
+          }
+        }
+        if (((song['thumbnailUrl'] as String?) ?? '').isEmpty) {
+          song['thumbnailUrl'] =
+              'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
+        }
+      }
+      result.add(song);
+    }
+    return result;
+  }
+
   Future<void> _submit() async {
     if (_selectedKeys.isEmpty) return;
     setState(() => _submitting = true);
@@ -142,9 +186,11 @@ class _AddToPlaylistDialogState extends State<_AddToPlaylistDialog> {
       }
     }
 
-    final tracks = widget.songs
-        .map(MixedPlaylistService.trackFromSong)
-        .toList();
+    final wantsMixed = _selectedKeys.any((k) => k.startsWith(_mixedPrefix));
+    final enriched = wantsMixed
+        ? await _fillMissingDetails(widget.songs)
+        : widget.songs;
+    final tracks = enriched.map(MixedPlaylistService.trackFromSong).toList();
     for (final playlist in _mixedPlaylists) {
       final id = (playlist['id'] as String?) ?? '';
       if (!_selectedKeys.contains('$_mixedPrefix$id')) continue;
