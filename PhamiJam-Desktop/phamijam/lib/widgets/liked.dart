@@ -13,6 +13,7 @@ import 'package:phamijam/components/playback_model.dart';
 import 'package:phamijam/providers/liked_songs_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/google_drive_service.dart';
+import 'package:phamijam/services/playlist_sort_prefs.dart';
 import 'package:provider/provider.dart';
 import 'package:phamijam/services/log_service.dart';
 
@@ -57,9 +58,27 @@ class _LikedPageState extends State<LikedPage> {
   final Set<String> _selectedVideoIds = {};
   _LikedSort _sort = _LikedSort.custom;
 
+  Future<void> _restoreSort() async {
+    final saved = await PlaylistSortPrefs.load('liked-songs');
+    if (saved == null || !mounted) return;
+    final match = _LikedSort.values.where((option) => option.name == saved);
+    if (match.isNotEmpty) setState(() => _sort = match.first);
+  }
+
+  void _selectSort(_LikedSort value) {
+    setState(() => _sort = value);
+    Log.i('library', 'liked songs sort -> ${value.name}');
+    PlaylistSortPrefs.save(
+      'liked-songs',
+      value.name,
+      isDefault: value == _LikedSort.custom,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _restoreSort();
     _playback = context.read<PlaybackModel>();
     final liked = context.read<LikedSongsProvider>();
     if (!liked.hasLoadedOnce && !liked.isLoading) {
@@ -655,8 +674,9 @@ class _LikedPageState extends State<LikedPage> {
                       const SizedBox(width: 12),
                     ],
                     PopupMenuButton<_LikedSort>(
+                      tooltip: '',
                       initialValue: _sort,
-                      onSelected: (value) => setState(() => _sort = value),
+                      onSelected: _selectSort,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),

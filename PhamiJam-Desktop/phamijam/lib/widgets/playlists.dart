@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
 import 'package:phamijam/services/google_auth_service.dart';
@@ -19,6 +17,7 @@ import 'package:phamijam/services/share_link_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
 import 'package:phamijam/services/log_service.dart';
+import 'package:phamijam/services/playlist_filter_prefs.dart';
 
 class PlaylistsPage extends StatefulWidget {
   final void Function(String, {Map<String, dynamic>? extra})? onTabSelected;
@@ -29,7 +28,54 @@ class PlaylistsPage extends StatefulWidget {
   State<PlaylistsPage> createState() => _PlaylistsPageState();
 }
 
+enum _PlaylistFilter { all, youtube, phamijam, saved }
+
 class _PlaylistsPageState extends State<PlaylistsPage> {
+  _PlaylistFilter _filter = _PlaylistFilter.all;
+
+  Future<void> _restoreFilter() async {
+    final saved = await PlaylistFilterPrefs.load();
+    if (saved == null || !mounted) return;
+    final match = _PlaylistFilter.values.where((f) => f.name == saved);
+    if (match.isNotEmpty) setState(() => _filter = match.first);
+  }
+
+  void _selectFilter(_PlaylistFilter value) {
+    if (value == _filter) return;
+    setState(() => _filter = value);
+    Log.i('library', 'playlist filter -> ${value.name}');
+    PlaylistFilterPrefs.save(
+      value.name,
+      isDefault: value == _PlaylistFilter.all,
+    );
+  }
+
+  Widget _buildFilterChips({
+    required int youtube,
+    required int phamijam,
+    required int saved,
+  }) {
+    Widget chip(_PlaylistFilter filter, String label, int count) => Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: ChoiceChip(
+        label: Text('$label · $count'),
+        selected: _filter == filter,
+        onSelected: (_) => _selectFilter(filter),
+      ),
+    );
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          chip(_PlaylistFilter.all, 'All', youtube + phamijam + saved),
+          chip(_PlaylistFilter.youtube, 'YouTube', youtube),
+          chip(_PlaylistFilter.phamijam, 'PhamiJam', phamijam),
+          chip(_PlaylistFilter.saved, 'Saved', saved),
+        ],
+      ),
+    );
+  }
+
   static bool _hasLoadedOnce = false;
   static String? _cachedErrorMessage;
   static String _cachedPlaylistTitle = 'Playlists';
@@ -392,6 +438,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   @override
   void initState() {
     super.initState();
+    _restoreFilter();
     _playlistSearchController = TextEditingController();
     _playlistCoverSubscription = PlaylistCoverService.watchAll().listen(
       _applyPlaylistCoverOverrides,
@@ -418,54 +465,38 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     }
   }
 
-  Future<void> _renameMixedPlaylist(Map<String, dynamic> playlist) async {
-    final name = await showMixedPlaylistNameDialog(
+  void _editMixedPlaylist(Map<String, dynamic> playlist) {
+    final id = playlist['id'] as String;
+    final tracks = ((playlist['tracks'] as List?) ?? const []).whereType<Map>();
+    final firstThumb = tracks
+        .map((t) => (t['thumbnailUrl'] as String?) ?? '')
+        .firstWhere((u) => u.isNotEmpty, orElse: () => '');
+    final coverKey = MixedPlaylistService.coverKey(id);
+    final customCover = _coverOverrides[coverKey];
+    final hasCustomCover = customCover != null && customCover.isNotEmpty;
+    showEditPlaylistDialog(
       context,
-      title: 'Rename playlist',
-      initial: (playlist['title'] as String?) ?? '',
-      actionLabel: 'Save',
+      playlistId: coverKey,
+      mixedPlaylistId: id,
+      initialTitle: (playlist['title'] as String?) ?? '',
+      initialDescription: (playlist['description'] as String?) ?? '',
+      initialPrivacyStatus: 'private',
+      initialThumbnailUrl: hasCustomCover ? customCover : firstThumb,
+      originalThumbnailUrl: firstThumb,
+      initialCustomCoverUrl: hasCustomCover ? customCover : null,
+      onUpdated: (_, _, _) {},
+      onCoverChanged: (customCoverUrl) {
+        if (!mounted) return;
+        setState(() {
+          _coverOverrides = {..._coverOverrides};
+          if (customCoverUrl == null) {
+            _coverOverrides.remove(coverKey);
+          } else {
+            _coverOverrides[coverKey] = customCoverUrl;
+          }
+        });
+      },
     );
-    if (name == null) return;
-    try {
-      await MixedPlaylistService.rename(playlist['id'] as String, name);
-    } catch (error) {
-      Log.e('library', 'rename mixed playlist failed', error);
-      if (mounted) {
-        AppFlushbar.error(context, "Couldn't rename playlist: $error");
-      }
-    }
-  }
-
-  Future<void> _changeMixedCover(String id) async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 85,
-    );
-    if (picked == null || !mounted) return;
-    try {
-      await PlaylistCoverService.upload(
-        MixedPlaylistService.coverKey(id),
-        File(picked.path),
-      );
-    } catch (error) {
-      Log.e('library', 'change mixed cover failed', error);
-      if (mounted) {
-        AppFlushbar.error(context, "Couldn't update cover image: $error");
-      }
-    }
-  }
-
-  Future<void> _removeMixedCover(String id) async {
-    try {
-      await PlaylistCoverService.remove(MixedPlaylistService.coverKey(id));
-    } catch (error) {
-      Log.e('library', 'remove mixed cover failed', error);
-      if (mounted) {
-        AppFlushbar.error(context, "Couldn't remove cover image: $error");
-      }
-    }
   }
 
   Future<void> _deleteMixedPlaylist(Map<String, dynamic> playlist) async {
@@ -473,7 +504,25 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     final confirmed = await confirmDeleteMixedPlaylist(context, title);
     if (!confirmed) return;
     try {
-      await MixedPlaylistService.delete(playlist['id'] as String);
+      final id = playlist['id'] as String;
+      final export = await MixedPlaylistService.exportPlaylist(id);
+      await MixedPlaylistService.delete(id);
+      if (!mounted) return;
+      unawaited(context.read<PlaylistPinProvider>().clearPin('mixed-$id'));
+      if (export != null) {
+        AppFlushbar.undo(
+          context,
+          'Deleted "$title"',
+          onUndo: () {
+            MixedPlaylistService.restorePlaylist(export).catchError((
+              Object error,
+            ) {
+              Log.w('library', 'undo delete failed', error);
+              return '';
+            });
+          },
+        );
+      }
     } catch (error) {
       Log.e('library', 'delete mixed playlist failed', error);
       if (mounted) {
@@ -482,9 +531,14 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     }
   }
 
-  Widget _buildMixedPlaylistTile(Map<String, dynamic> playlist) {
+  Widget _buildMixedPlaylistTile(
+    Map<String, dynamic> playlist,
+    PlaylistPinProvider pins,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
     final id = playlist['id'] as String;
+    final pinKey = 'mixed-$id';
+    final isPinned = pins.isPinned(pinKey);
     final title = (playlist['title'] as String?) ?? 'Untitled playlist';
     final count = (playlist['tracks'] as List?)?.length ?? 0;
     final customCover = _coverOverrides[MixedPlaylistService.coverKey(id)];
@@ -503,21 +557,17 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
           borderRadius: BorderRadius.circular(12),
           entries: [
             MenuItem<String>(
-              value: 'rename',
-              icon: const Icon(Icons.edit_rounded),
-              label: const Text('Rename playlist'),
+              value: 'toggle_pin',
+              icon: Icon(
+                isPinned ? Icons.push_pin_outlined : Icons.push_pin_rounded,
+              ),
+              label: Text(isPinned ? 'Unpin playlist' : 'Pin playlist'),
             ),
             MenuItem<String>(
-              value: 'cover',
-              icon: const Icon(Icons.image_rounded),
-              label: const Text('Change cover image'),
+              value: 'edit',
+              icon: const Icon(Icons.edit_rounded),
+              label: const Text('Edit playlist'),
             ),
-            if (hasCustomCover)
-              MenuItem<String>(
-                value: 'remove_cover',
-                icon: const Icon(Icons.hide_image_rounded),
-                label: const Text('Remove custom cover'),
-              ),
             MenuItem<String>(
               value: 'delete',
               icon: const Icon(Icons.delete_rounded),
@@ -526,12 +576,10 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
           ],
         ),
         onItemSelected: (value) {
-          if (value == 'rename') {
-            _renameMixedPlaylist(playlist);
-          } else if (value == 'cover') {
-            _changeMixedCover(id);
-          } else if (value == 'remove_cover') {
-            _removeMixedCover(id);
+          if (value == 'toggle_pin') {
+            pins.togglePin(pinKey);
+          } else if (value == 'edit') {
+            _editMixedPlaylist(playlist);
           } else if (value == 'delete') {
             _deleteMixedPlaylist(playlist);
           }
@@ -588,10 +636,26 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                     ),
                     child: IconButton(
                       icon: Icon(
+                        isPinned
+                            ? Icons.push_pin_rounded
+                            : Icons.push_pin_outlined,
+                        color: colorScheme.onSurface,
+                      ),
+                      onPressed: () => pins.togglePin(pinKey),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: colorScheme.onSurface.withValues(alpha: 0.38),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: IconButton(
+                      icon: Icon(
                         Icons.edit_rounded,
                         color: colorScheme.onSurface,
                       ),
-                      onPressed: () => _renameMixedPlaylist(playlist),
+                      onPressed: () => _editMixedPlaylist(playlist),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -817,7 +881,11 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                           'Playlist created successfully.',
                         );
                       } catch (e) {
-                        Log.e('library', 'show create playlist dialog failed', e);
+                        Log.e(
+                          'library',
+                          'show create playlist dialog failed',
+                          e,
+                        );
                         if (!mounted) return;
                         AppFlushbar.error(this.context, '$e');
                         setState(() {
@@ -997,27 +1065,51 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            ElevatedButton.icon(
-              onPressed: () {
-                _showCreatePlaylistDialog();
+            PopupMenuButton<String>(
+              tooltip: '',
+              onSelected: (value) {
+                if (value == 'youtube') _showCreatePlaylistDialog();
+                if (value == 'phamijam') _createMixedPlaylist();
               },
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Create'),
-              style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 'youtube',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.smart_display_rounded),
+                    title: Text('YouTube playlist'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'phamijam',
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.library_music_rounded),
+                    title: Text('PhamiJam playlist'),
+                  ),
+                ),
+              ],
+              child: IgnorePointer(
+                child: ElevatedButton(
+                  onPressed: () {},
+                  style: ElevatedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Icon(Icons.add_rounded),
+                ),
+              ),
             ),
-            const SizedBox(width: 16),
-            ElevatedButton.icon(
+            const SizedBox(width: 12),
+            ElevatedButton(
               onPressed: _showSavePlaylistDialog,
-              icon: const Icon(Icons.bookmark_add_outlined),
-              label: const Text('Save a playlist'),
               style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
+              child: const Icon(Icons.bookmark_add_outlined),
             ),
-            const SizedBox(width: 16),
-            ElevatedButton.icon(
+            const SizedBox(width: 12),
+            ElevatedButton(
               onPressed: () => _fetchUserPlaylists(forceRefresh: true),
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('Refresh'),
               style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
+              child: const Icon(Icons.refresh_rounded),
             ),
           ],
         ),
@@ -1092,41 +1184,361 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                               .contains(mixedQuery),
                         )
                         .toList();
+              final sortedMixed = pins.sortByPin([
+                for (final p in mixed) {...p, 'pinKey': 'mixed-${p['id']}'},
+              ], idKey: 'pinKey');
+              final showYoutube =
+                  _filter == _PlaylistFilter.all ||
+                  _filter == _PlaylistFilter.youtube;
+              final showMixed =
+                  _filter == _PlaylistFilter.all ||
+                  _filter == _PlaylistFilter.phamijam;
+              final showSaved =
+                  _filter == _PlaylistFilter.all ||
+                  _filter == _PlaylistFilter.saved;
               final nothingToShow =
-                  sortedPlaylists.isEmpty && saved.isEmpty && mixed.isEmpty;
+                  (!showYoutube || sortedPlaylists.isEmpty) &&
+                  (!showSaved || saved.isEmpty) &&
+                  (!showMixed || mixed.isEmpty);
 
               return CustomScrollView(
                 slivers: [
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.only(bottom: 4),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'PhamiJam playlists',
-                              style: TextStyle(
-                                color: colorScheme.onSurface,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                          TextButton.icon(
-                            onPressed: _createMixedPlaylist,
-                            icon: const Icon(Icons.add_rounded),
-                            label: const Text('New mixed playlist'),
-                          ),
-                        ],
+                      child: _buildFilterChips(
+                        youtube: sortedPlaylists.length,
+                        phamijam: mixed.length,
+                        saved: saved.length,
                       ),
                     ),
                   ),
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (context, index) => _buildMixedPlaylistTile(mixed[index]),
-                      childCount: mixed.length,
+                  if (showYoutube) ...[
+                    if (sortedPlaylists.isNotEmpty)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 16, bottom: 8),
+                          child: Text(
+                            'YouTube playlists',
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final playlist = sortedPlaylists[index];
+                        final title =
+                            (playlist['title'] as String?) ??
+                            'Unknown Playlist';
+                        final description =
+                            (playlist['description'] as String?) ?? '';
+                        final author =
+                            (playlist['author'] as String?) ?? 'Unknown Author';
+                        final itemCount =
+                            (playlist['itemCount'] as String?) ??
+                            (playlist['count'] as String?) ??
+                            '';
+                        final subtitle = itemCount.isNotEmpty
+                            ? '$author - $itemCount songs'
+                            : author;
+                        final thumbnails =
+                            (playlist['thumbnails'] as List?) ?? const [];
+                        String? thumbnailUrl;
+                        for (final rawThumbnail in thumbnails.reversed) {
+                          if (rawThumbnail is! Map) {
+                            continue;
+                          }
+                          final candidate = rawThumbnail['url'] as String?;
+                          if (_isUsableThumbnailUrl(candidate)) {
+                            thumbnailUrl = candidate;
+                            break;
+                          }
+                        }
+
+                        final playlistId =
+                            (playlist['playlistId'] as String?) ?? '';
+                        final originalThumbnailUrl = thumbnailUrl;
+                        final customCover = _coverOverrides[playlistId];
+                        if (customCover != null && customCover.isNotEmpty) {
+                          thumbnailUrl = customCover;
+                        }
+                        final isPinned =
+                            playlistId.isNotEmpty && pins.isPinned(playlistId);
+                        final privacyStatus =
+                            (playlist['privacyStatus'] as String?) ?? 'public';
+                        final canShare =
+                            playlistId.isNotEmpty && privacyStatus != 'private';
+
+                        void handleTogglePin() {
+                          if (playlistId.isEmpty) return;
+                          pins.togglePin(playlistId);
+                        }
+
+                        void handleShare() {
+                          if (!canShare) return;
+                          ShareLinkService.sharePlaylist(context, playlistId);
+                        }
+
+                        void handleEdit() {
+                          if (playlistId.isEmpty) {
+                            AppFlushbar.error(
+                              context,
+                              'This playlist cannot be edited.',
+                            );
+                            return;
+                          }
+                          _showEditPlaylistDialog(
+                            playlistId: playlistId,
+                            initialTitle: title,
+                            initialDescription: description,
+                            initialPrivacyStatus: privacyStatus,
+                            initialThumbnailUrl: thumbnailUrl ?? '',
+                            originalThumbnailUrl: originalThumbnailUrl,
+                            initialCustomCoverUrl:
+                                (customCover != null && customCover.isNotEmpty)
+                                ? customCover
+                                : null,
+                          );
+                        }
+
+                        void handleDelete() {
+                          if (playlistId.isEmpty) {
+                            AppFlushbar.error(
+                              context,
+                              'This playlist cannot be deleted.',
+                            );
+                            return;
+                          }
+                          _confirmDeletePlaylist(
+                            playlistId: playlistId,
+                            playlistTitle: title,
+                          );
+                        }
+
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          child: ContextMenuRegion<String>(
+                            contextMenu: ContextMenu(
+                              borderRadius: BorderRadius.circular(12),
+                              entries: [
+                                MenuItem<String>(
+                                  value: 'toggle_pin',
+                                  icon: Icon(
+                                    isPinned
+                                        ? Icons.push_pin_outlined
+                                        : Icons.push_pin_rounded,
+                                  ),
+                                  label: Text(
+                                    isPinned
+                                        ? 'Unpin playlist'
+                                        : 'Pin playlist',
+                                  ),
+                                ),
+                                if (canShare)
+                                  MenuItem<String>(
+                                    value: 'share',
+                                    icon: const Icon(Icons.share_rounded),
+                                    label: const Text('Share playlist'),
+                                  ),
+                                MenuItem<String>(
+                                  value: 'edit',
+                                  icon: const Icon(Icons.edit_rounded),
+                                  label: const Text('Edit playlist'),
+                                ),
+                                MenuItem<String>(
+                                  value: 'delete',
+                                  icon: const Icon(Icons.delete_rounded),
+                                  label: const Text('Delete playlist'),
+                                ),
+                              ],
+                            ),
+                            onItemSelected: (value) {
+                              if (value == 'toggle_pin') {
+                                handleTogglePin();
+                              } else if (value == 'share') {
+                                handleShare();
+                              } else if (value == 'edit') {
+                                handleEdit();
+                              } else if (value == 'delete') {
+                                handleDelete();
+                              }
+                            },
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: colorScheme.surface,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Material(
+                                type: MaterialType.transparency,
+                                child: ListTile(
+                                  leading:
+                                      thumbnailUrl != null &&
+                                          thumbnailUrl.isNotEmpty
+                                      ? ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                          child: Image.network(
+                                            thumbnailUrl,
+                                            width: 56,
+                                            height: 56,
+                                            cacheWidth: 112,
+                                            cacheHeight: 112,
+                                            fit: BoxFit.cover,
+                                            errorBuilder:
+                                                (
+                                                  context,
+                                                  error,
+                                                  stackTrace,
+                                                ) => Icon(
+                                                  Icons.playlist_play_rounded,
+                                                  color: colorScheme.onSurface,
+                                                ),
+                                          ),
+                                        )
+                                      : Icon(
+                                          Icons.playlist_play_rounded,
+                                          color: colorScheme.onSurface,
+                                        ),
+                                  title: Text(
+                                    title,
+                                    style: TextStyle(
+                                      color: colorScheme.onSurface,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    subtitle,
+                                    style: TextStyle(
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.38),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        child: IconButton(
+                                          icon: Icon(
+                                            isPinned
+                                                ? Icons.push_pin_rounded
+                                                : Icons.push_pin_outlined,
+                                            color: colorScheme.onSurface,
+                                          ),
+                                          onPressed: playlistId.isEmpty
+                                              ? null
+                                              : handleTogglePin,
+                                        ),
+                                      ),
+                                      if (canShare) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.onSurface
+                                                .withValues(alpha: 0.38),
+                                            borderRadius: BorderRadius.circular(
+                                              6,
+                                            ),
+                                          ),
+                                          child: IconButton(
+                                            icon: Icon(
+                                              Icons.share_rounded,
+                                              color: colorScheme.onSurface,
+                                            ),
+                                            onPressed: handleShare,
+                                          ),
+                                        ),
+                                      ],
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.38),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        child: IconButton(
+                                          icon: Icon(
+                                            Icons.edit_rounded,
+                                            color: colorScheme.onSurface,
+                                          ),
+                                          onPressed: handleEdit,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          color: colorScheme.error,
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        child: IconButton(
+                                          icon: Icon(
+                                            Icons.delete_rounded,
+                                            color: colorScheme.onError,
+                                          ),
+                                          onPressed: handleDelete,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    widget.onTabSelected?.call(
+                                      'playlist_inspect',
+                                      extra: {
+                                        'playlistId': playlist['playlistId'],
+                                        'playlistTitle': title,
+                                        'thumbnailUrl': thumbnailUrl,
+                                      },
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }, childCount: sortedPlaylists.length),
                     ),
-                  ),
+                  ],
+                  if (showMixed) ...[
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 16, bottom: 4),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'PhamiJam playlists',
+                                style: TextStyle(
+                                  color: colorScheme.onSurface,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    SliverList(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) =>
+                            _buildMixedPlaylistTile(sortedMixed[index], pins),
+                        childCount: sortedMixed.length,
+                      ),
+                    ),
+                  ],
                   if (nothingToShow)
                     SliverToBoxAdapter(
                       child: Padding(
@@ -1142,292 +1554,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
                         ),
                       ),
                     ),
-                  if (sortedPlaylists.isNotEmpty)
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 16, bottom: 8),
-                        child: Text(
-                          'YouTube playlists',
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ),
-                    ),
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate((context, index) {
-                      final playlist = sortedPlaylists[index];
-                      final title =
-                          (playlist['title'] as String?) ?? 'Unknown Playlist';
-                      final description =
-                          (playlist['description'] as String?) ?? '';
-                      final author =
-                          (playlist['author'] as String?) ?? 'Unknown Author';
-                      final itemCount =
-                          (playlist['itemCount'] as String?) ??
-                          (playlist['count'] as String?) ??
-                          '';
-                      final subtitle = itemCount.isNotEmpty
-                          ? '$author - $itemCount songs'
-                          : author;
-                      final thumbnails =
-                          (playlist['thumbnails'] as List?) ?? const [];
-                      String? thumbnailUrl;
-                      for (final rawThumbnail in thumbnails.reversed) {
-                        if (rawThumbnail is! Map) {
-                          continue;
-                        }
-                        final candidate = rawThumbnail['url'] as String?;
-                        if (_isUsableThumbnailUrl(candidate)) {
-                          thumbnailUrl = candidate;
-                          break;
-                        }
-                      }
-
-                      final playlistId =
-                          (playlist['playlistId'] as String?) ?? '';
-                      final originalThumbnailUrl = thumbnailUrl;
-                      final customCover = _coverOverrides[playlistId];
-                      if (customCover != null && customCover.isNotEmpty) {
-                        thumbnailUrl = customCover;
-                      }
-                      final isPinned =
-                          playlistId.isNotEmpty && pins.isPinned(playlistId);
-                      final privacyStatus =
-                          (playlist['privacyStatus'] as String?) ?? 'public';
-                      final canShare =
-                          playlistId.isNotEmpty && privacyStatus != 'private';
-
-                      void handleTogglePin() {
-                        if (playlistId.isEmpty) return;
-                        pins.togglePin(playlistId);
-                      }
-
-                      void handleShare() {
-                        if (!canShare) return;
-                        ShareLinkService.sharePlaylist(context, playlistId);
-                      }
-
-                      void handleEdit() {
-                        if (playlistId.isEmpty) {
-                          AppFlushbar.error(
-                            context,
-                            'This playlist cannot be edited.',
-                          );
-                          return;
-                        }
-                        _showEditPlaylistDialog(
-                          playlistId: playlistId,
-                          initialTitle: title,
-                          initialDescription: description,
-                          initialPrivacyStatus: privacyStatus,
-                          initialThumbnailUrl: thumbnailUrl ?? '',
-                          originalThumbnailUrl: originalThumbnailUrl,
-                          initialCustomCoverUrl:
-                              (customCover != null && customCover.isNotEmpty)
-                              ? customCover
-                              : null,
-                        );
-                      }
-
-                      void handleDelete() {
-                        if (playlistId.isEmpty) {
-                          AppFlushbar.error(
-                            context,
-                            'This playlist cannot be deleted.',
-                          );
-                          return;
-                        }
-                        _confirmDeletePlaylist(
-                          playlistId: playlistId,
-                          playlistTitle: title,
-                        );
-                      }
-
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 5),
-                        child: ContextMenuRegion<String>(
-                          contextMenu: ContextMenu(
-                            borderRadius: BorderRadius.circular(12),
-                            entries: [
-                              MenuItem<String>(
-                                value: 'toggle_pin',
-                                icon: Icon(
-                                  isPinned
-                                      ? Icons.push_pin_outlined
-                                      : Icons.push_pin_rounded,
-                                ),
-                                label: Text(
-                                  isPinned ? 'Unpin playlist' : 'Pin playlist',
-                                ),
-                              ),
-                              if (canShare)
-                                MenuItem<String>(
-                                  value: 'share',
-                                  icon: const Icon(Icons.share_rounded),
-                                  label: const Text('Share playlist'),
-                                ),
-                              MenuItem<String>(
-                                value: 'edit',
-                                icon: const Icon(Icons.edit_rounded),
-                                label: const Text('Edit playlist'),
-                              ),
-                              MenuItem<String>(
-                                value: 'delete',
-                                icon: const Icon(Icons.delete_rounded),
-                                label: const Text('Delete playlist'),
-                              ),
-                            ],
-                          ),
-                          onItemSelected: (value) {
-                            if (value == 'toggle_pin') {
-                              handleTogglePin();
-                            } else if (value == 'share') {
-                              handleShare();
-                            } else if (value == 'edit') {
-                              handleEdit();
-                            } else if (value == 'delete') {
-                              handleDelete();
-                            }
-                          },
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: colorScheme.surface,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Material(
-                              type: MaterialType.transparency,
-                              child: ListTile(
-                                leading:
-                                    thumbnailUrl != null &&
-                                        thumbnailUrl.isNotEmpty
-                                    ? ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: Image.network(
-                                          thumbnailUrl,
-                                          width: 56,
-                                          height: 56,
-                                          cacheWidth: 112,
-                                          cacheHeight: 112,
-                                          fit: BoxFit.cover,
-                                          errorBuilder:
-                                              (context, error, stackTrace) =>
-                                                  Icon(
-                                                    Icons.playlist_play_rounded,
-                                                    color:
-                                                        colorScheme.onSurface,
-                                                  ),
-                                        ),
-                                      )
-                                    : Icon(
-                                        Icons.playlist_play_rounded,
-                                        color: colorScheme.onSurface,
-                                      ),
-                                title: Text(
-                                  title,
-                                  style: TextStyle(
-                                    color: colorScheme.onSurface,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  subtitle,
-                                  style: TextStyle(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                      decoration: BoxDecoration(
-                                        color: colorScheme.onSurface.withValues(
-                                          alpha: 0.38,
-                                        ),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: IconButton(
-                                        icon: Icon(
-                                          isPinned
-                                              ? Icons.push_pin_rounded
-                                              : Icons.push_pin_outlined,
-                                          color: colorScheme.onSurface,
-                                        ),
-                                        onPressed: playlistId.isEmpty
-                                            ? null
-                                            : handleTogglePin,
-                                      ),
-                                    ),
-                                    if (canShare) ...[
-                                      const SizedBox(width: 8),
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          color: colorScheme.onSurface
-                                              .withValues(alpha: 0.38),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        child: IconButton(
-                                          icon: Icon(
-                                            Icons.share_rounded,
-                                            color: colorScheme.onSurface,
-                                          ),
-                                          onPressed: handleShare,
-                                        ),
-                                      ),
-                                    ],
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      decoration: BoxDecoration(
-                                        color: colorScheme.onSurface.withValues(
-                                          alpha: 0.38,
-                                        ),
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: IconButton(
-                                        icon: Icon(
-                                          Icons.edit_rounded,
-                                          color: colorScheme.onSurface,
-                                        ),
-                                        onPressed: handleEdit,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      decoration: BoxDecoration(
-                                        color: colorScheme.error,
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: IconButton(
-                                        icon: Icon(
-                                          Icons.delete_rounded,
-                                          color: colorScheme.onError,
-                                        ),
-                                        onPressed: handleDelete,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                onTap: () {
-                                  widget.onTabSelected?.call(
-                                    'playlist_inspect',
-                                    extra: {
-                                      'playlistId': playlist['playlistId'],
-                                      'playlistTitle': title,
-                                      'thumbnailUrl': thumbnailUrl,
-                                    },
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }, childCount: sortedPlaylists.length),
-                  ),
-                  if (saved.isNotEmpty) ...[
+                  if (showSaved && saved.isNotEmpty) ...[
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.only(top: 16, bottom: 8),

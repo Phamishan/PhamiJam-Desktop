@@ -28,7 +28,10 @@ class YoutubePlaylistService {
     _logIfFailed('GET', uri, response);
 
     if (response.statusCode == 401) {
-      Log.w('youtube', 'GET ${uri.path} got 401, refreshing token and retrying');
+      Log.w(
+        'youtube',
+        'GET ${uri.path} got 401, refreshing token and retrying',
+      );
       accessToken = await _getAccessToken(forceRefresh: true);
       response = await http.get(
         uri,
@@ -54,7 +57,10 @@ class YoutubePlaylistService {
     _logIfFailed('POST', uri, response);
 
     if (response.statusCode == 401) {
-      Log.w('youtube', 'POST ${uri.path} got 401, refreshing token and retrying');
+      Log.w(
+        'youtube',
+        'POST ${uri.path} got 401, refreshing token and retrying',
+      );
       accessToken = await _getAccessToken(forceRefresh: true);
       response = await http.post(
         uri,
@@ -77,7 +83,10 @@ class YoutubePlaylistService {
     _logIfFailed('DELETE', uri, response);
 
     if (response.statusCode == 401) {
-      Log.w('youtube', 'DELETE ${uri.path} got 401, refreshing token and retrying');
+      Log.w(
+        'youtube',
+        'DELETE ${uri.path} got 401, refreshing token and retrying',
+      );
       accessToken = await _getAccessToken(forceRefresh: true);
       response = await http.delete(
         uri,
@@ -437,6 +446,60 @@ class YoutubePlaylistService {
       });
     }
     return songs;
+  }
+
+  static Future<Set<String>> findUnavailableVideos(
+    List<String> videoIds,
+  ) async {
+    final missing = <String>{};
+    for (var i = 0; i < videoIds.length; i += 50) {
+      final end = i + 50 > videoIds.length ? videoIds.length : i + 50;
+      final chunk = videoIds.sublist(i, end);
+      final uri = Uri.parse(
+        'https://www.googleapis.com/youtube/v3/videos',
+      ).replace(queryParameters: {'part': 'id', 'id': chunk.join(',')});
+      final response = await _getWithAutoRefresh(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Failed to check songs (${response.statusCode}).');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final found = (data['items'] as List? ?? [])
+          .map((item) => (item as Map)['id'])
+          .whereType<String>()
+          .toSet();
+      missing.addAll(chunk.where((id) => !found.contains(id)));
+    }
+    return missing;
+  }
+
+  static Future<Map<String, int>> fetchVideoViewCounts(
+    List<String> videoIds,
+  ) async {
+    final counts = <String, int>{};
+    for (var i = 0; i < videoIds.length; i += 50) {
+      final end = i + 50 > videoIds.length ? videoIds.length : i + 50;
+      final uri = Uri.parse('https://www.googleapis.com/youtube/v3/videos')
+          .replace(
+            queryParameters: {
+              'part': 'statistics',
+              'id': videoIds.sublist(i, end).join(','),
+            },
+          );
+      final response = await _getWithAutoRefresh(uri);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw Exception('Failed to load play counts (${response.statusCode}).');
+      }
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      for (final item in (data['items'] as List? ?? const [])) {
+        if (item is! Map) continue;
+        final id = item['id'];
+        final views = int.tryParse(
+          ((item['statistics'] as Map?)?['viewCount'] ?? '').toString(),
+        );
+        if (id is String && views != null) counts[id] = views;
+      }
+    }
+    return counts;
   }
 
   static Future<int> fetchVideoDurationSeconds(String videoId) async {

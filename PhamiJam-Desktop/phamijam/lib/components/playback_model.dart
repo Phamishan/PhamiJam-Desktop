@@ -22,6 +22,7 @@ import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/skip_tracking_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
+import 'package:phamijam/services/unavailable_songs_service.dart';
 
 enum PlaybackEngine { local, youtube }
 
@@ -43,6 +44,56 @@ class PlaybackModel extends ChangeNotifier {
   Timer? _discordPresenceTimer;
   bool _isBoundToPlayer = false;
   bool _completionHandledForCurrentTrack = false;
+
+  String? _crossfadeAttemptKey;
+  final Set<String> _unplayableVideoIds = {};
+  bool _lastLoadFailed = false;
+  int _consecutiveLoadFailures = 0;
+
+  static bool _looksUnplayable(Object error) {
+    final text = error.toString();
+    return text.contains('VideoUnplayableException') ||
+        text.contains('is unplayable');
+  }
+
+  String? playbackNotice;
+  bool playbackNoticeIsError = false;
+
+  void _postNotice(String message, {bool isError = false}) {
+    playbackNotice = message;
+    playbackNoticeIsError = isError;
+    notifyListeners();
+  }
+
+  void consumePlaybackNotice() {
+    playbackNotice = null;
+    playbackNoticeIsError = false;
+  }
+
+  String _titleAtOrderIndex(int orderIndex) {
+    if (orderIndex < 0 || orderIndex >= _playOrder.length) return 'This song';
+    final sourceIndex = _playOrder[orderIndex];
+    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) {
+      return 'This song';
+    }
+    final item = _playlistItems[sourceIndex];
+    if (item is! Map) return 'This song';
+    final title = (item['songName'] ?? item['title'] ?? '').toString();
+    return title.isEmpty ? 'This song' : title;
+  }
+
+  bool _isKnownUnplayable(int orderIndex) {
+    if (orderIndex < 0 || orderIndex >= _playOrder.length) return false;
+    final sourceIndex = _playOrder[orderIndex];
+    if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) return false;
+    final item = _playlistItems[sourceIndex];
+    if (item is! Map) return false;
+    final videoId = (item['videoId'] as String?) ?? '';
+    return videoId.isNotEmpty &&
+        (_unplayableVideoIds.contains(videoId) ||
+            UnavailableSongs.instance.contains(videoId));
+  }
+
   bool _isSwitchingTrack = false;
   bool _wasPlaying = false;
   PlaybackEngine _engine = PlaybackEngine.local;
@@ -793,6 +844,16 @@ class PlaybackModel extends ChangeNotifier {
     final nextPath = (nextItem['path'] as String?) ?? '';
     if (nextVideoId.isEmpty && nextPath.isEmpty) return;
 
+    final attemptKey =
+        '${currentSongPath ?? ''}>${nextVideoId.isNotEmpty ? nextVideoId : nextPath}';
+    if (_crossfadeAttemptKey == attemptKey) return;
+    if (nextVideoId.isNotEmpty &&
+        (_unplayableVideoIds.contains(nextVideoId) ||
+            UnavailableSongs.instance.contains(nextVideoId))) {
+      return;
+    }
+    _crossfadeAttemptKey = attemptKey;
+
     Log.i(
       'crossfade',
       'trigger fired: remaining=$remaining duration=$crossfadeDuration '
@@ -873,11 +934,23 @@ class PlaybackModel extends ChangeNotifier {
             final start = trim != null
                 ? Duration(milliseconds: trim.startMs)
                 : null;
-            await _youtubeLoadVideoById?.call(
-              nextVideoId,
-              target: fadePlayer,
-              startAt: start,
-            );
+            try {
+              await _youtubeLoadVideoById?.call(
+                nextVideoId,
+                target: fadePlayer,
+                startAt: start,
+              );
+            } catch (error) {
+              if (_looksUnplayable(error)) {
+                _unplayableVideoIds.add(nextVideoId);
+                UnavailableSongs.instance.add(nextVideoId);
+                Log.w(
+                  'player',
+                  '$nextVideoId is not available on YouTube, will skip it',
+                );
+              }
+              rethrow;
+            }
             if (start != null && start > Duration.zero) {
               try {
                 await fadePlayer.seek(start);
@@ -909,6 +982,7 @@ class PlaybackModel extends ChangeNotifier {
         },
         startMain: (position) async {
           handoffCompleted = true;
+          _crossfadeAttemptKey = null;
           _isSwitchingTrack = true;
           try {
             if (nextVideoId.isNotEmpty) {
@@ -982,6 +1056,7 @@ class PlaybackModel extends ChangeNotifier {
         currentYouTubeVideoId = previousVideoId;
         currentSongPath = previousSongPath;
         notifyListeners();
+        unawaited(_triggerTrackCompletedIfNeeded());
       }
       showSidebarVideo();
     }
@@ -1081,6 +1156,29 @@ class PlaybackModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  int? preferredVideoHeight;
+
+  Future<void> setPreferredVideoHeight(int? height) async {
+    if (preferredVideoHeight == height) return;
+    preferredVideoHeight = height;
+    notifyListeners();
+
+    final videoId = currentYouTubeVideoId;
+    if (_engine != PlaybackEngine.youtube ||
+        videoId == null ||
+        videoId.isEmpty) {
+      return;
+    }
+    final wasPlaying = isPlaying;
+    final resumeAt = progress;
+    await playYouTubeVideoById(videoId, startAt: resumeAt);
+    if (!wasPlaying) {
+      try {
+        await _youtubePause?.call();
+      } catch (_) {}
+    }
+  }
+
   Future<void> playYouTubeVideoById(
     String videoId, {
     Duration? startAt,
@@ -1135,6 +1233,7 @@ class PlaybackModel extends ChangeNotifier {
         } catch (_) {}
 
         final effectiveStart = startAt ?? _trimStart;
+        _lastLoadFailed = false;
         try {
           await _youtubeLoadVideoById?.call(videoId, startAt: effectiveStart);
           Log.i(
@@ -1149,6 +1248,11 @@ class PlaybackModel extends ChangeNotifier {
             error,
             stackTrace,
           );
+          _lastLoadFailed = true;
+          if (_looksUnplayable(error)) {
+            _unplayableVideoIds.add(videoId);
+            UnavailableSongs.instance.add(videoId);
+          }
         }
         if (effectiveStart != null && effectiveStart > Duration.zero) {
           try {
@@ -1913,11 +2017,56 @@ class PlaybackModel extends ChangeNotifier {
         }
       }
 
-      _currentOrderIndex = nextOrderIndex;
+      var targetIndex = nextOrderIndex;
+      var skipped = 0;
+      final skippedTitles = <String>[];
+      while (skipped < 5 && _isKnownUnplayable(targetIndex)) {
+        final following = _normalizeOrderIndex(targetIndex + 1);
+        if (following == null) break;
+        Log.w('player', 'skipping a song that is not available on YouTube');
+        skippedTitles.add(_titleAtOrderIndex(targetIndex));
+        targetIndex = following;
+        skipped++;
+      }
+      if (skippedTitles.isNotEmpty) {
+        _postNotice(
+          skippedTitles.length == 1
+              ? '"${skippedTitles.first}" isn\'t available on YouTube - skipped.'
+              : '${skippedTitles.length} songs aren\'t available on YouTube - '
+                    'skipped.',
+        );
+      }
+
+      _currentOrderIndex = targetIndex;
       _refreshQueueWindow();
       notifyListeners();
 
-      await _playBySourceIndex(_playOrder[nextOrderIndex], startAt: startAt);
+      _lastLoadFailed = false;
+      await _playBySourceIndex(_playOrder[targetIndex], startAt: startAt);
+      if (_lastLoadFailed) {
+        _consecutiveLoadFailures++;
+        final failedTitle = songName;
+        if (_consecutiveLoadFailures < 3) {
+          _postNotice(
+            '"$failedTitle" couldn\'t be played - trying the next song.',
+          );
+          Log.w(
+            'player',
+            'song could not be played, trying the next one '
+                '($_consecutiveLoadFailures/3)',
+          );
+          await _localPlayNext();
+          return;
+        }
+        Log.e('player', 'three songs in a row could not be played, stopping');
+        _consecutiveLoadFailures = 0;
+        _postNotice(
+          'Several songs in a row couldn\'t be played. Check your connection.',
+          isError: true,
+        );
+        return;
+      }
+      _consecutiveLoadFailures = 0;
       _forceDiscordPresenceRefreshAfterTrackChange();
       unawaited(_prefetchAhead());
       _pushSessionIfHosting();
@@ -1966,6 +2115,7 @@ class PlaybackModel extends ChangeNotifier {
     if (sourceIndex < 0 || sourceIndex >= _playlistItems.length) {
       return;
     }
+    _crossfadeAttemptKey = null;
 
     final item = _playlistItems[sourceIndex];
     if (item is! Map<String, dynamic>) {

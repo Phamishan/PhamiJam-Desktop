@@ -23,7 +23,7 @@ class TopArtistsTile extends StatelessWidget {
     return FutureBuilder<List<PlayEvent>>(
       future: ListeningHistoryService.eventsSinceForUid(
         profileUid,
-        DateTime(now.year),
+        DateTime(now.month == 1 ? now.year - 1 : now.year),
       ),
       builder: (context, snapshot) {
         final events = snapshot.data;

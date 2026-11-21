@@ -187,6 +187,7 @@ class _HomePlaylistCardState extends State<HomePlaylistCard> {
                         color: Colors.black.withValues(alpha: 0.45),
                         shape: const CircleBorder(),
                         child: PopupMenuButton<String>(
+                          tooltip: '',
                           splashRadius: 16,
                           borderRadius: BorderRadius.circular(16),
                           shape: RoundedRectangleBorder(

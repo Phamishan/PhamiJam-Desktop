@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:phamijam/models/play_event.dart';
+import 'package:phamijam/services/log_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ListeningHistoryService {
@@ -18,6 +19,9 @@ class ListeningHistoryService {
   static const int _minListenMs = 30000;
   static const Duration _syncTimeout = Duration(seconds: 8);
   static const Duration _queryTimeout = Duration(seconds: 20);
+  static const Duration _pagedQueryTimeout = Duration(seconds: 15);
+  static const int _yearPageSize = 500;
+
   static const Duration _prefsTimeout = Duration(seconds: 5);
   static const int _batchChunkSize = 450;
   static const int _recentEventsLimit = 100;
@@ -248,38 +252,93 @@ class ListeningHistoryService {
     }
 
     var events = List<PlayEvent>.from(cache?.events ?? const []);
-    try {
-      final fetchFromMs = cache?.syncedThroughMs ?? sinceMs;
-      final snapshot = await remote
-          .where('s', isGreaterThanOrEqualTo: fetchFromMs)
-          .where('s', isLessThan: untilMs)
-          .get()
-          .timeout(_queryTimeout);
-      final seen = events.map((e) => e.docId).toSet();
-      for (final doc in snapshot.docs) {
-        final event = PlayEvent.fromJson(doc.data());
-        if (event != null && seen.add(event.docId)) events.add(event);
-      }
-      events.sort((a, b) => a.startedAt.compareTo(b.startedAt));
+    final seen = events.map((e) => e.docId).toSet();
+    var cursorMs = cache?.syncedThroughMs ?? sinceMs;
+    DocumentSnapshot<Map<String, dynamic>>? lastDoc;
+    var complete = false;
+    final watch = Stopwatch()..start();
 
-      if (uid != null) {
-        await _saveYearCache(
-          uid,
-          year,
-          _YearCache(
-            events: events,
-            syncedThroughMs: isClosedYear
-                ? untilMs
-                : DateTime.now().millisecondsSinceEpoch,
-            closed: isClosedYear,
-          ),
+    while (true) {
+      try {
+        var query = remote
+            .where('s', isGreaterThanOrEqualTo: cursorMs)
+            .where('s', isLessThan: untilMs)
+            .orderBy('s')
+            .limit(_yearPageSize);
+        if (lastDoc != null) query = query.startAfterDocument(lastDoc);
+        final snapshot = await query.get().timeout(_pagedQueryTimeout);
+
+        for (final doc in snapshot.docs) {
+          final event = PlayEvent.fromJson(doc.data());
+          if (event != null && seen.add(event.docId)) events.add(event);
+        }
+        if (snapshot.docs.isNotEmpty) lastDoc = snapshot.docs.last;
+
+        if (snapshot.docs.length < _yearPageSize) {
+          complete = true;
+          break;
+        }
+        if (uid != null && lastDoc != null) {
+          final lastMs = (lastDoc.data()?['s'] as num?)?.toInt() ?? cursorMs;
+          cursorMs = lastMs;
+          final sorted = List<PlayEvent>.from(events)
+            ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
+          await _saveYearCache(
+            uid,
+            year,
+            _YearCache(events: sorted, syncedThroughMs: lastMs, closed: false),
+          );
+          lastDoc = null;
+        }
+      } catch (error) {
+        Log.w(
+          'history',
+          'year fetch paused after ${events.length} plays '
+              '(${watch.elapsedMilliseconds} ms)',
+          error,
         );
+        break;
       }
-    } catch (error) {
-      debugPrint('ListeningHistoryService: year fetch failed: $error');
+    }
+
+    events.sort((a, b) => a.startedAt.compareTo(b.startedAt));
+    if (complete && uid != null) {
+      await _saveYearCache(
+        uid,
+        year,
+        _YearCache(
+          events: events,
+          syncedThroughMs: isClosedYear
+              ? untilMs
+              : DateTime.now().millisecondsSinceEpoch,
+          closed: isClosedYear,
+        ),
+      );
+      Log.i(
+        'history',
+        'year $year loaded: ${events.length} plays in '
+            '${watch.elapsedMilliseconds} ms',
+      );
     }
 
     return _mergeWithPending(events, sinceMs, untilMs);
+  }
+
+  static Future<List<PlayEvent>> eventsInRange(
+    DateTime from,
+    DateTime to,
+  ) async {
+    final events = <PlayEvent>[];
+    for (var year = from.year; year <= to.year; year++) {
+      events.addAll(await _eventsForYear(year));
+    }
+    final fromMs = from.millisecondsSinceEpoch;
+    final toMs = to.millisecondsSinceEpoch;
+    final inRange = events.where((e) {
+      final ms = e.startedAt.millisecondsSinceEpoch;
+      return ms >= fromMs && ms < toMs;
+    }).toList()..sort((a, b) => a.startedAt.compareTo(b.startedAt));
+    return inRange;
   }
 
   static String _yearCacheKey(String uid, int year) =>
@@ -457,7 +516,9 @@ class ListeningHistoryService {
           _cachedEarliestYearByUid[uid] = year;
           return year;
         })
-        .whenComplete(() => _earliestYearInFlightByUid.remove(uid));
+        .whenComplete(() {
+          _earliestYearInFlightByUid.remove(uid);
+        });
   }
 
   static Future<int> _earliestEventYearInternal() async {

@@ -6,9 +6,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_context_menu/flutter_context_menu.dart';
 import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart';
 import 'package:phamijam/components/add_to_playlist_dialog.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/components/edit_playlist_dialog.dart';
 import 'package:phamijam/components/edit_song_dialog.dart';
 import 'package:phamijam/components/audio_player.dart';
 import 'package:phamijam/components/mixed_playlist_dialogs.dart';
@@ -20,9 +20,12 @@ import 'package:phamijam/services/mixed_playlist_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
+import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/widgets/artist_line.dart';
+import 'package:phamijam/services/playlist_sort_prefs.dart';
 import 'package:provider/provider.dart';
 import 'package:phamijam/services/log_service.dart';
+import 'package:phamijam/services/unavailable_songs_service.dart';
 
 enum _MixedSort { custom, titleAz, artistAz, durationShort, durationLong }
 
@@ -58,13 +61,15 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
   StreamSubscription<Map<String, dynamic>?>? _subscription;
   StreamSubscription<Map<String, String>>? _coverSubscription;
   String? _customCoverUrl;
-  bool _uploadingCover = false;
   Map<String, dynamic>? _playlist;
   bool _loading = true;
   bool _missing = false;
   int? _loadingIndex;
   final Map<String, bool> _localExists = {};
   final TextEditingController _searchController = TextEditingController();
+  bool _selectionMode = false;
+  final Set<int> _selected = {};
+  bool _availabilityChecked = false;
   String _searchQuery = '';
   _MixedSort _sort = _MixedSort.custom;
 
@@ -73,10 +78,30 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
 
   String get _title => (_playlist?['title'] as String?) ?? 'Playlist';
 
+  Future<void> _restoreSort() async {
+    final saved = await PlaylistSortPrefs.load('mixed-${widget.playlistId}');
+    if (saved == null || !mounted) return;
+    final match = _MixedSort.values.where((option) => option.name == saved);
+    if (match.isNotEmpty) setState(() => _sort = match.first);
+  }
+
+  void _selectSort(_MixedSort value) {
+    setState(() => _sort = value);
+    Log.i('library', 'PhamiJam playlist sort -> ${value.name}');
+    PlaylistSortPrefs.save(
+      'mixed-${widget.playlistId}',
+      value.name,
+      isDefault: value == _MixedSort.custom,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _restoreSort();
     _playback = context.read<PlaybackModel>();
+    UnavailableSongs.instance.ensureLoaded();
+    UnavailableSongs.instance.addListener(_onUnavailableChanged);
     _coverSubscription = PlaylistCoverService.watchAll().listen((overrides) {
       if (!mounted) return;
       setState(
@@ -117,6 +142,7 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
   void dispose() {
     _subscription?.cancel();
     _coverSubscription?.cancel();
+    UnavailableSongs.instance.removeListener(_onUnavailableChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -132,7 +158,10 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
       if (videoId.isEmpty || _repairAttempted.contains(videoId)) continue;
       final artist = (track['artist'] as String?) ?? '';
       final thumb = (track['thumbnailUrl'] as String?) ?? '';
-      if (artist.isEmpty || thumb.isEmpty) missing.add(videoId);
+      final durationMs = (track['durationMs'] as int?) ?? 0;
+      if (artist.isEmpty || thumb.isEmpty || durationMs <= 0) {
+        missing.add(videoId);
+      }
     }
     if (missing.isEmpty) return;
     Log.i('library', 'repairing details for ${missing.length} songs');
@@ -141,7 +170,13 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
       _repairAttempted.add(videoId);
       try {
         final info = await YoutubeDataService.fetchVideoById(videoId);
-        if (info != null) details[videoId] = info;
+        final seconds = await YoutubePlaylistService.fetchVideoDurationSeconds(
+          videoId,
+        );
+        details[videoId] = {
+          ...?info,
+          if (seconds > 0) 'durationMs': seconds * 1000,
+        };
       } catch (error) {
         Log.w('library', 'could not look up details for a song', error);
       }
@@ -153,46 +188,6 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
       );
     } catch (error) {
       Log.w('library', 'saving repaired song details failed', error);
-    }
-  }
-
-  Future<void> _changeCover() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 85,
-    );
-    if (picked == null || !mounted) return;
-    setState(() => _uploadingCover = true);
-    try {
-      await PlaylistCoverService.upload(
-        MixedPlaylistService.coverKey(widget.playlistId),
-        File(picked.path),
-      );
-    } catch (error) {
-      Log.e('library', 'change cover failed', error);
-      if (mounted) {
-        AppFlushbar.error(context, "Couldn't update cover image: $error");
-      }
-    } finally {
-      if (mounted) setState(() => _uploadingCover = false);
-    }
-  }
-
-  Future<void> _removeCover() async {
-    setState(() => _uploadingCover = true);
-    try {
-      await PlaylistCoverService.remove(
-        MixedPlaylistService.coverKey(widget.playlistId),
-      );
-    } catch (error) {
-      Log.e('library', 'remove cover failed', error);
-      if (mounted) {
-        AppFlushbar.error(context, "Couldn't remove cover image: $error");
-      }
-    } finally {
-      if (mounted) setState(() => _uploadingCover = false);
     }
   }
 
@@ -372,30 +367,33 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     );
   }
 
-  Future<void> _rename() async {
-    final name = await showMixedPlaylistNameDialog(
-      context,
-      title: 'Rename playlist',
-      initial: _title,
-      actionLabel: 'Save',
-    );
-    if (name == null || name == _title) return;
-    try {
-      await MixedPlaylistService.rename(widget.playlistId, name);
-    } catch (error) {
-      Log.e('library', 'rename failed', error);
-      if (mounted) {
-        AppFlushbar.error(context, "Couldn't rename playlist: $error");
-      }
-    }
-  }
-
   Future<void> _delete() async {
     final confirmed = await confirmDeleteMixedPlaylist(context, _title);
-    if (!confirmed) return;
+    if (!confirmed || !mounted) return;
     try {
+      final export = await MixedPlaylistService.exportPlaylist(
+        widget.playlistId,
+      );
+      if (!mounted) return;
+      final title = _title;
+      final toastContext = Navigator.of(context, rootNavigator: true).context;
       await MixedPlaylistService.delete(widget.playlistId);
-      if (mounted) widget.onBack?.call();
+      if (!mounted) return;
+      widget.onBack?.call();
+      if (export != null && toastContext.mounted) {
+        AppFlushbar.undo(
+          toastContext,
+          'Deleted "$title"',
+          onUndo: () {
+            MixedPlaylistService.restorePlaylist(export).catchError((
+              Object error,
+            ) {
+              Log.w('library', 'undo delete failed', error);
+              return '';
+            });
+          },
+        );
+      }
     } catch (error) {
       Log.e('library', 'delete failed', error);
       if (mounted) {
@@ -404,15 +402,212 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     }
   }
 
-  Future<void> _removeTrack(int index) async {
-    final title = (_tracks[index]['title'] as String?) ?? 'song';
+  void _onUnavailableChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _checkAvailability() async {
+    if (_availabilityChecked) return;
+    final ids = _tracks
+        .where((t) => _isYoutube(t))
+        .map((t) => (t['videoId'] as String?) ?? '')
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    if (ids.isEmpty) return;
+    _availabilityChecked = true;
     try {
-      await MixedPlaylistService.removeTrackAt(widget.playlistId, index);
-      if (mounted) AppFlushbar.success(context, 'Removed "$title"');
+      final missing = await YoutubePlaylistService.findUnavailableVideos(ids);
+      UnavailableSongs.instance.addAll(missing);
+      UnavailableSongs.instance.removeAll(
+        ids.where((id) => !missing.contains(id)),
+      );
+      Log.i(
+        'library',
+        'availability check: ${missing.length} of ${ids.length} songs unavailable',
+      );
     } catch (error) {
-      Log.e('library', 'remove track failed', error);
-      if (mounted) AppFlushbar.error(context, "Couldn't remove song: $error");
+      Log.w('library', 'availability check failed', error);
     }
+  }
+
+  Set<int> _unavailableIndices() => {
+    for (var i = 0; i < _tracks.length; i++)
+      if (_isYoutube(_tracks[i]) &&
+          UnavailableSongs.instance.contains(_tracks[i]['videoId'] as String?))
+        i,
+  };
+
+  void _enterSelection(int index) {
+    setState(() {
+      _selectionMode = true;
+      _selected
+        ..clear()
+        ..add(index);
+    });
+  }
+
+  void _toggleSelection(int index) {
+    setState(() {
+      if (!_selected.remove(index)) _selected.add(index);
+      if (_selected.isEmpty) _selectionMode = false;
+    });
+  }
+
+  void _exitSelection() {
+    if (!_selectionMode && _selected.isEmpty) return;
+    setState(() {
+      _selectionMode = false;
+      _selected.clear();
+    });
+  }
+
+  Future<void> _removeIndicesWithUndo(Set<int> indices) async {
+    if (indices.isEmpty) return;
+    try {
+      final removed = await MixedPlaylistService.removeTracksAt(
+        widget.playlistId,
+        indices,
+      );
+      if (!mounted) return;
+      _exitSelection();
+      if (removed.isEmpty) return;
+      final firstTitle = (removed.values.first['title'] as String?) ?? 'song';
+      AppFlushbar.undo(
+        context,
+        removed.length == 1
+            ? 'Removed "$firstTitle"'
+            : 'Removed ${removed.length} songs',
+        onUndo: () {
+          MixedPlaylistService.restoreTracksAt(
+            widget.playlistId,
+            removed,
+          ).catchError((Object error) {
+            Log.w('library', 'undo remove failed', error);
+          });
+        },
+      );
+    } catch (error) {
+      Log.e('library', 'remove songs failed', error);
+      if (mounted) AppFlushbar.error(context, "Couldn't remove songs: $error");
+    }
+  }
+
+  Future<void> _removeTrack(int index) => _removeIndicesWithUndo({index});
+
+  Future<void> _removeSelected() => _removeIndicesWithUndo({..._selected});
+
+  Future<void> _removeUnavailable() async {
+    final broken = _unavailableIndices();
+    if (broken.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove unavailable songs?'),
+        content: Text(
+          '${broken.length} song${broken.length == 1 ? '' : 's'} can no '
+          'longer be played on YouTube and will be removed from "$_title". '
+          'You can undo this right after.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _removeIndicesWithUndo(broken);
+  }
+
+  List<Map<String, dynamic>> _selectedSongMaps() => [
+    for (final i in ({..._selected}.toList()..sort()))
+      if (i >= 0 && i < _tracks.length) _songMap(_tracks[i]),
+  ];
+
+  Future<void> _addSelectedToPlaylist() async {
+    final songs = _selectedSongMaps();
+    if (songs.isEmpty) return;
+    await showAddSongsToPlaylistDialog(context, songs: songs);
+    if (mounted) _exitSelection();
+  }
+
+  Future<void> _moveSelected() async {
+    final indices = {..._selected};
+    final songs = _selectedSongMaps();
+    if (songs.isEmpty) return;
+    final added = await showAddSongsToPlaylistDialog(
+      context,
+      songs: songs,
+      excludeMixedPlaylistId: widget.playlistId,
+    );
+    if (added != true || !mounted) return;
+    await _removeIndicesWithUndo(indices);
+  }
+
+  void _onReorder(int oldIndex, int newIndex) {
+    MixedPlaylistService.moveTrack(
+      widget.playlistId,
+      oldIndex,
+      newIndex,
+    ).catchError((Object error) {
+      Log.w('library', 'reordering failed', error);
+    });
+  }
+
+  List<Widget> _selectionHeader(ColorScheme colorScheme) => [
+    IconButton(
+      onPressed: _exitSelection,
+      icon: Icon(Icons.close_rounded, color: colorScheme.onSurface),
+    ),
+    Expanded(
+      child: Text(
+        '${_selected.length} selected',
+        style: TextStyle(
+          fontSize: 24,
+          fontWeight: FontWeight.bold,
+          color: colorScheme.onSurface,
+        ),
+        overflow: TextOverflow.ellipsis,
+      ),
+    ),
+    IconButton(
+      tooltip: 'Add to playlist',
+      onPressed: _selected.isEmpty ? null : _addSelectedToPlaylist,
+      icon: Icon(Icons.playlist_add_rounded, color: colorScheme.onSurface),
+    ),
+    IconButton(
+      tooltip: 'Move to another playlist',
+      onPressed: _selected.isEmpty ? null : _moveSelected,
+      icon: Icon(Icons.drive_file_move_outlined, color: colorScheme.onSurface),
+    ),
+    IconButton(
+      tooltip: 'Remove from playlist',
+      onPressed: _selected.isEmpty ? null : _removeSelected,
+      icon: Icon(Icons.delete_outline_rounded, color: colorScheme.error),
+    ),
+  ];
+
+  Widget _rowLeading(int sourceIndex, ColorScheme colorScheme, Widget thumb) {
+    if (!_selectionMode) return thumb;
+    final selected = _selected.contains(sourceIndex);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          selected ? Icons.check_circle_rounded : Icons.circle_outlined,
+          color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
+          size: 20,
+        ),
+        const SizedBox(width: 8),
+        thumb,
+      ],
+    );
   }
 
   String _sourceLabel(Map<String, dynamic> track) {
@@ -525,36 +720,23 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     await _playFrom(tracks, target, syncQueue: true);
   }
 
-  Widget _buildMenuButton() {
-    final colorScheme = Theme.of(context).colorScheme;
-    final hasCover = _customCoverUrl != null && _customCoverUrl!.isNotEmpty;
-    return PopupMenuButton<String>(
-      enabled: !_uploadingCover,
-      icon: _uploadingCover
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(Icons.edit_rounded, color: colorScheme.onSurface),
-      onSelected: (value) {
-        if (value == 'rename') {
-          _rename();
-        } else if (value == 'cover') {
-          _changeCover();
-        } else if (value == 'remove_cover') {
-          _removeCover();
-        }
-      },
-      itemBuilder: (context) => [
-        const PopupMenuItem(value: 'rename', child: Text('Rename')),
-        const PopupMenuItem(value: 'cover', child: Text('Change cover image')),
-        if (hasCover)
-          const PopupMenuItem(
-            value: 'remove_cover',
-            child: Text('Remove cover image'),
-          ),
-      ],
+  void _openEditDialog() {
+    final firstThumb = _tracks
+        .map((t) => (t['thumbnailUrl'] as String?) ?? '')
+        .firstWhere((u) => u.isNotEmpty, orElse: () => '');
+    final custom = _customCoverUrl;
+    final hasCustom = custom != null && custom.isNotEmpty;
+    showEditPlaylistDialog(
+      context,
+      playlistId: MixedPlaylistService.coverKey(widget.playlistId),
+      mixedPlaylistId: widget.playlistId,
+      initialTitle: _title,
+      initialDescription: (_playlist?['description'] as String?) ?? '',
+      initialPrivacyStatus: 'private',
+      initialThumbnailUrl: hasCustom ? custom : firstThumb,
+      originalThumbnailUrl: firstThumb,
+      initialCustomCoverUrl: hasCustom ? custom : null,
+      onUpdated: (_, _, _) {},
     );
   }
 
@@ -711,8 +893,9 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
         ),
         const SizedBox(width: 8),
         PopupMenuButton<_MixedSort>(
+          tooltip: '',
           initialValue: _sort,
-          onSelected: (value) => setState(() => _sort = value),
+          onSelected: _selectSort,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -745,8 +928,9 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
   Widget _buildRow(
     BuildContext context,
     int sourceIndex,
-    Map<String, dynamic> track,
-  ) {
+    Map<String, dynamic> track, {
+    bool reorder = false,
+  }) {
     final colorScheme = Theme.of(context).colorScheme;
     final playable = _isPlayable(track);
     final isCurrent =
@@ -756,6 +940,8 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
     final artist = (track['artist'] as String?) ?? '';
     final videoId = (track['videoId'] as String?) ?? '';
     final isYoutube = _isYoutube(track);
+    final unavailable =
+        isYoutube && UnavailableSongs.instance.contains(videoId);
     var thumbnailUrl = (track['thumbnailUrl'] as String?) ?? '';
     if (thumbnailUrl.isEmpty && isYoutube) {
       thumbnailUrl = 'https://i.ytimg.com/vi/$videoId/hqdefault.jpg';
@@ -775,6 +961,12 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
       contextMenu: ContextMenu(
         borderRadius: BorderRadius.circular(12),
         entries: [
+          if (!_selectionMode)
+            MenuItem<String>(
+              value: 'select',
+              icon: const Icon(Icons.check_box_outlined),
+              label: const Text('Select'),
+            ),
           if (playable) ...[
             MenuItem<String>(
               value: 'play_next',
@@ -822,6 +1014,8 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
       ),
       onItemSelected: (value) {
         switch (value) {
+          case 'select':
+            _enterSelection(sourceIndex);
           case 'play_next':
             _playback.addToQueue(_queueItem(track));
           case 'add_to_queue':
@@ -863,38 +1057,51 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
         child: Material(
           type: MaterialType.transparency,
           child: ListTile(
-            enabled: playable,
-            leading: thumbnailUrl.isNotEmpty
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Image.network(
-                      thumbnailUrl,
+            enabled: playable || _selectionMode,
+            leading: _rowLeading(
+              sourceIndex,
+              colorScheme,
+              thumbnailUrl.isNotEmpty
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.network(
+                        thumbnailUrl,
+                        width: 56,
+                        height: 56,
+                        cacheWidth: 112,
+                        cacheHeight: 112,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Icon(
+                          _sourceIcon(track),
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                    )
+                  : SizedBox(
                       width: 56,
                       height: 56,
-                      cacheWidth: 112,
-                      cacheHeight: 112,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Icon(
+                      child: Icon(
                         _sourceIcon(track),
                         color: colorScheme.onSurface,
                       ),
                     ),
-                  )
-                : SizedBox(
-                    width: 56,
-                    height: 56,
-                    child: Icon(
-                      _sourceIcon(track),
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
+            ),
             title: Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colorScheme.onSurface),
+              style: TextStyle(
+                color: unavailable
+                    ? colorScheme.onSurface.withValues(alpha: 0.45)
+                    : colorScheme.onSurface,
+              ),
             ),
-            subtitle: isYoutube
+            subtitle: unavailable
+                ? Text(
+                    'Not available on YouTube',
+                    style: TextStyle(color: colorScheme.error),
+                  )
+                : isYoutube
                 ? ArtistLine(
                     videoId: videoId,
                     artist: artist.isEmpty ? 'Unknown artist' : artist,
@@ -961,9 +1168,22 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
                     _formatDuration(durationSeconds),
                     style: TextStyle(color: colorScheme.onSurfaceVariant),
                   ),
+                if (reorder)
+                  ReorderableDragStartListener(
+                    index: sourceIndex,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Icon(
+                        Icons.drag_handle_rounded,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
               ],
             ),
-            onTap: playable ? () => _playTrack(sourceIndex) : null,
+            onTap: _selectionMode
+                ? () => _toggleSelection(sourceIndex)
+                : (playable ? () => _playTrack(sourceIndex) : null),
           ),
         ),
       ),
@@ -992,37 +1212,57 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
 
     final tracks = _tracks;
     final visible = _visibleTracks;
+    if (!_availabilityChecked && tracks.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _checkAvailability());
+    }
+    final unavailableCount = _unavailableIndices().length;
+    final canReorder =
+        _sort == _MixedSort.custom &&
+        _searchQuery.trim().isEmpty &&
+        !_selectionMode;
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            children: [
-              IconButton(
-                onPressed: widget.onBack,
-                icon: Icon(
-                  Icons.arrow_back_rounded,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  _title,
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: colorScheme.onSurface,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              _buildMenuButton(),
-              IconButton(
-                onPressed: _delete,
-                icon: Icon(Icons.delete_rounded, color: colorScheme.error),
-              ),
-            ],
+            children: _selectionMode
+                ? _selectionHeader(colorScheme)
+                : [
+                    IconButton(
+                      onPressed: widget.onBack,
+                      icon: Icon(
+                        Icons.arrow_back_rounded,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        _title,
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurface,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Edit playlist',
+                      onPressed: _openEditDialog,
+                      icon: Icon(
+                        Icons.edit_rounded,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: _delete,
+                      icon: Icon(
+                        Icons.delete_rounded,
+                        color: colorScheme.error,
+                      ),
+                    ),
+                  ],
           ),
           const SizedBox(height: 8),
           _buildMetadataRow(tracks),
@@ -1030,6 +1270,38 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
             const SizedBox(height: 8),
             _buildControlButtons(tracks),
             const SizedBox(height: 8),
+            if (unavailableCount > 0 && !_selectionMode)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
+                  decoration: BoxDecoration(
+                    color: colorScheme.errorContainer.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: colorScheme.error,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '$unavailableCount song'
+                          '${unavailableCount == 1 ? ' is' : 's are'} '
+                          'no longer available on YouTube',
+                          style: TextStyle(color: colorScheme.onSurface),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _removeUnavailable,
+                        child: const Text('Remove unavailable'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             _buildSearchAndSort(),
           ],
           const SizedBox(height: 12),
@@ -1050,6 +1322,26 @@ class _MixedPlaylistPageState extends State<MixedPlaylistPage> {
                       style: TextStyle(
                         color: colorScheme.onSurfaceVariant,
                         fontSize: 16,
+                      ),
+                    ),
+                  )
+                : canReorder
+                ? ReorderableListView.builder(
+                    buildDefaultDragHandles: false,
+                    itemCount: visible.length,
+                    onReorderItem: _onReorder,
+                    proxyDecorator: (child, index, animation) =>
+                        Material(color: Colors.transparent, child: child),
+                    itemBuilder: (context, index) => Padding(
+                      key: ValueKey('mixed-row-${visible[index].key}'),
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Builder(
+                        builder: (context) => _buildRow(
+                          context,
+                          visible[index].key,
+                          visible[index].value,
+                          reorder: true,
+                        ),
                       ),
                     ),
                   )

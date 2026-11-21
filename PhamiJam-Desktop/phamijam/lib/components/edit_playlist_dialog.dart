@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:phamijam/components/app_flushbar.dart';
+import 'package:phamijam/services/mixed_playlist_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/services/log_service.dart';
@@ -19,6 +20,7 @@ Future<void> showEditPlaylistDialog(
   required void Function(String title, String description, String privacyStatus)
   onUpdated,
   void Function(String? customCoverUrl)? onCoverChanged,
+  String? mixedPlaylistId,
 }) {
   final formKey = GlobalKey<FormState>();
   String title = initialTitle;
@@ -171,44 +173,46 @@ Future<void> showEditPlaylistDialog(
                       ),
                       onChanged: (value) => description = value,
                     ),
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Visibility',
-                        style: Theme.of(innerContext).textTheme.labelLarge,
+                    if (mixedPlaylistId == null) ...[
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Visibility',
+                          style: Theme.of(innerContext).textTheme.labelLarge,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(
-                          value: 'private',
-                          label: Text('Private'),
-                          icon: Icon(Icons.lock_rounded),
+                      const SizedBox(height: 8),
+                      SegmentedButton<String>(
+                        segments: const [
+                          ButtonSegment(
+                            value: 'private',
+                            label: Text('Private'),
+                            icon: Icon(Icons.lock_rounded),
+                          ),
+                          ButtonSegment(
+                            value: 'unlisted',
+                            label: Text('Unlisted'),
+                            icon: Icon(Icons.link_rounded),
+                          ),
+                          ButtonSegment(
+                            value: 'public',
+                            label: Text('Public'),
+                            icon: Icon(Icons.public_rounded),
+                          ),
+                        ],
+                        selected: {privacyStatus},
+                        showSelectedIcon: false,
+                        onSelectionChanged: (selection) =>
+                            setState(() => privacyStatus = selection.first),
+                        style: SegmentedButton.styleFrom(
+                          backgroundColor: colorScheme.surfaceContainerHigh,
+                          foregroundColor: colorScheme.onSurfaceVariant,
+                          selectedBackgroundColor: colorScheme.primary,
+                          selectedForegroundColor: colorScheme.onPrimary,
                         ),
-                        ButtonSegment(
-                          value: 'unlisted',
-                          label: Text('Unlisted'),
-                          icon: Icon(Icons.link_rounded),
-                        ),
-                        ButtonSegment(
-                          value: 'public',
-                          label: Text('Public'),
-                          icon: Icon(Icons.public_rounded),
-                        ),
-                      ],
-                      selected: {privacyStatus},
-                      showSelectedIcon: false,
-                      onSelectionChanged: (selection) =>
-                          setState(() => privacyStatus = selection.first),
-                      style: SegmentedButton.styleFrom(
-                        backgroundColor: colorScheme.surfaceContainerHigh,
-                        foregroundColor: colorScheme.onSurfaceVariant,
-                        selectedBackgroundColor: colorScheme.primary,
-                        selectedForegroundColor: colorScheme.onPrimary,
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 10),
                   ],
                 ),
@@ -232,14 +236,23 @@ Future<void> showEditPlaylistDialog(
                         setState(() => isSaving = true);
 
                         try {
-                          await YoutubePlaylistService.updatePlaylist(
-                            playlistId: playlistId,
-                            title: title.trim(),
-                            description: description.trim(),
-                            privacyStatus: privacyStatus == initialPrivacyStatus
-                                ? null
-                                : privacyStatus,
-                          );
+                          if (mixedPlaylistId != null) {
+                            await MixedPlaylistService.updateDetails(
+                              mixedPlaylistId,
+                              title: title,
+                              description: description,
+                            );
+                          } else {
+                            await YoutubePlaylistService.updatePlaylist(
+                              playlistId: playlistId,
+                              title: title.trim(),
+                              description: description.trim(),
+                              privacyStatus:
+                                  privacyStatus == initialPrivacyStatus
+                                  ? null
+                                  : privacyStatus,
+                            );
+                          }
                           if (!dialogContext.mounted) return;
                           Navigator.of(dialogContext).pop();
 

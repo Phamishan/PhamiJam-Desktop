@@ -9,6 +9,8 @@ class PlaylistPinProvider extends ChangeNotifier {
 
   bool isPinned(String playlistId) => _pinnedOrder.contains(playlistId);
 
+  List<String> get pinnedOrder => List.unmodifiable(_pinnedOrder);
+
   Future<void> refresh() async {
     isLoading = true;
     notifyListeners();

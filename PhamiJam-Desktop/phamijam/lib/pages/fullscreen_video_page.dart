@@ -9,7 +9,9 @@ import 'package:phamijam/widgets/scrim_icon_button.dart';
 import 'package:provider/provider.dart';
 
 class FullscreenVideoPage extends StatefulWidget {
-  const FullscreenVideoPage({super.key});
+  const FullscreenVideoPage({super.key, required this.loadAvailableHeights});
+
+  final Future<List<int>> Function(String videoId) loadAvailableHeights;
 
   @override
   State<FullscreenVideoPage> createState() => _FullscreenVideoPageState();
@@ -20,8 +22,59 @@ class _FullscreenVideoPageState extends State<FullscreenVideoPage> {
   bool _controlsVisible = true;
   Timer? _hideTimer;
   double? _preMuteVolume;
+  String? _heightsVideoId;
+  List<int> _availableHeights = const [];
 
   static const _autoHideDelay = Duration(seconds: 4);
+
+  void _ensureHeightsLoaded(String? videoId) {
+    if (videoId == null || videoId.isEmpty || videoId == _heightsVideoId) {
+      return;
+    }
+    _heightsVideoId = videoId;
+    _availableHeights = const [];
+    widget
+        .loadAvailableHeights(videoId)
+        .then((heights) {
+          if (!mounted || _heightsVideoId != videoId) return;
+          setState(() => _availableHeights = heights);
+        })
+        .catchError((_) {});
+  }
+
+  Widget _buildQualityButton(PlaybackModel playback) {
+    final selected = playback.preferredVideoHeight;
+    return PopupMenuButton<int>(
+      tooltip: '',
+      onOpened: _keepAlive,
+      onSelected: (value) {
+        _keepAlive();
+        playback.setPreferredVideoHeight(value == 0 ? null : value);
+      },
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      itemBuilder: (context) => [
+        CheckedPopupMenuItem<int>(
+          value: 0,
+          checked: selected == null,
+          child: const Text('Auto'),
+        ),
+        for (final height in _availableHeights)
+          CheckedPopupMenuItem<int>(
+            value: height,
+            checked: selected == height,
+            child: Text('${height}p'),
+          ),
+      ],
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.45),
+        shape: const CircleBorder(),
+        child: const Padding(
+          padding: EdgeInsets.all(8),
+          child: Icon(Icons.settings_rounded, color: Colors.white, size: 20),
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -89,6 +142,7 @@ class _FullscreenVideoPageState extends State<FullscreenVideoPage> {
               .clamp(0, total.inMilliseconds)
               .toDouble()
         : 0.0;
+    if (hasVideo) _ensureHeightsLoaded(playback.currentYouTubeVideoId);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -150,11 +204,7 @@ class _FullscreenVideoPageState extends State<FullscreenVideoPage> {
                             padding: const EdgeInsets.all(8),
                             child: Row(
                               children: [
-                                ScrimIconButton(
-                                  icon: Icons.fullscreen_exit_rounded,
-                                  onTap: () => Navigator.of(context).maybePop(),
-                                ),
-                                const SizedBox(width: 12),
+                                const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     '${playback.songName} — ${playback.artistName}',
@@ -165,6 +215,15 @@ class _FullscreenVideoPageState extends State<FullscreenVideoPage> {
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
+                                ),
+                                const SizedBox(width: 12),
+                                if (hasVideo) ...[
+                                  _buildQualityButton(playback),
+                                  const SizedBox(width: 8),
+                                ],
+                                ScrimIconButton(
+                                  icon: Icons.fullscreen_exit_rounded,
+                                  onTap: () => Navigator.of(context).maybePop(),
                                 ),
                               ],
                             ),

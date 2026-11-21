@@ -1,5 +1,18 @@
 import 'package:phamijam/models/play_event.dart';
 
+String cleanArtistName(String raw) {
+  var name = raw.trim();
+  final cleaned = name
+      .replaceFirst(RegExp(r'\s*[-–—]\s*topic$', caseSensitive: false), '')
+      .replaceFirst(RegExp(r'\s*vevo$', caseSensitive: false), '')
+      .trim();
+  if (cleaned.isNotEmpty) name = cleaned;
+  return name;
+}
+
+String _artistKey(String raw) =>
+    cleanArtistName(raw).toLowerCase().replaceAll(RegExp(r'[\s\-_.]+'), '');
+
 class WrappedEntry {
   final String name;
   final String subtitle;
@@ -83,12 +96,18 @@ class WrappedStats {
     final msByWeekday = <int, int>{};
     final msByHour = <int, int>{};
     final daysListened = <int>{};
+    final artistSpellings = <String, Map<String, int>>{};
 
     for (final event in events) {
       totalMs += event.listenedMs;
       byTrack.putIfAbsent(event.videoId, () => []).add(event);
       if (event.artist.isNotEmpty) {
-        byArtist.putIfAbsent(event.artist, () => []).add(event);
+        final key = _artistKey(event.artist);
+        byArtist.putIfAbsent(key, () => []).add(event);
+        final spellings = artistSpellings.putIfAbsent(key, () => {});
+        final clean = cleanArtistName(event.artist);
+        final score = clean == event.artist.trim() ? 1000000 : 0;
+        spellings[clean] = (spellings[clean] ?? score) + 1;
       }
       final weekday = event.startedAt.weekday;
       msByWeekday[weekday] = (msByWeekday[weekday] ?? 0) + event.listenedMs;
@@ -117,17 +136,23 @@ class WrappedStats {
       final latest = plays.last;
       return WrappedEntry(
         name: latest.title,
-        subtitle: latest.artist,
+        subtitle: cleanArtistName(latest.artist),
         thumbnailUrl: latest.thumbnailUrl,
         plays: plays.length,
         listenedMs: sumMs(plays),
       );
     });
 
-    final topArtists = rank(byArtist, (artist, plays) {
+    String bestSpelling(String key) {
+      final spellings = artistSpellings[key]!.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      return spellings.first.key;
+    }
+
+    final topArtists = rank(byArtist, (key, plays) {
       final latest = plays.last;
       return WrappedEntry(
-        name: artist,
+        name: bestSpelling(key),
         subtitle: '${plays.length} plays',
         thumbnailUrl: latest.thumbnailUrl,
         plays: plays.length,

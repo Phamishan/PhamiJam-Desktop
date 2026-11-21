@@ -13,6 +13,7 @@ import 'package:phamijam/providers/settings_provider.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_data_service.dart';
+import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:provider/provider.dart';
 import 'package:ytmusicapi_dart/enums.dart';
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
@@ -22,6 +23,44 @@ String _formatDurationSeconds(int seconds) {
   final minutes = seconds ~/ 60;
   final secs = seconds % 60;
   return '$minutes:${secs.toString().padLeft(2, '0')}';
+}
+
+String _compactCount(int value) {
+  String trim(double v) {
+    final text = v.toStringAsFixed(v >= 100 ? 0 : 1);
+    return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
+  }
+
+  if (value >= 1000000000) return '${trim(value / 1000000000)}B';
+  if (value >= 1000000) return '${trim(value / 1000000)}M';
+  if (value >= 1000) return '${trim(value / 1000)}K';
+  return '$value';
+}
+
+String? _playsLabelFromItem(Map<String, dynamic> item) {
+  final views = (item['viewCount'] as num?)?.toInt();
+  if (views == null || views <= 0) return null;
+  return '${_compactCount(views)} plays';
+}
+
+Future<void> _attachViewCounts(List<Map<String, dynamic>> items) async {
+  try {
+    final ids = items
+        .map((item) => (item['videoId'] ?? '').toString())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    if (ids.isEmpty) return;
+    final counts = await YoutubePlaylistService.fetchVideoViewCounts(
+      ids,
+    ).timeout(const Duration(seconds: 8));
+    for (final item in items) {
+      final views = counts[(item['videoId'] ?? '').toString()];
+      if (views != null) item['viewCount'] = views;
+    }
+  } catch (error) {
+    Log.w('browse', 'loading play counts failed', error);
+  }
 }
 
 String? _durationLabelFromItem(Map<String, dynamic> item) {
@@ -211,6 +250,8 @@ typedef OpenAlbumCallback =
       String artistName,
     );
 
+enum _ResultFilter { all, songs, artists, albums }
+
 class MusicSearchResultsPage extends StatefulWidget {
   const MusicSearchResultsPage({
     super.key,
@@ -235,6 +276,39 @@ class MusicSearchResultsPage extends StatefulWidget {
 
 class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
   late Future<_SearchResultsData> _loadFuture;
+  _ResultFilter _filter = _ResultFilter.all;
+
+  bool _show(_ResultFilter filter) =>
+      _filter == _ResultFilter.all || _filter == filter;
+
+  Widget _buildFilterChips(_SearchResultsData data) {
+    final kinds = <(_ResultFilter, String, int)>[
+      (_ResultFilter.songs, 'Songs', data.songs.length),
+      (_ResultFilter.artists, 'Artists', data.artists.length),
+      (_ResultFilter.albums, 'Albums', data.albums.length),
+    ].where((k) => k.$3 > 0).toList();
+    if (kinds.length < 2) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, top: 4, bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          ChoiceChip(
+            label: const Text('All'),
+            selected: _filter == _ResultFilter.all,
+            onSelected: (_) => setState(() => _filter = _ResultFilter.all),
+          ),
+          for (final kind in kinds)
+            ChoiceChip(
+              label: Text('${kind.$2} · ${kind.$3}'),
+              selected: _filter == kind.$1,
+              onSelected: (_) => setState(() => _filter = kind.$1),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -247,6 +321,7 @@ class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.query != widget.query) {
       _loadFuture = _loadResults();
+      _filter = _ResultFilter.all;
     }
   }
 
@@ -746,9 +821,13 @@ class _MusicSearchResultsPageState extends State<MusicSearchResultsPage> {
                   ),
                 )
               else ...[
-                _buildSection('Songs', data.songs, _buildSongTile),
-                _buildSection('Artists', data.artists, _buildArtistTile),
-                _buildSection('Albums', data.albums, _buildAlbumTile),
+                _buildFilterChips(data),
+                if (_show(_ResultFilter.songs))
+                  _buildSection('Songs', data.songs, _buildSongTile),
+                if (_show(_ResultFilter.artists))
+                  _buildSection('Artists', data.artists, _buildArtistTile),
+                if (_show(_ResultFilter.albums))
+                  _buildSection('Albums', data.albums, _buildAlbumTile),
               ],
             ],
           ),
@@ -888,6 +967,7 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
     );
 
     final songs = _asMapList(artist['songs']?['results']);
+    final playCounts = _attachViewCounts(songs);
     final albumsSection = artist['albums'];
     final singlesSection = artist['singles'];
     final albums = <Map<String, dynamic>>[];
@@ -931,6 +1011,14 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
       }
     }
 
+    await playCounts;
+    final order = {for (var i = 0; i < songs.length; i++) songs[i]: i};
+    songs.sort((a, b) {
+      final byPlays = ((b['viewCount'] as num?)?.toInt() ?? -1).compareTo(
+        (a['viewCount'] as num?)?.toInt() ?? -1,
+      );
+      return byPlays != 0 ? byPlays : order[a]!.compareTo(order[b]!);
+    });
     return _ArtistDetailsData(
       artist: artist,
       songs: songs,
@@ -994,6 +1082,40 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
       (p) => p.repeatMode,
     );
 
+    final avatar = ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: thumbnailUrl.isEmpty
+          ? Container(
+              width: 84,
+              height: 84,
+              color: colorScheme.onSurface.withValues(alpha: 0.12),
+              child: Icon(
+                Icons.person_rounded,
+                color: colorScheme.onSurface,
+                size: 36,
+              ),
+            )
+          : Image.network(
+              thumbnailUrl,
+              width: 84,
+              height: 84,
+              cacheWidth: 168,
+              cacheHeight: 168,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Container(
+                width: 84,
+                height: 84,
+                color: colorScheme.onSurface.withValues(alpha: 0.12),
+                child: Icon(
+                  Icons.person_rounded,
+                  color: colorScheme.onSurface,
+                  size: 36,
+                ),
+              ),
+            ),
+    );
+    final stats = [subscribers, views].where((s) => s.isNotEmpty).join('  ·  ');
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -1007,95 +1129,63 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
           ],
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      child: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: thumbnailUrl.isEmpty
-                ? Container(
-                    width: 128,
-                    height: 128,
-                    color: colorScheme.onSurface.withValues(alpha: 0.12),
-                    child: Icon(
-                      Icons.person_rounded,
-                      color: colorScheme.onSurface,
-                      size: 48,
+          avatar,
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'ARTIST',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 11,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  _readString(data.artist['name'], widget.artistName),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (stats.isNotEmpty)
+                  Text(
+                    stats,
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 13,
                     ),
-                  )
-                : Image.network(
-                    thumbnailUrl,
-                    width: 128,
-                    height: 128,
-                    cacheWidth: 256,
-                    cacheHeight: 256,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(
-                      width: 128,
-                      height: 128,
-                      color: colorScheme.onSurface.withValues(alpha: 0.12),
-                      child: Icon(
-                        Icons.person_rounded,
-                        color: colorScheme.onSurface,
-                        size: 48,
+                  ),
+                if (description.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
                       ),
                     ),
                   ),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'ARTIST',
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 12,
-              letterSpacing: 1.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _readString(data.artist['name'], widget.artistName),
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontSize: 26,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          if (subscribers.isNotEmpty || views.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 10,
-              runSpacing: 6,
-              children: [
-                if (subscribers.isNotEmpty)
-                  Text(
-                    subscribers,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
-                if (views.isNotEmpty)
-                  Text(
-                    views,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant),
-                  ),
               ],
             ),
-          ],
-          if (description.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(
-              description,
-              textAlign: TextAlign.center,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          ],
+          ),
           if (data.songs.isNotEmpty) ...[
-            const SizedBox(height: 20),
+            const SizedBox(width: 12),
             Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
                   onPressed: playback.toggleShuffle,
@@ -1106,7 +1196,7 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
                         : colorScheme.onSurfaceVariant,
                   ),
                 ),
-                const SizedBox(width: 20),
+                const SizedBox(width: 4),
                 Material(
                   color: colorScheme.primary,
                   shape: const CircleBorder(),
@@ -1116,18 +1206,18 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
                         ? playback.togglePlayPause()
                         : _playSongs(data.songs, shuffle: true),
                     child: Padding(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(11),
                       child: Icon(
                         isThisArtistPlaying
                             ? Icons.pause_rounded
                             : Icons.play_arrow_rounded,
                         color: colorScheme.onPrimary,
-                        size: 30,
+                        size: 26,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 20),
+                const SizedBox(width: 4),
                 IconButton(
                   onPressed: playback.cycleRepeatMode,
                   icon: Icon(
@@ -1160,6 +1250,7 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
         ? context.watch<LikedSongsProvider>().isLiked(videoId)
         : false;
     final durationLabel = _durationLabelFromItem(item);
+    final playsLabel = _playsLabelFromItem(item);
 
     return _wrapSongTileWithContextMenu(
       context: context,
@@ -1234,6 +1325,16 @@ class _ArtistDetailsPageState extends State<ArtistDetailsPage> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (playsLabel != null) ...[
+                Text(
+                  playsLabel,
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
               if (durationLabel != null) ...[
                 Text(
                   durationLabel,
@@ -1578,6 +1679,12 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
       await ytmusic.getAlbum(widget.albumId),
     );
     final tracks = _asMapList(album['tracks']);
+    await _attachViewCounts(tracks);
+    final total = tracks.fold<int>(
+      0,
+      (sum, t) => sum + ((t['viewCount'] as num?)?.toInt() ?? 0),
+    );
+    if (total > 0) album['totalViews'] = total;
     return _AlbumDetailsData(album: album, tracks: tracks);
   }
 
@@ -1676,6 +1783,11 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
                       if (year.isNotEmpty)
                         Text(
                           year,
+                          style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        ),
+                      if ((data.album['totalViews'] as num?) != null)
+                        Text(
+                          '${_compactCount((data.album['totalViews'] as num).toInt())} plays',
                           style: TextStyle(color: colorScheme.onSurfaceVariant),
                         ),
                     ],
@@ -1912,6 +2024,7 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
         ? context.watch<LikedSongsProvider>().isLiked(videoId)
         : false;
     final durationLabel = _durationLabelFromItem(item);
+    final playsLabel = _playsLabelFromItem(item);
 
     return _wrapSongTileWithContextMenu(
       context: context,
@@ -1969,6 +2082,16 @@ class _AlbumDetailsPageState extends State<AlbumDetailsPage> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (playsLabel != null) ...[
+                Text(
+                  playsLabel,
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
               if (durationLabel != null) ...[
                 Text(
                   durationLabel,

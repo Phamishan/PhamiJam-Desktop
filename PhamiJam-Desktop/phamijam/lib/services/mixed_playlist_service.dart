@@ -92,6 +92,20 @@ class MixedPlaylistService {
     });
   }
 
+  static Future<void> updateDetails(
+    String id, {
+    required String title,
+    String? description,
+  }) async {
+    final collection = _collection;
+    if (collection == null) return;
+    await collection.doc(id).update({
+      'title': title.trim(),
+      if (description != null) 'description': description.trim(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   static String coverKey(String id) => 'mixed-$id';
 
   static Future<void> delete(String id) async {
@@ -139,8 +153,9 @@ class MixedPlaylistService {
 
   static Future<int> addTracks(
     String id,
-    List<Map<String, dynamic>> tracks,
-  ) async {
+    List<Map<String, dynamic>> tracks, {
+    bool allowDuplicates = false,
+  }) async {
     final collection = _collection;
     if (collection == null) throw StateError('Not signed in.');
     final doc = collection.doc(id);
@@ -152,7 +167,7 @@ class MixedPlaylistService {
     for (final track in tracks) {
       final key = trackKey(track);
       if (key == 'id:' || key == 'local:') continue;
-      if (seen.add(key)) added.add(track);
+      if (seen.add(key) || allowDuplicates) added.add(track);
     }
     if (added.isEmpty) return 0;
     await doc.update({
@@ -181,6 +196,12 @@ class MixedPlaylistService {
       final info = details[videoId];
       if (info == null) continue;
       var changed = false;
+      final currentMs = (track['durationMs'] as int?) ?? 0;
+      final nextMs = (info['durationMs'] as int?) ?? 0;
+      if (currentMs <= 0 && nextMs > 0) {
+        track['durationMs'] = nextMs;
+        changed = true;
+      }
       for (final key in const ['artist', 'artistId', 'thumbnailUrl']) {
         final current = (track[key] as String?) ?? '';
         final next = (info[key] as String?) ?? '';
@@ -221,5 +242,103 @@ class MixedPlaylistService {
       'tracks': existing,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  static Future<Map<int, Map<String, dynamic>>> removeTracksAt(
+    String id,
+    Set<int> indices,
+  ) async {
+    final collection = _collection;
+    if (collection == null || indices.isEmpty) return {};
+    final doc = collection.doc(id);
+    final snapshot = await doc.get();
+    if (!snapshot.exists) return {};
+    final existing = List<Map<String, dynamic>>.from(
+      _parse(snapshot)['tracks'] as List<Map<String, dynamic>>,
+    );
+    final removed = <int, Map<String, dynamic>>{};
+    final kept = <Map<String, dynamic>>[];
+    for (var i = 0; i < existing.length; i++) {
+      if (indices.contains(i)) {
+        removed[i] = existing[i];
+      } else {
+        kept.add(existing[i]);
+      }
+    }
+    if (removed.isEmpty) return {};
+    await doc.update({
+      'tracks': kept,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    return removed;
+  }
+
+  static Future<void> restoreTracksAt(
+    String id,
+    Map<int, Map<String, dynamic>> removed,
+  ) async {
+    final collection = _collection;
+    if (collection == null || removed.isEmpty) return;
+    final doc = collection.doc(id);
+    final snapshot = await doc.get();
+    if (!snapshot.exists) return;
+    final existing = List<Map<String, dynamic>>.from(
+      _parse(snapshot)['tracks'] as List<Map<String, dynamic>>,
+    );
+    final indices = removed.keys.toList()..sort();
+    for (final index in indices) {
+      existing.insert(
+        index > existing.length ? existing.length : index,
+        removed[index]!,
+      );
+    }
+    await doc.update({
+      'tracks': existing,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  static Future<void> moveTrack(String id, int from, int to) async {
+    final collection = _collection;
+    if (collection == null) return;
+    final doc = collection.doc(id);
+    final snapshot = await doc.get();
+    if (!snapshot.exists) return;
+    final existing = List<Map<String, dynamic>>.from(
+      _parse(snapshot)['tracks'] as List<Map<String, dynamic>>,
+    );
+    if (from < 0 || from >= existing.length) return;
+    final entry = existing.removeAt(from);
+    existing.insert(to.clamp(0, existing.length), entry);
+    await doc.update({
+      'tracks': existing,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  static Future<Map<String, dynamic>?> exportPlaylist(String id) async {
+    final collection = _collection;
+    if (collection == null) return null;
+    final snapshot = await collection.doc(id).get();
+    if (!snapshot.exists) return null;
+    final parsed = _parse(snapshot);
+    return {
+      'title': parsed['title'],
+      'description': parsed['description'],
+      'tracks': parsed['tracks'],
+    };
+  }
+
+  static Future<String> restorePlaylist(Map<String, dynamic> export) async {
+    final collection = _collection;
+    if (collection == null) throw StateError('Not signed in.');
+    final ref = await collection.add({
+      'title': export['title'] ?? 'Untitled playlist',
+      'description': export['description'] ?? '',
+      'tracks': export['tracks'] ?? <Map<String, dynamic>>[],
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    return ref.id;
   }
 }

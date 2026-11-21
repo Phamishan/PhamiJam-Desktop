@@ -67,9 +67,9 @@ class SongArtistsService {
     await _ensureLoaded();
     final hit = _cache[videoId];
     if (hit != null) return hit;
-    return _inFlight[videoId] ??= _fetch(
-      videoId,
-    ).whenComplete(() => _inFlight.remove(videoId));
+    return _inFlight[videoId] ??= _fetch(videoId).whenComplete(() {
+      _inFlight.remove(videoId);
+    });
   }
 
   static Future<void> _acquire() async {

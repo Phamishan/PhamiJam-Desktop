@@ -23,7 +23,7 @@ class JamstatsHighlightsTile extends StatelessWidget {
     return FutureBuilder<List<PlayEvent>>(
       future: ListeningHistoryService.eventsSinceForUid(
         profileUid,
-        DateTime(now.year),
+        DateTime(now.month == 1 ? now.year - 1 : now.year),
       ),
       builder: (context, snapshot) {
         final events = snapshot.data;
@@ -42,31 +42,42 @@ class JamstatsHighlightsTile extends StatelessWidget {
         }
         return Padding(
           padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                '${stats.totalMinutes} min',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              Text(
-                'listened this year',
-                style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  fontSize: 12,
+          child: LayoutBuilder(
+            builder: (context, constraints) => FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: SizedBox(
+                width: constraints.maxWidth,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${stats.totalMinutes} min',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    Text(
+                      now.month == 1
+                          ? 'listened since ${now.year - 1}'
+                          : 'listened this year',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (stats.topArtists.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Top artist: ${stats.topArtists.first.name}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              if (stats.topArtists.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Top artist: ${stats.topArtists.first.name}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            ],
+            ),
           ),
         );
       },

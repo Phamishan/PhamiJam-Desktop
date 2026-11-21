@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -18,9 +19,11 @@ import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
 import 'package:phamijam/services/youtube_playlist_service.dart';
 import 'package:phamijam/widgets/playlists.dart';
+import 'package:phamijam/services/playlist_sort_prefs.dart';
 import 'package:provider/provider.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:phamijam/services/log_service.dart';
+import 'package:phamijam/services/unavailable_songs_service.dart';
 
 class _PlaylistInspectCacheEntry {
   const _PlaylistInspectCacheEntry({
@@ -878,7 +881,23 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             .toList();
         _removingVideoId = null;
       });
-      AppFlushbar.success(context, 'Removed "$title" from playlist');
+      AppFlushbar.undo(
+        context,
+        'Removed "$title" from playlist',
+        onUndo: () async {
+          try {
+            await YoutubePlaylistService.addVideoToPlaylist(
+              playlistId: playlistId,
+              videoId: videoId,
+            );
+            _itemIdsCachePlaylistId = null;
+            if (mounted) unawaited(_loadSongs(forceRefresh: true));
+          } catch (error) {
+            Log.e('library', 'undo remove failed', error);
+            if (mounted) AppFlushbar.error(context, "Couldn't undo: $error");
+          }
+        },
+      );
     } catch (error) {
       Log.e('library', 'remove song from playlist failed', error);
       if (!mounted) return;
@@ -927,11 +946,31 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
     );
   }
 
+  Future<void> _restoreSort() async {
+    final saved = await PlaylistSortPrefs.load(_playlistId);
+    if (saved == null || !mounted) return;
+    final match = _PlaylistSort.values.where((option) => option.name == saved);
+    if (match.isNotEmpty) setState(() => _sort = match.first);
+  }
+
+  void _selectSort(_PlaylistSort value) {
+    setState(() => _sort = value);
+    Log.i('library', 'playlist sort -> ${value.name}');
+    PlaylistSortPrefs.save(
+      _playlistId,
+      value.name,
+      isDefault: value == _PlaylistSort.custom,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _restoreSort();
     _songSearchController = TextEditingController();
     _playback = context.read<PlaybackModel>();
+    UnavailableSongs.instance.ensureLoaded();
+    UnavailableSongs.instance.addListener(_onUnavailableChanged);
     _loadSongs();
     if (_isOwnedByUser) _loadFeaturedStatus();
   }
@@ -975,8 +1014,149 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
 
   @override
   void dispose() {
+    UnavailableSongs.instance.removeListener(_onUnavailableChanged);
     _songSearchController.dispose();
     super.dispose();
+  }
+
+  void _onUnavailableChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool _availabilityChecked = false;
+
+  Future<void> _checkAvailability() async {
+    if (_availabilityChecked) return;
+    final ids = _songs
+        .map((s) => (s['videoId'] as String?) ?? '')
+        .where((id) => id.isNotEmpty && !id.startsWith('drive:'))
+        .toSet()
+        .toList();
+    if (ids.isEmpty) return;
+    _availabilityChecked = true;
+    try {
+      final missing = await YoutubePlaylistService.findUnavailableVideos(ids);
+      UnavailableSongs.instance.addAll(missing);
+      UnavailableSongs.instance.removeAll(
+        ids.where((id) => !missing.contains(id)),
+      );
+      Log.i(
+        'library',
+        'availability check: ${missing.length} of ${ids.length} songs unavailable',
+      );
+    } catch (error) {
+      Log.w('library', 'availability check failed', error);
+    }
+  }
+
+  List<Map<String, dynamic>> _unavailableSongs() => _songs
+      .where((s) => UnavailableSongs.instance.contains(s['videoId'] as String?))
+      .toList();
+
+  Future<void> _removeSongsWithUndo(List<Map<String, dynamic>> songs) async {
+    final playlistId = _playlistId;
+    if (playlistId == null || songs.isEmpty) return;
+    try {
+      if (_itemIdsCachePlaylistId != playlistId) {
+        _itemIdsCache = await YoutubePlaylistService.fetchPlaylistItemIds(
+          playlistId,
+        );
+        _itemIdsCachePlaylistId = playlistId;
+      }
+      final removedIds = <String>{};
+      for (final song in songs) {
+        final videoId = (song['videoId'] as String?) ?? '';
+        final itemId = _itemIdsCache?[videoId];
+        if (videoId.isEmpty || itemId == null) continue;
+        await YoutubePlaylistService.removeVideoFromPlaylist(itemId);
+        _itemIdsCache?.remove(videoId);
+        removedIds.add(videoId);
+      }
+      if (!mounted) return;
+      setState(() {
+        _songs = _songs
+            .where((s) => !removedIds.contains((s['videoId'] as String?) ?? ''))
+            .toList();
+      });
+      _exitSelectionMode();
+      if (removedIds.isEmpty) return;
+      AppFlushbar.undo(
+        context,
+        removedIds.length == 1
+            ? 'Removed 1 song from the playlist'
+            : 'Removed ${removedIds.length} songs from the playlist',
+        onUndo: () async {
+          try {
+            for (final id in removedIds) {
+              await YoutubePlaylistService.addVideoToPlaylist(
+                playlistId: playlistId,
+                videoId: id,
+              );
+            }
+            _itemIdsCachePlaylistId = null;
+            if (mounted) unawaited(_loadSongs(forceRefresh: true));
+          } catch (error) {
+            Log.e('library', 'undo remove failed', error);
+            if (mounted) AppFlushbar.error(context, "Couldn't undo: $error");
+          }
+        },
+      );
+    } catch (error) {
+      Log.e('library', 'removing songs failed', error);
+      if (mounted) AppFlushbar.error(context, "Couldn't remove songs: $error");
+    }
+  }
+
+  Future<void> _removeSelected() => _removeSongsWithUndo(
+    _songs
+        .where(
+          (s) => _selectedVideoIds.contains((s['videoId'] as String?) ?? ''),
+        )
+        .toList(),
+  );
+
+  Future<void> _removeUnavailable() async {
+    final broken = _unavailableSongs();
+    if (broken.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove unavailable songs?'),
+        content: Text(
+          '${broken.length} song${broken.length == 1 ? '' : 's'} can no '
+          'longer be played on YouTube and will be removed from '
+          '"$_displayPlaylistTitle". You can undo this right after.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _removeSongsWithUndo(broken);
+  }
+
+  Future<void> _moveSelected() async {
+    final selected = _songs
+        .where(
+          (s) => _selectedVideoIds.contains((s['videoId'] as String?) ?? ''),
+        )
+        .toList();
+    if (selected.isEmpty) return;
+    final added = await showAddSongsToPlaylistDialog(
+      context,
+      songs: selected,
+      excludeYoutubePlaylistId: _playlistId,
+    );
+    if (added != true || !mounted) return;
+    await _removeSongsWithUndo(selected);
   }
 
   @override
@@ -992,7 +1172,10 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         _selectionMode = false;
         _selectedVideoIds.clear();
         _isFeaturedOnProfile = false;
+        _sort = _PlaylistSort.custom;
+        _availabilityChecked = false;
       });
+      _restoreSort();
       _loadSongs();
       if (_isOwnedByUser) _loadFeaturedStatus();
     }
@@ -1000,6 +1183,9 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
 
   Widget _buildPlaylistInspectContent() {
     final colorScheme = Theme.of(context).colorScheme;
+    if (!_availabilityChecked && !_isLoadingSongs && _songs.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _checkAvailability());
+    }
     if (_isLoadingSongs) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1094,6 +1280,7 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                     ),
                   ),
                   IconButton(
+                    tooltip: 'Add to playlist',
                     onPressed: _selectedVideoIds.isEmpty
                         ? null
                         : _addSelectedToPlaylist,
@@ -1102,6 +1289,28 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                       color: colorScheme.onSurface,
                     ),
                   ),
+                  if (_isOwnedByUser && _hasRealPlaylistId) ...[
+                    IconButton(
+                      tooltip: 'Move to another playlist',
+                      onPressed: _selectedVideoIds.isEmpty
+                          ? null
+                          : _moveSelected,
+                      icon: Icon(
+                        Icons.drive_file_move_outlined,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Remove from playlist',
+                      onPressed: _selectedVideoIds.isEmpty
+                          ? null
+                          : _removeSelected,
+                      icon: Icon(
+                        Icons.delete_outline_rounded,
+                        color: colorScheme.error,
+                      ),
+                    ),
+                  ],
                 ]
               : [
                   IconButton(
@@ -1143,6 +1352,38 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
         const SizedBox(height: 8),
         _buildControlButtons(),
         const SizedBox(height: 8),
+        if (_isOwnedByUser &&
+            _hasRealPlaylistId &&
+            !_selectionMode &&
+            _unavailableSongs().isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
+              decoration: BoxDecoration(
+                color: colorScheme.errorContainer.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: colorScheme.error),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${_unavailableSongs().length} song'
+                      '${_unavailableSongs().length == 1 ? ' is' : 's are'} '
+                      'no longer available on YouTube',
+                      style: TextStyle(color: colorScheme.onSurface),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _removeUnavailable,
+                    child: const Text('Remove unavailable'),
+                  ),
+                ],
+              ),
+            ),
+          ),
         Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -1194,8 +1435,9 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
             ),
             const SizedBox(width: 8),
             PopupMenuButton<_PlaylistSort>(
+              tooltip: '',
               initialValue: _sort,
-              onSelected: (value) => setState(() => _sort = value),
+              onSelected: _selectSort,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -1463,12 +1705,26 @@ class _PlaylistInspectPageState extends State<PlaylistInspectPage> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    color: colorScheme.onSurface,
+                                    color:
+                                        UnavailableSongs.instance.contains(
+                                          videoId,
+                                        )
+                                        ? colorScheme.onSurface.withValues(
+                                            alpha: 0.45,
+                                          )
+                                        : colorScheme.onSurface,
                                   ),
                                 ),
                                 subtitle:
-                                    (artistId.isNotEmpty &&
-                                        widget.onOpenArtist != null)
+                                    UnavailableSongs.instance.contains(videoId)
+                                    ? Text(
+                                        'Not available on YouTube',
+                                        style: TextStyle(
+                                          color: colorScheme.error,
+                                        ),
+                                      )
+                                    : (artistId.isNotEmpty &&
+                                          widget.onOpenArtist != null)
                                     ? ArtistLine(
                                         videoId: videoId,
                                         artist: artist,

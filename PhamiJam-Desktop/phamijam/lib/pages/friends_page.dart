@@ -411,6 +411,7 @@ class _FriendTile extends StatelessWidget {
                       },
                     ),
                   PopupMenuButton<String>(
+                    tooltip: '',
                     onSelected: (value) {
                       if (value == 'unfriend') _unfriend(context);
                     },

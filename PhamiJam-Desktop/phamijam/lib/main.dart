@@ -25,6 +25,7 @@ import 'package:phamijam/services/deep_link_service.dart';
 import 'package:phamijam/services/download_service.dart';
 import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/protocol_handler_service.dart';
+import 'package:phamijam/services/unavailable_songs_service.dart';
 import 'package:phamijam/theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -81,6 +82,7 @@ void main(List<String> args) async {
   await dotenv.load(fileName: '.env');
   Log.i('startup', 'config loaded, launching UI');
   unawaited(ProtocolHandlerService.registerIfNeeded());
+  unawaited(UnavailableSongs.instance.ensureLoaded());
   final pendingDeepLink = DeepLinkService.parseLaunchArgs(args);
   if (args.isNotEmpty) {
     Log.i(

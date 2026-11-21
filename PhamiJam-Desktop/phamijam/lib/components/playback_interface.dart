@@ -150,6 +150,7 @@ class _PlaybackInterfaceState extends State<PlaybackInterface> {
       );
     }
     return PopupMenuButton<String>(
+      tooltip: '',
       icon: Icon(Icons.share_rounded, color: colorScheme.primary),
       splashRadius: 16,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),

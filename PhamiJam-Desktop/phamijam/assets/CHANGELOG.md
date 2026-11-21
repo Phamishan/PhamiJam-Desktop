@@ -157,6 +157,13 @@
   - Improved the log sent from Settings
 - 1.2.8 - 20/11/2026
   - Fixed songs in PhamiJam playlists missing their artist and cover art
+- 1.2.9 - 21/11/2026
+  - Updated UI
+  - Added filter views for Jamstats ✨
+  - Added plays for songs
+  - Added error handling for unavailable songs
+  - Jamstats ✨ now counts "- Topic" and "VEVO" channels as the same artist and hides those suffixes
+  - Fixed Jamstats getting stuck on loading
 
 ## Screenshots:
 

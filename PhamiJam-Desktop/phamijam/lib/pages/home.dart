@@ -37,6 +37,7 @@ import 'package:phamijam/services/google_drive_auth_service.dart';
 import 'package:phamijam/services/listening_history_service.dart';
 import 'package:phamijam/services/log_service.dart';
 import 'package:phamijam/services/playlist_cover_service.dart';
+import 'package:phamijam/services/recent_searches_prefs.dart';
 import 'package:phamijam/services/presence_service.dart';
 import 'package:phamijam/services/profile_service.dart';
 import 'package:phamijam/services/share_link_service.dart';
@@ -60,12 +61,19 @@ import 'package:provider/provider.dart';
 import 'package:windows_taskbar/windows_taskbar.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart' as yt;
 import 'package:ytmusicapi_dart/ytmusicapi_dart.dart';
+import 'package:phamijam/widgets/quick_access_row.dart';
+import 'package:phamijam/services/mixed_playlist_service.dart';
 
 class _YouTubeResolvedStreams {
-  const _YouTubeResolvedStreams({required this.urls, required this.expiresAt});
+  const _YouTubeResolvedStreams({
+    required this.urls,
+    required this.expiresAt,
+    this.muxedMp4ByHeight = const <int, String>{},
+  });
 
   final List<String> urls;
   final DateTime expiresAt;
+  final Map<int, String> muxedMp4ByHeight;
 }
 
 class Home extends StatefulWidget {
@@ -79,6 +87,7 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> with WidgetsBindingObserver {
   late final TextEditingController _searchController;
+  List<String> _recentSearches = const [];
   late final PlaybackModel _playback;
   late final DownloadsProvider _downloads;
   late final SettingsProvider _settings;
@@ -94,10 +103,11 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   bool _avatarLoadFailed = false;
   String _selectedTab = 'home';
   Map<String, dynamic>? _selectedTabExtra;
+  DateTime? _resolveCooldownUntil;
   final Map<String, _YouTubeResolvedStreams> _resolvedStreamsCache =
       <String, _YouTubeResolvedStreams>{};
-  final Map<String, Future<List<String>>> _resolvingStreamsByVideoId =
-      <String, Future<List<String>>>{};
+  final Map<String, Future<_YouTubeResolvedStreams>>
+  _resolvingStreamsByVideoId = <String, Future<_YouTubeResolvedStreams>>{};
   List<PlayEvent> _recentlyPlayedTracks = <PlayEvent>[];
   List<Map<String, dynamic>> _myPlaylists = <Map<String, dynamic>>[];
   bool _isLoadingHomeDashboard = false;
@@ -108,6 +118,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   bool? _taskbarIsPlaying;
   StreamSubscription<DeepLinkTarget>? _deepLinkSubscription;
   StreamSubscription<Map<String, String>>? _playlistCoverSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _homeMixedSubscription;
+  List<Map<String, dynamic>> _homeMixedPlaylists = [];
+  Map<String, String> _homeCoverOverrides = {};
   static const Duration _resolvedStreamsTtl = Duration(minutes: 20);
   static const Map<String, String> _youtubeHttpHeaders = {
     'User-Agent':
@@ -120,9 +133,13 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     super.initState();
     _playback = context.read<PlaybackModel>();
     _downloads = context.read<DownloadsProvider>();
-    _downloads.resolveStreamUrls = _resolvePlayableYouTubeStreamUrls;
+    _downloads.resolveStreamUrls = (videoId) =>
+        _resolvePlayableYouTubeStreamUrls(videoId, applyQuality: false);
     _sidebarVideoController = VideoController(player.mediaKitPlayer);
     _searchController = TextEditingController();
+    RecentSearchesPrefs.load().then((items) {
+      if (mounted) setState(() => _recentSearches = items);
+    });
     _bindYouTubeEngineToPlayback();
     _playback.bindEditedSongsLookup(
       context.read<EditedSongsProvider>().trimFor,
@@ -142,6 +159,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _settings.addListener(_handleSettingsChanged);
     _checkCurrentUser();
     unawaited(_loadHomeDashboardData());
+    _homeMixedSubscription = MixedPlaylistService.watchAll().listen((items) {
+      if (mounted) setState(() => _homeMixedPlaylists = items);
+    }, onError: (_) {});
     _playlistCoverSubscription = PlaylistCoverService.watchAll().listen(
       _applyPlaylistCoverOverrides,
     );
@@ -200,6 +220,18 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   void _handlePlaybackChanged() {
+    final notice = _playback.playbackNotice;
+    if (notice != null) {
+      final isError = _playback.playbackNoticeIsError;
+      _playback.consumePlaybackNotice();
+      if (mounted) {
+        if (isError) {
+          AppFlushbar.error(context, notice);
+        } else {
+          AppFlushbar.info(context, notice);
+        }
+      }
+    }
     final song = _playback.suggestedRemovalSong;
     final playlistId = _playback.suggestedRemovalPlaylistId;
     if (song == null || playlistId == null || _showingSkipSuggestion) return;
@@ -310,7 +342,12 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 
   void _applyPlaylistCoverOverrides(Map<String, String> overrides) {
-    if (!mounted || _myPlaylists.isEmpty) return;
+    _homeCoverOverrides = overrides;
+    if (!mounted) return;
+    if (_myPlaylists.isEmpty) {
+      setState(() {});
+      return;
+    }
     setState(() {
       for (final playlist in _myPlaylists) {
         final playlistId = playlist['playlistId'] as String?;
@@ -702,6 +739,13 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     final query = _searchController.text.trim();
     if (query.isEmpty) return;
     Log.i('search', 'search submitted (query length ${query.length})');
+    unawaited(
+      RecentSearchesPrefs.record(query).then((items) {
+        if (mounted && items.isNotEmpty) {
+          setState(() => _recentSearches = items);
+        }
+      }),
+    );
 
     await _ensureYtMusic();
     if (!mounted) return;
@@ -711,13 +755,41 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     });
   }
 
-  Future<List<String>> _resolvePlayableYouTubeStreamUrls(String videoId) async {
+  List<String> _applyQualityPreference(_YouTubeResolvedStreams resolved) {
+    final preferred = _playback.preferredVideoHeight;
+    if (preferred == null || resolved.muxedMp4ByHeight.isEmpty) {
+      return resolved.urls;
+    }
+    final heights = resolved.muxedMp4ByHeight.keys.toList()..sort();
+    final below = heights.where((h) => h <= preferred);
+    final chosen = below.isNotEmpty ? below.last : heights.first;
+    final chosenUrl = resolved.muxedMp4ByHeight[chosen]!;
+    return [chosenUrl, ...resolved.urls.where((u) => u != chosenUrl)];
+  }
+
+  Future<List<int>> _availableVideoHeights(String videoId) async {
+    await _resolvePlayableYouTubeStreamUrls(videoId, applyQuality: false);
+    final cached = _resolvedStreamsCache[videoId];
+    if (cached == null) return const <int>[];
+    return cached.muxedMp4ByHeight.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+  }
+
+  Future<List<String>> _resolvePlayableYouTubeStreamUrls(
+    String videoId, {
+    bool applyQuality = true,
+  }) async {
+    final resolved = await _resolveYouTubeStreams(videoId);
+    return applyQuality ? _applyQualityPreference(resolved) : resolved.urls;
+  }
+
+  Future<_YouTubeResolvedStreams> _resolveYouTubeStreams(String videoId) async {
     final now = DateTime.now();
     final cached = _resolvedStreamsCache[videoId];
     if (cached != null &&
         cached.expiresAt.isAfter(now) &&
         cached.urls.isNotEmpty) {
-      return cached.urls;
+      return cached;
     }
 
     final inFlight = _resolvingStreamsByVideoId[videoId];
@@ -739,6 +811,25 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               '${resolveWatch.elapsedMilliseconds} ms',
           error,
         );
+        if (error.toString().contains('RequestLimitExceeded')) {
+          final alreadyCooling =
+              _resolveCooldownUntil != null &&
+              DateTime.now().isBefore(_resolveCooldownUntil!);
+          _resolveCooldownUntil = DateTime.now().add(
+            const Duration(seconds: 60),
+          );
+          if (!alreadyCooling && mounted) {
+            AppFlushbar.info(
+              context,
+              'YouTube is limiting requests right now. Songs may load slowly '
+              'for a minute.',
+            );
+          }
+          Log.w(
+            'resolver',
+            'YouTube is rate limiting us, pausing background look-ups for 60 s',
+          );
+        }
         rethrow;
       }
 
@@ -800,12 +891,23 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             '(${deduped.length} candidates)',
       );
 
-      _resolvedStreamsCache[videoId] = _YouTubeResolvedStreams(
+      final muxedMp4ByHeight = <int, String>{};
+      for (final stream in mp4Muxed) {
+        final height = stream.videoResolution.height;
+        final existing = muxedMp4ByHeight[height];
+        if (existing == null) {
+          muxedMp4ByHeight[height] = stream.url.toString();
+        }
+      }
+
+      final resolved = _YouTubeResolvedStreams(
         urls: deduped,
         expiresAt: DateTime.now().add(_resolvedStreamsTtl),
+        muxedMp4ByHeight: muxedMp4ByHeight,
       );
+      _resolvedStreamsCache[videoId] = resolved;
 
-      return deduped;
+      return resolved;
     })();
 
     _resolvingStreamsByVideoId[videoId] = resolveFuture;
@@ -819,6 +921,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   Future<void> _prefetchYouTubeStreamUrls(String videoId) async {
     if (videoId.isEmpty) return;
+    final cooldown = _resolveCooldownUntil;
+    if (cooldown != null && DateTime.now().isBefore(cooldown)) return;
     await _resolvePlayableYouTubeStreamUrls(videoId);
   }
 
@@ -1144,7 +1248,29 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           (p) => !settings.isPlaylistHidden((p['playlistId'] as String?) ?? ''),
         )
         .toList();
-    final playlists = pins.sortByPin(visibleMyPlaylists);
+    final playlists = visibleMyPlaylists
+        .where((p) => !pins.isPinned((p['playlistId'] as String?) ?? ''))
+        .toList();
+    final mixedCards = <Map<String, dynamic>>[
+      for (final m in _homeMixedPlaylists)
+        if (!pins.isPinned('mixed-${m['id']}'))
+          () {
+            final tracks = ((m['tracks'] as List?) ?? const [])
+                .whereType<Map>();
+            final custom = _homeCoverOverrides['mixed-${m['id']}'];
+            return <String, dynamic>{
+              'mixedId': m['id'],
+              'title': m['title'],
+              'itemCount': tracks.length,
+              'thumbnailUrl': (custom != null && custom.isNotEmpty)
+                  ? custom
+                  : tracks
+                        .map((t) => (t['thumbnailUrl'] as String?) ?? '')
+                        .firstWhere((u) => u.isNotEmpty, orElse: () => ''),
+            };
+          }(),
+    ];
+    final entries = <Map<String, dynamic>>[...playlists, ...mixedCards];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1152,11 +1278,13 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           'Your Playlists',
           onSeeAll: () => _onSidebarTabSelected('playlists'),
         ),
-        if (playlists.isEmpty)
+        if (entries.isEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: 6),
             child: Text(
-              'No playlists yet.',
+              pins.pinnedOrder.isEmpty
+                  ? 'No playlists yet.'
+                  : 'All your playlists are pinned above.',
               style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           )
@@ -1165,10 +1293,22 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
             height: 240,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              itemCount: playlists.length,
+              itemCount: entries.length,
               separatorBuilder: (_, _) => const SizedBox(width: 14),
               itemBuilder: (context, index) {
-                final playlist = playlists[index];
+                final playlist = entries[index];
+                final mixedId = playlist['mixedId'] as String?;
+                if (mixedId != null) {
+                  return HomePlaylistCard(
+                    playlist: playlist,
+                    isPinned: false,
+                    onTogglePin: () => pins.togglePin('mixed-$mixedId'),
+                    onTap: () => _onSidebarTabSelected(
+                      'mixed_playlist',
+                      extra: {'playlistId': mixedId},
+                    ),
+                  );
+                }
                 final playlistId = playlist['playlistId'] as String?;
                 return HomePlaylistCard(
                   playlist: playlist,
@@ -1216,6 +1356,45 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               },
             ),
           ),
+      ],
+    );
+  }
+
+  Widget _buildQuickAccessSection() {
+    final pins = context.watch<PlaylistPinProvider>();
+    final settings = context.watch<SettingsProvider>();
+    final hasPinned = pins.pinnedOrder.any((key) {
+      if (key.startsWith('mixed-')) {
+        return _homeMixedPlaylists.any((p) => p['id'] == key.substring(6));
+      }
+      return _myPlaylists.any(
+        (p) =>
+            p['playlistId'] == key &&
+            !settings.isPlaylistHidden((p['playlistId'] as String?) ?? ''),
+      );
+    });
+    if (!hasPinned) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildHomeSectionTitle('Quick access'),
+        QuickAccessRow(
+          youtubePlaylists: _myPlaylists,
+          mixedPlaylists: _homeMixedPlaylists,
+          coverOverrides: _homeCoverOverrides,
+          onOpenYoutube: (playlist) => _onSidebarTabSelected(
+            'playlist_inspect',
+            extra: {
+              'playlistId': playlist['playlistId'],
+              'playlistTitle': playlist['title'],
+            },
+          ),
+          onOpenMixed: (id) => _onSidebarTabSelected(
+            'mixed_playlist',
+            extra: {'playlistId': id},
+          ),
+        ),
+        const SizedBox(height: 24),
       ],
     );
   }
@@ -1353,6 +1532,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               ),
             )
           else ...[
+            _buildQuickAccessSection(),
             _buildRecentArtistsSection(),
             if (_recentlyPlayedTracks.isNotEmpty) const SizedBox(height: 24),
             _buildYourPlaylistsSection(),
@@ -1752,6 +1932,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     unawaited(PresenceService.goOffline());
     _deepLinkSubscription?.cancel();
     _playlistCoverSubscription?.cancel();
+    _homeMixedSubscription?.cancel();
     _playback.removeListener(_handlePlaybackChanged);
     if (Platform.isWindows) {
       _playback.removeListener(_updateTaskbarThumbnailToolbar);
@@ -1977,10 +2158,18 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                                 if (canRemove && queue.length > 1)
                                   TextButton.icon(
                                     onPressed: () {
+                                      final cleared = List<dynamic>.from(
+                                        playback.queue.skip(1),
+                                      );
                                       playback.clearUpNextQueue();
-                                      AppFlushbar.success(
+                                      AppFlushbar.undo(
                                         context,
                                         'Queue cleared',
+                                        onUndo: () {
+                                          for (final item in cleared) {
+                                            playback.appendToQueue(item);
+                                          }
+                                        },
                                       );
                                     },
                                     style: TextButton.styleFrom(
@@ -2063,8 +2252,22 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                                                   alpha: 0.7,
                                                 ),
                                               ),
-                                              onPressed: () => playback
-                                                  .removeFromQueue(index),
+                                              onPressed: () {
+                                                final removed =
+                                                    index <
+                                                        playback.queue.length
+                                                    ? playback.queue[index]
+                                                    : null;
+                                                playback.removeFromQueue(index);
+                                                if (removed != null) {
+                                                  AppFlushbar.undo(
+                                                    context,
+                                                    'Removed from queue',
+                                                    onUndo: () => playback
+                                                        .addToQueue(removed),
+                                                  );
+                                                }
+                                              },
                                             ),
                                             ReorderableDragStartListener(
                                               index: offset,
@@ -2340,7 +2543,9 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                 ),
                 onOpenFullscreenVideo: () => Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => const FullscreenVideoPage(),
+                    builder: (_) => FullscreenVideoPage(
+                      loadAvailableHeights: _availableVideoHeights,
+                    ),
                     fullscreenDialog: true,
                   ),
                 ),
@@ -2406,12 +2611,75 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                                           width: 1.0,
                                         ),
                                       ),
-                                      suffixIcon: IconButton(
-                                        icon: Icon(
-                                          Icons.search_rounded,
-                                          color: colorScheme.onSurface,
-                                        ),
-                                        onPressed: _submitSearch,
+                                      suffixIcon: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (_recentSearches.isNotEmpty)
+                                            PopupMenuButton<String>(
+                                              tooltip: 'Recent searches',
+                                              icon: Icon(
+                                                Icons.history_rounded,
+                                                color: colorScheme
+                                                    .onSurfaceVariant,
+                                              ),
+                                              onSelected: (value) async {
+                                                if (value == '__clear__') {
+                                                  await RecentSearchesPrefs.clear();
+                                                  if (mounted) {
+                                                    setState(
+                                                      () => _recentSearches =
+                                                          const [],
+                                                    );
+                                                  }
+                                                  return;
+                                                }
+                                                _searchController.text = value;
+                                                _searchController.selection =
+                                                    TextSelection.collapsed(
+                                                      offset: value.length,
+                                                    );
+                                                _submitSearch();
+                                              },
+                                              itemBuilder: (context) => [
+                                                for (final item
+                                                    in _recentSearches)
+                                                  PopupMenuItem<String>(
+                                                    value: item,
+                                                    child: Row(
+                                                      children: [
+                                                        const Icon(
+                                                          Icons.history_rounded,
+                                                          size: 18,
+                                                        ),
+                                                        const SizedBox(
+                                                          width: 10,
+                                                        ),
+                                                        Flexible(
+                                                          child: Text(
+                                                            item,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                const PopupMenuDivider(),
+                                                const PopupMenuItem<String>(
+                                                  value: '__clear__',
+                                                  child: Text('Clear history'),
+                                                ),
+                                              ],
+                                            ),
+                                          IconButton(
+                                            icon: Icon(
+                                              Icons.search_rounded,
+                                              color: colorScheme.onSurface,
+                                            ),
+                                            onPressed: _submitSearch,
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),

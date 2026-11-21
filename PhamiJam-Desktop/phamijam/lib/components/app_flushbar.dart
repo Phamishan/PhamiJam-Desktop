@@ -48,6 +48,40 @@ class AppFlushbar {
     );
   }
 
+  static void undo(
+    BuildContext context,
+    String message, {
+    required VoidCallback onUndo,
+  }) {
+    Log.i('ui', 'shown to user (with undo): $message');
+    final colorScheme = Theme.of(context).colorScheme;
+    late final Flushbar<void> bar;
+    bar = Flushbar<void>(
+      message: message,
+      messageColor: colorScheme.onPrimary,
+      icon: Icon(Icons.undo_rounded, color: colorScheme.onPrimary),
+      duration: const Duration(seconds: 7),
+      flushbarPosition: FlushbarPosition.TOP,
+      margin: const EdgeInsets.all(12),
+      borderRadius: BorderRadius.circular(10),
+      backgroundColor: colorScheme.primary,
+      mainButton: TextButton(
+        onPressed: () {
+          bar.dismiss();
+          onUndo();
+        },
+        child: Text(
+          'UNDO',
+          style: TextStyle(
+            color: colorScheme.onPrimary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+    bar.show(context);
+  }
+
   static void info(BuildContext context, String message) {
     Log.i('ui', 'shown to user: $message');
     final colorScheme = Theme.of(context).colorScheme;

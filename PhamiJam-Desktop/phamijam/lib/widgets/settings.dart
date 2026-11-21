@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:phamijam/components/app_flushbar.dart';
 import 'package:phamijam/components/changelog_dialog.dart';
 import 'package:phamijam/components/manage_playlist_visibility_dialog.dart';
@@ -21,7 +23,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String _logSubmissionEmail = 'phamishan@phamishan.dk';
-const int _maxLogEmailBodyChars = 6000;
+const int _maxLogEmailBodyChars = 1800;
 
 enum _UpdateState {
   idle,
@@ -1153,9 +1155,27 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     await Clipboard.setData(ClipboardData(text: fullReport));
-    final body = await LogService.instance.buildReport(
+    File? savedFile;
+    try {
+      final dir =
+          await getDownloadsDirectory() ??
+          await getApplicationDocumentsDirectory();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      savedFile = File(
+        '${dir.path}${Platform.pathSeparator}phamijam_log_$stamp.txt',
+      );
+      await savedFile.writeAsString(fullReport, flush: true);
+    } catch (error) {
+      Log.w('settings', 'saving the log file failed', error);
+      savedFile = null;
+    }
+
+    final summary = await LogService.instance.buildReport(
       maxChars: _maxLogEmailBodyChars,
     );
+    final body =
+        'The full log is attached / pasted below.\n'
+        '${savedFile == null ? '' : 'File: ${savedFile.path}\n'}\n$summary';
 
     final mailtoUri = Uri(
       scheme: 'mailto',
@@ -1166,19 +1186,32 @@ class _SettingsPageState extends State<SettingsPage> {
       },
     );
 
-    final launched = await launchUrl(mailtoUri);
+    var launched = false;
+    try {
+      launched = await launchUrl(mailtoUri);
+    } catch (error) {
+      Log.w('settings', 'opening the email app failed', error);
+    }
+
+    if (savedFile != null && Platform.isWindows) {
+      try {
+        await Process.run('explorer.exe', ['/select,', savedFile.path]);
+      } catch (_) {}
+    }
+
     if (!mounted) return;
     if (launched) {
       AppFlushbar.success(
         context,
-        'Email opened. The full log is also on your clipboard - paste it '
-        'into the email if you can.',
+        'Email opened. Attach the saved log file (shown in Explorer) or '
+        'paste the full log, which is on your clipboard.',
       );
     } else {
       AppFlushbar.error(
         context,
-        'No email app found - the full log is on your clipboard. '
-        'Paste it into an email to $_logSubmissionEmail.',
+        'Could not open an email app. The full log is on your clipboard'
+        '${savedFile == null ? '' : ' and saved to ${savedFile.path}'} - '
+        'send it to $_logSubmissionEmail.',
       );
     }
   }
